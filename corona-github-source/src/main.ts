@@ -11,34 +11,60 @@ import {
   defaultAppearance,
   defaultCrest,
 } from './customization/presets';
+import { LANGUAGE_LABELS, cycleLanguage, getLanguage, t } from './i18n/translations';
 import { PixelRenderer } from './render/renderer';
 import { loadCampaign, saveCampaign } from './storage/saveSystem';
 import {
   confirmCharacterSelection,
   confirmCrestAndStartCampaign,
   issueUnitCommand,
+  sailToIsland,
   showBanner,
   stepWorld,
   triggerCoinDrop,
+  triggerMountPower,
 } from './systems/simulation';
-import { LOGICAL_HEIGHT, LOGICAL_WIDTH, type CommandMode, type InputState, type WorldState } from './types';
-import { createInitialWorld } from './world/initWorld';
+import { type CommandMode, type InputState, type WorldState } from './types';
+import { createInitialWorld, saveDayHalfMinutes } from './world/initWorld';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d');
 if (!ctx) throw new Error('Canvas 2D context unavailable');
 
-const btnAudio = document.getElementById('btn-audio') as HTMLButtonElement | null;
-const btnHelp = document.getElementById('btn-help') as HTMLButtonElement | null;
-const btnPause = document.getElementById('btn-pause') as HTMLButtonElement | null;
-const btnRestart = document.getElementById('btn-restart') as HTMLButtonElement | null;
-const helpDrawer = document.getElementById('help-drawer') as HTMLDivElement | null;
+// Top-right Menu DOM elements
+const btnMenu = document.getElementById('btn-menu') as HTMLButtonElement | null;
+const menuPanel = document.getElementById('menu-panel') as HTMLDivElement | null;
+const menuBackdrop = document.getElementById('menu-backdrop') as HTMLDivElement | null;
+const menuTitle = document.getElementById('menu-title') as HTMLDivElement | null;
+const btnResume = document.getElementById('menu-resume') as HTMLButtonElement | null;
+const btnHome = document.getElementById('menu-home') as HTMLButtonElement | null;
+const btnMap = document.getElementById('menu-map') as HTMLButtonElement | null;
+const btnDayLen = document.getElementById('menu-daylen') as HTMLButtonElement | null;
+const btnLang = document.getElementById('menu-lang') as HTMLButtonElement | null;
+const btnMusic = document.getElementById('menu-music') as HTMLButtonElement | null;
+const btnSfx = document.getElementById('menu-sfx') as HTMLButtonElement | null;
+const btnFullscreen = document.getElementById('menu-fullscreen') as HTMLButtonElement | null;
 
-canvas.width = LOGICAL_WIDTH;
-canvas.height = LOGICAL_HEIGHT;
+const lblResume = document.getElementById('lbl-resume');
+const lblHome = document.getElementById('lbl-home');
+const lblMap = document.getElementById('lbl-map');
+const valMap = document.getElementById('val-map');
+const lblDayLen = document.getElementById('lbl-daylen');
+const valDayLen = document.getElementById('val-daylen');
+const lblLang = document.getElementById('lbl-lang');
+const valLang = document.getElementById('val-lang');
+const lblMusic = document.getElementById('lbl-music');
+const valMusic = document.getElementById('val-music');
+const lblSfx = document.getElementById('lbl-sfx');
+const valSfx = document.getElementById('val-sfx');
+const lblFullscreen = document.getElementById('lbl-fullscreen');
+const valFullscreen = document.getElementById('val-fullscreen');
+const lblEscHint = document.getElementById('lbl-esc-hint');
 
 const renderer = new PixelRenderer();
 let world: WorldState = createInitialWorld('login');
+let menuOpen = false;
+let pausedByMenu = false;
 
 const input: InputState = {
   left: false,
@@ -46,6 +72,7 @@ const input: InputState = {
   leftJustPressed: false,
   rightJustPressed: false,
   sprint: false,
+  powerJustPressed: false,
   drop: false,
   dropJustPressed: false,
   cmdZ: false,
@@ -54,7 +81,6 @@ const input: InputState = {
   cmdV: false,
 };
 
-// Separate Keyboard & Unified Pointer (Touch + Mouse) states
 let kbLeft = false;
 let kbRight = false;
 let kbShift = false;
@@ -70,29 +96,128 @@ let lastPtrTapTime = 0;
 
 const DOUBLE_TAP_MS = 340;
 
+/**
+ * Dynamically matches the internal pixel-art buffer to 100% of the device's usable width & height
+ * (portrait phone, landscape phone, tablet, laptop, or full-screen monitor) with zero stretching or black bars.
+ */
 function fitCanvas(): void {
-  if (canvas.dataset.fitMode === 'css') return;
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const aspect = LOGICAL_WIDTH / LOGICAL_HEIGHT;
+  const rect = canvas.getBoundingClientRect();
+  const vw = Math.max(160, Math.round(rect.width || window.innerWidth));
+  const vh = Math.max(160, Math.round(rect.height || window.innerHeight));
+  const aspect = vw / vh;
 
-  let w = vw;
-  let h = w / aspect;
-  if (h > vh) {
-    h = vh;
-    w = h * aspect;
+  let logicalW: number;
+  let logicalH: number;
+
+  if (aspect >= 1.15) {
+    // Landscape (laptop, desktop, ultrawide, phone landscape, tablet landscape)
+    logicalH = 270;
+    logicalW = Math.max(310, Math.min(720, Math.round(logicalH * aspect)));
+  } else {
+    // Portrait or square (phone portrait, narrow window)
+    logicalW = Math.max(252, Math.min(340, Math.round(vw / Math.max(1.25, vw / 270))));
+    logicalH = Math.max(270, Math.min(540, Math.round(logicalW / Math.max(0.42, aspect))));
+    // Keep exact viewport aspect ratio so pixels remain 100% square
+    logicalW = Math.max(230, Math.round(logicalH * aspect));
   }
 
-  // On desktop monitors prefer clean integer scaling if it fills >= 72%; on mobile fill full viewport cleanly
-  const scale = Math.min(vw / LOGICAL_WIDTH, vh / LOGICAL_HEIGHT);
-  const intScale = Math.floor(scale);
-  if (vw >= 900 && intScale >= 2 && intScale * LOGICAL_WIDTH >= vw * 0.72) {
-    w = intScale * LOGICAL_WIDTH;
-    h = intScale * LOGICAL_HEIGHT;
+  if (canvas.width !== logicalW || canvas.height !== logicalH) {
+    canvas.width = logicalW;
+    canvas.height = logicalH;
   }
+  world.viewWidth = logicalW;
+  world.viewHeight = logicalH;
+}
 
-  canvas.style.width = `${Math.floor(w)}px`;
-  canvas.style.height = `${Math.floor(h)}px`;
+function isFullscreenActive(): boolean {
+  const doc = document as Document & { webkitFullscreenElement?: Element | null };
+  return Boolean(document.fullscreenElement || doc.webkitFullscreenElement);
+}
+
+async function toggleFullscreen(): Promise<void> {
+  const doc = document as Document & {
+    webkitFullscreenElement?: Element | null;
+    webkitExitFullscreen?: () => Promise<void> | void;
+  };
+  const root = document.documentElement as HTMLElement & {
+    webkitRequestFullscreen?: () => Promise<void> | void;
+  };
+
+  try {
+    if (isFullscreenActive()) {
+      if (document.exitFullscreen) await document.exitFullscreen();
+      else if (doc.webkitExitFullscreen) await doc.webkitExitFullscreen();
+    } else {
+      if (root.requestFullscreen) await root.requestFullscreen();
+      else if (root.webkitRequestFullscreen) await root.webkitRequestFullscreen();
+    }
+  } catch {
+    // Some embedded iframes or iOS Safari restrict fullscreen; ignore gracefully
+  }
+  updateMenuUI();
+  setTimeout(fitCanvas, 60);
+}
+
+function updateMenuUI(): void {
+  const fs = isFullscreenActive();
+  const musicOn = sound.isMusicEnabled();
+  const sfxOn = sound.isSfxEnabled();
+
+  if (menuTitle) menuTitle.textContent = t('menu_title');
+  if (lblResume) lblResume.textContent = t('menu_resume');
+  if (lblHome) lblHome.textContent = t('menu_main');
+  if (lblMap) lblMap.textContent = t('menu_map');
+  if (valMap) {
+    const romans = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+    valMap.textContent = `${romans[(world.currentIsland - 1) % 7] ?? 'I'}/VII`;
+  }
+  if (lblDayLen) lblDayLen.textContent = t('menu_daylen');
+  if (valDayLen) valDayLen.textContent = `${world.dayHalfMinutes} min`;
+  if (lblLang) lblLang.textContent = t('menu_language');
+  if (valLang) valLang.textContent = LANGUAGE_LABELS[getLanguage()];
+  if (lblMusic) lblMusic.textContent = t('menu_music');
+  if (valMusic) {
+    valMusic.textContent = musicOn ? t('menu_on') : t('menu_off');
+    valMusic.classList.toggle('on', musicOn);
+  }
+  if (lblSfx) lblSfx.textContent = t('menu_sfx');
+  if (valSfx) {
+    valSfx.textContent = sfxOn ? t('menu_on') : t('menu_off');
+    valSfx.classList.toggle('on', sfxOn);
+  }
+  if (lblFullscreen) lblFullscreen.textContent = fs ? t('menu_exit_fullscreen') : t('menu_fullscreen');
+  if (valFullscreen) {
+    valFullscreen.textContent = fs ? t('menu_on') : t('menu_off');
+    valFullscreen.classList.toggle('on', fs);
+  }
+  if (lblEscHint) lblEscHint.textContent = t('menu_esc_hint');
+
+  const inCampaign = world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map';
+  if (btnResume) btnResume.style.display = inCampaign ? 'flex' : 'none';
+  if (btnMap) btnMap.style.display = inCampaign ? 'flex' : 'none';
+}
+
+function setMenuOpen(open: boolean): void {
+  menuOpen = open;
+  menuPanel?.classList.toggle('open', open);
+  menuBackdrop?.classList.toggle('open', open);
+  btnMenu?.classList.toggle('open', open);
+
+  if (open) {
+    clearMovementInputs();
+    if (world.mode === 'playing') {
+      saveCampaign(world);
+      world.mode = 'paused';
+      pausedByMenu = true;
+    }
+  } else {
+    if (pausedByMenu && world.mode === 'paused') {
+      world.mode = 'playing';
+    }
+    pausedByMenu = false;
+    canvas.focus();
+  }
+  updateMenuUI();
 }
 
 function clearMovementInputs(): void {
@@ -120,8 +245,9 @@ function startNewCampaignFlow(): void {
   renderer.crestSelectFocusRow = 0;
   world = createInitialWorld('char_select', defaultAppearance(), defaultCrest());
   world.selectTimer = 20;
+  fitCanvas();
   sound.playCoinPickup();
-  updatePauseLabel();
+  updateMenuUI();
   canvas.focus();
 }
 
@@ -131,9 +257,10 @@ function loadSavedCampaignFlow(): void {
   const loaded = loadCampaign();
   if (!loaded) return;
   world = loaded;
+  fitCanvas();
   sound.playHorn(false);
-  showBanner(world, `CAMPANHA CARREGADA — DIA ${world.day}`, 'Seu reino o aguarda no norte!', world.crest.secondaryColor);
-  updatePauseLabel();
+  showBanner(world, `${t('load_campaign')} — ${t('day_short')} ${world.day}`, t('subtitle'), world.crest.secondaryColor);
+  updateMenuUI();
   canvas.focus();
 }
 
@@ -141,9 +268,12 @@ function goToLogin(): void {
   if (world.mode === 'playing' || world.mode === 'paused') {
     saveCampaign(world);
   }
+  pausedByMenu = false;
+  setMenuOpen(false);
   clearMovementInputs();
   world = createInitialWorld('login');
-  updatePauseLabel();
+  fitCanvas();
+  updateMenuUI();
 }
 
 function togglePause(): void {
@@ -154,19 +284,7 @@ function togglePause(): void {
   } else if (world.mode === 'paused') {
     world.mode = 'playing';
   }
-  updatePauseLabel();
-}
-
-function updatePauseLabel(): void {
-  if (btnPause) {
-    btnPause.textContent = world.mode === 'paused' ? 'Continuar' : 'Pausar';
-  }
-}
-
-function updateAudioLabel(): void {
-  if (btnAudio) {
-    btnAudio.textContent = sound.isEnabled() ? 'Som: ON' : 'Som: OFF';
-  }
+  updateMenuUI();
 }
 
 function cycle(val: number, len: number, delta: number): number {
@@ -219,7 +337,6 @@ function handleCanvasHit(hitId: string): boolean {
     return true;
   }
 
-  // Playing-mode HUD & Coin Slot hits
   if (world.mode === 'playing') {
     if (hitId === 'hud_cmd_build') {
       toggleTouchCommand('build');
@@ -244,6 +361,10 @@ function handleCanvasHit(hitId: string): boolean {
     }
     if (hitId === 'prompt_coin_slot') {
       triggerCoinDrop(world);
+      return true;
+    }
+    if (hitId === 'hud_mount_power') {
+      triggerMountPower(world);
       return true;
     }
   }
@@ -321,14 +442,38 @@ function handleCanvasHit(hitId: string): boolean {
     }
   }
 
+  if (world.mode === 'world_map') {
+    if (hitId.startsWith('map_island_')) {
+      const id = Number(hitId.replace('map_island_', ''));
+      if (id >= 1 && id <= 7) {
+        renderer.selectedMapIsland = id;
+        sound.playCoinDrop();
+      }
+      return true;
+    }
+    if (hitId === 'map_sail_confirm') {
+      if (sailToIsland(world, renderer.selectedMapIsland)) {
+        updateMenuUI();
+      }
+      return true;
+    }
+    if (hitId === 'map_close') {
+      world.mode = 'playing';
+      world.worldMapContext = 'inspect';
+      sound.playCoinDrop();
+      updateMenuUI();
+      return true;
+    }
+  }
+
   return false;
 }
 
 function getLogicalCoords(e: PointerEvent): { lx: number; ly: number } {
   const rect = canvas.getBoundingClientRect();
   return {
-    lx: ((e.clientX - rect.left) / rect.width) * LOGICAL_WIDTH,
-    ly: ((e.clientY - rect.top) / rect.height) * LOGICAL_HEIGHT,
+    lx: ((e.clientX - rect.left) / rect.width) * canvas.width,
+    ly: ((e.clientY - rect.top) / rect.height) * canvas.height,
   };
 }
 
@@ -340,6 +485,11 @@ canvas.addEventListener('pointerdown', (e) => {
   sound.unlock();
   canvas.focus();
 
+  if (menuOpen) {
+    setMenuOpen(false);
+    return;
+  }
+
   const { lx, ly } = getLogicalCoords(e);
   const hitId = renderer.hitTest(lx, ly);
   if (hitId && handleCanvasHit(hitId)) {
@@ -348,16 +498,14 @@ canvas.addEventListener('pointerdown', (e) => {
 
   if (world.mode !== 'playing') return;
 
-  const side: -1 | 1 = lx < LOGICAL_WIDTH / 2 ? -1 : 1;
+  const side: -1 | 1 = lx < canvas.width / 2 ? -1 : 1;
 
-  // If a top class icon is active (or Z/X/C/V held), tapping left/right dispatches 1 unit!
   if (world.activeCommand !== 'none') {
     issueUnitCommand(world, world.activeCommand, side);
     world.touchIndicator = { x: lx, y: ly, side, sprinting: false, timer: 0.35 };
     return;
   }
 
-  // Otherwise: touch/click left or right half to ride, double-tap/double-click + hold to sprint!
   const now = performance.now();
   const isDoubleTap = now - lastPtrTapTime <= DOUBLE_TAP_MS && lastPtrTapSide === side;
   lastPtrTapTime = now;
@@ -367,7 +515,7 @@ canvas.addEventListener('pointerdown', (e) => {
   try {
     canvas.setPointerCapture(e.pointerId);
   } catch {
-    // Ignore if synthetic event
+    // Ignore
   }
   ptrMoveSide = side;
   ptrSprint = isDoubleTap;
@@ -377,7 +525,7 @@ canvas.addEventListener('pointerdown', (e) => {
 canvas.addEventListener('pointermove', (e) => {
   if (activePointerId !== e.pointerId || world.mode !== 'playing' || ptrMoveSide === 0) return;
   const { lx } = getLogicalCoords(e);
-  const side: -1 | 1 = lx < LOGICAL_WIDTH / 2 ? -1 : 1;
+  const side: -1 | 1 = lx < canvas.width / 2 ? -1 : 1;
   if (side !== ptrMoveSide) {
     ptrMoveSide = side;
     ptrSprint = false;
@@ -396,7 +544,77 @@ canvas.addEventListener('pointercancel', releasePointer);
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // =========================================================================
-// KEYBOARD CONTROLS (with Double-Tap Arrow/A/D Sprint!)
+// TOP-RIGHT MENU EVENTS
+// =========================================================================
+btnMenu?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  sound.unlock();
+  setMenuOpen(!menuOpen);
+});
+
+menuBackdrop?.addEventListener('click', () => {
+  setMenuOpen(false);
+});
+
+btnResume?.addEventListener('click', () => {
+  setMenuOpen(false);
+  if (world.mode === 'paused') world.mode = 'playing';
+  updateMenuUI();
+});
+
+btnHome?.addEventListener('click', () => {
+  goToLogin();
+});
+
+btnMap?.addEventListener('click', () => {
+  pausedByMenu = false;
+  setMenuOpen(false);
+  renderer.selectedMapIsland = world.currentIsland;
+  world.worldMapContext = 'inspect';
+  world.mode = 'world_map';
+  sound.playCoinDrop();
+  updateMenuUI();
+});
+
+btnDayLen?.addEventListener('click', () => {
+  world.dayHalfMinutes = (world.dayHalfMinutes % 6) + 1; // 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 1 min
+  saveDayHalfMinutes(world.dayHalfMinutes);
+  sound.playCoinDrop();
+  updateMenuUI();
+});
+
+btnLang?.addEventListener('click', () => {
+  cycleLanguage();
+  sound.playCoinDrop();
+  updateMenuUI();
+});
+
+btnMusic?.addEventListener('click', () => {
+  sound.toggleMusic();
+  updateMenuUI();
+});
+
+btnSfx?.addEventListener('click', () => {
+  sound.toggleSfx();
+  if (sound.isSfxEnabled()) sound.playCoinDrop();
+  updateMenuUI();
+});
+
+btnFullscreen?.addEventListener('click', () => {
+  void toggleFullscreen();
+});
+
+document.addEventListener('fullscreenchange', () => {
+  updateMenuUI();
+  setTimeout(fitCanvas, 50);
+});
+document.addEventListener('webkitfullscreenchange', () => {
+  updateMenuUI();
+  setTimeout(fitCanvas, 50);
+});
+
+// =========================================================================
+// KEYBOARD CONTROLS (with Double-Tap Arrow/A/D Sprint & ESC handling)
 // =========================================================================
 window.addEventListener('keydown', (e) => {
   const code = e.code;
@@ -411,6 +629,32 @@ window.addEventListener('keydown', (e) => {
   }
 
   sound.unlock();
+
+  if (code === 'Escape') {
+    if (isFullscreenActive()) {
+      return;
+    }
+    if (menuOpen) {
+      setMenuOpen(false);
+      return;
+    }
+    if (world.mode === 'world_map') {
+      world.mode = 'playing';
+      world.worldMapContext = 'inspect';
+      updateMenuUI();
+      return;
+    }
+    if (world.touchCommandMode !== 'none') {
+      world.touchCommandMode = 'none';
+      return;
+    }
+    if (world.mode === 'playing' || world.mode === 'paused') {
+      setMenuOpen(true);
+    }
+    return;
+  }
+
+  if (menuOpen) return;
 
   if (world.mode === 'login') {
     if (code === 'Space' || code === 'Enter') startNewCampaignFlow();
@@ -440,19 +684,8 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
-  if (code === 'Escape' && world.touchCommandMode !== 'none') {
-    world.touchCommandMode = 'none';
-    return;
-  }
-
-  if (code === 'KeyP' || code === 'Escape') {
+  if (code === 'KeyP') {
     togglePause();
-    return;
-  }
-
-  if (code === 'KeyM') {
-    sound.toggle();
-    updateAudioLabel();
     return;
   }
 
@@ -487,7 +720,10 @@ window.addEventListener('keydown', (e) => {
     }
     kbRight = true;
   }
-  if (code === 'ShiftLeft' || code === 'ShiftRight') kbShift = true;
+  if (code === 'ShiftLeft' || code === 'ShiftRight') {
+    if (!e.repeat) input.powerJustPressed = true;
+    kbShift = true;
+  }
   if (code === 'KeyS' || code === 'ArrowDown' || code === 'Space') {
     if (!input.drop) input.dropJustPressed = true;
     input.drop = true;
@@ -518,33 +754,11 @@ window.addEventListener('keyup', (e) => {
 });
 
 window.addEventListener('blur', clearMovementInputs);
-
-btnAudio?.addEventListener('click', () => {
-  sound.toggle();
-  updateAudioLabel();
-  canvas.focus();
-});
-
-btnHelp?.addEventListener('click', () => {
-  helpDrawer?.classList.toggle('open');
-  canvas.focus();
-});
-
-btnPause?.addEventListener('click', () => {
-  togglePause();
-  canvas.focus();
-});
-
-btnRestart?.addEventListener('click', () => {
-  goToLogin();
-  canvas.focus();
-});
-
 window.addEventListener('resize', fitCanvas);
 window.addEventListener('orientationchange', () => setTimeout(fitCanvas, 120));
+
 fitCanvas();
-updateAudioLabel();
-updatePauseLabel();
+updateMenuUI();
 
 const FIXED_DT = 1 / 60;
 let lastTime = performance.now();
@@ -555,7 +769,6 @@ function frame(now: number): void {
   lastTime = now;
   accumulator += delta;
 
-  // Combine Keyboard + Unified Touch/Mouse pointer state
   input.left = kbLeft || ptrMoveSide === -1;
   input.right = kbRight || ptrMoveSide === 1;
   input.sprint =
@@ -569,6 +782,7 @@ function frame(now: number): void {
     input.dropJustPressed = false;
     input.leftJustPressed = false;
     input.rightJustPressed = false;
+    input.powerJustPressed = false;
     accumulator -= FIXED_DT;
   }
 

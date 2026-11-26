@@ -9,12 +9,13 @@ import {
   SHIELD_SHAPES,
   drawShieldEmblem,
 } from '../customization/presets';
+import { getLanguage, t } from '../i18n/translations';
 import { getSavedCampaignSummary } from '../storage/saveSystem';
 import {
   GROUND_Y,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
-  WATER_Y,
+  MAX_FARMERS_PER_FARM,
   WORLD_WIDTH,
   type CommandMode,
   type Enemy,
@@ -22,6 +23,8 @@ import {
   type Villager,
   type WorldState,
 } from '../types';
+import { ISLAND_DEFINITIONS, getIslandDef } from '../world/islands';
+import { GOD_DEFS, MOUNT_DEFS } from '../world/mountsAndGods';
 
 export interface UiHitRegion {
   id: string;
@@ -37,15 +40,15 @@ interface RGB {
   b: number;
 }
 
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
+function lerp(a: number, b: number, tVal: number): number {
+  return a + (b - a) * tVal;
 }
 
-function lerpRGB(c1: RGB, c2: RGB, t: number): RGB {
+function lerpRGB(c1: RGB, c2: RGB, tVal: number): RGB {
   return {
-    r: Math.round(lerp(c1.r, c2.r, t)),
-    g: Math.round(lerp(c1.g, c2.g, t)),
-    b: Math.round(lerp(c1.b, c2.b, t)),
+    r: Math.round(lerp(c1.r, c2.r, tVal)),
+    g: Math.round(lerp(c1.g, c2.g, tVal)),
+    b: Math.round(lerp(c1.b, c2.b, tVal)),
   };
 }
 
@@ -68,25 +71,34 @@ const SKY_BOT_BLOOD: RGB = { r: 78, g: 24, b: 36 };
 export class PixelRenderer {
   private reflectionCanvas: HTMLCanvasElement;
   private reflectionCtx: CanvasRenderingContext2D;
-  private stars: Array<{ x: number; y: number; phase: number; size: number }>;
+  private stars: Array<{ rx: number; ry: number; phase: number; size: number }>;
   public hitRegions: UiHitRegion[] = [];
-  public charSelectFocusRow = 0; // 0..3
-  public crestSelectFocusRow = 0; // 0..3
+  public charSelectFocusRow = 0;
+  public crestSelectFocusRow = 0;
+  public selectedMapIsland = 1;
+
+  // Live responsive logical viewport dimensions (adapts to 100% of any device!)
+  private viewW = LOGICAL_WIDTH;
+  private viewH = LOGICAL_HEIGHT;
+  private groundScreenY = GROUND_Y;
+  private waterScreenY = GROUND_Y + 6;
+  private worldOffsetY = 0;
 
   constructor() {
     this.reflectionCanvas = document.createElement('canvas');
     this.reflectionCanvas.width = LOGICAL_WIDTH;
-    this.reflectionCanvas.height = WATER_Y;
+    this.reflectionCanvas.height = GROUND_Y + 6;
     const rCtx = this.reflectionCanvas.getContext('2d');
     if (!rCtx) throw new Error('Failed to create reflection canvas context');
     this.reflectionCtx = rCtx;
     this.reflectionCtx.imageSmoothingEnabled = false;
 
+    // Normalized star positions (0..1) so they cover portrait, landscape & ultrawide naturally
     this.stars = [];
-    for (let i = 0; i < 65; i++) {
+    for (let i = 0; i < 80; i++) {
       this.stars.push({
-        x: (i * 97 + 23) % LOGICAL_WIDTH,
-        y: 8 + ((i * 53 + 11) % 108),
+        rx: ((i * 97 + 23) % 1000) / 1000,
+        ry: 0.03 + (((i * 53 + 11) % 500) / 1000),
         phase: i * 0.7,
         size: i % 5 === 0 ? 2 : 1,
       });
@@ -107,36 +119,55 @@ export class PixelRenderer {
     this.hitRegions.push({ id, x, y, w, h });
   }
 
-  private getSkyColors(t: number, isBloodMoon: boolean): { top: RGB; bot: RGB; nightFactor: number } {
+  private syncViewport(ctx: CanvasRenderingContext2D): void {
+    const cw = Math.max(200, ctx.canvas.width);
+    const ch = Math.max(180, ctx.canvas.height);
+    this.viewW = cw;
+    this.viewH = ch;
+    this.groundScreenY = Math.round(ch * 0.778);
+    this.waterScreenY = this.groundScreenY + 6;
+    this.worldOffsetY = this.groundScreenY - GROUND_Y;
+
+    if (
+      this.reflectionCanvas.width !== cw ||
+      this.reflectionCanvas.height !== this.waterScreenY
+    ) {
+      this.reflectionCanvas.width = cw;
+      this.reflectionCanvas.height = this.waterScreenY;
+      this.reflectionCtx.imageSmoothingEnabled = false;
+    }
+  }
+
+  private getSkyColors(tVal: number, isBloodMoon: boolean): { top: RGB; bot: RGB; nightFactor: number } {
     let top: RGB;
     let bot: RGB;
     let nightFactor = 0;
 
-    if (t < 0.05) {
-      const k = t / 0.05;
+    if (tVal < 0.05) {
+      const k = tVal / 0.05;
       top = lerpRGB(SKY_TOP_DAWN, SKY_TOP_DAY, k);
       bot = lerpRGB(SKY_BOT_DAWN, SKY_BOT_DAY, k);
       nightFactor = lerp(0.35, 0, k);
-    } else if (t < 0.43) {
+    } else if (tVal < 0.43) {
       top = SKY_TOP_DAY;
       bot = SKY_BOT_DAY;
       nightFactor = 0;
-    } else if (t < 0.49) {
-      const k = (t - 0.43) / 0.06;
+    } else if (tVal < 0.49) {
+      const k = (tVal - 0.43) / 0.06;
       top = lerpRGB(SKY_TOP_DAY, SKY_TOP_DUSK, k);
       bot = lerpRGB(SKY_BOT_DAY, SKY_BOT_DUSK, k);
       nightFactor = lerp(0, 0.48, k);
-    } else if (t < 0.54) {
-      const k = (t - 0.49) / 0.05;
+    } else if (tVal < 0.54) {
+      const k = (tVal - 0.49) / 0.05;
       top = lerpRGB(SKY_TOP_DUSK, SKY_TOP_NIGHT, k);
       bot = lerpRGB(SKY_BOT_DUSK, isBloodMoon ? SKY_BOT_BLOOD : SKY_BOT_NIGHT, k);
       nightFactor = lerp(0.48, 1, k);
-    } else if (t < 0.95) {
+    } else if (tVal < 0.95) {
       top = SKY_TOP_NIGHT;
       bot = isBloodMoon ? SKY_BOT_BLOOD : SKY_BOT_NIGHT;
       nightFactor = 1;
     } else {
-      const k = (t - 0.95) / 0.05;
+      const k = (tVal - 0.95) / 0.05;
       top = lerpRGB(SKY_TOP_NIGHT, SKY_TOP_DAWN, k);
       bot = lerpRGB(isBloodMoon ? SKY_BOT_BLOOD : SKY_BOT_NIGHT, SKY_BOT_DAWN, k);
       nightFactor = lerp(1, 0.35, k);
@@ -147,9 +178,9 @@ export class PixelRenderer {
 
   public render(ctx: CanvasRenderingContext2D, w: WorldState): void {
     ctx.imageSmoothingEnabled = false;
+    this.syncViewport(ctx);
     this.hitRegions = [];
 
-    // Dedicated black-background screens for Character Select (20s) & Crest Select (30s)
     if (w.mode === 'char_select') {
       this.drawCharSelectScreen(ctx, w);
       return;
@@ -158,32 +189,41 @@ export class PixelRenderer {
       this.drawCrestSelectScreen(ctx, w);
       return;
     }
+    if (w.mode === 'world_map') {
+      this.drawWorldMapScreen(ctx, w);
+      return;
+    }
 
     const monarch = w.monarchs[0];
     const shakeX = w.screenShake > 0 ? Math.round((Math.random() - 0.5) * 4) : 0;
     const shakeY = w.screenShake > 0 ? Math.round((Math.random() - 0.5) * 3) : 0;
-    const camX = Math.round((monarch ? monarch.cameraX : 1160) + shakeX);
+    const fallbackCam = Math.max(0, Math.round(1400 - this.viewW / 2));
+    const camX = Math.round((monarch ? monarch.cameraX : fallbackCam) + shakeX);
 
     const { top, bot, nightFactor } = this.getSkyColors(w.timeOfDay, w.isBloodMoon);
 
     ctx.save();
     ctx.translate(0, shakeY);
 
-    // 1. Sky
-    const grad = ctx.createLinearGradient(0, 0, 0, WATER_Y);
+    // 1. Full-height dynamic Sky
+    const grad = ctx.createLinearGradient(0, 0, 0, this.waterScreenY);
     grad.addColorStop(0, rgbStr(top));
     grad.addColorStop(1, rgbStr(bot));
     ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, LOGICAL_WIDTH, WATER_Y);
+    ctx.fillRect(0, 0, this.viewW, this.waterScreenY);
 
     if (nightFactor > 0.15) this.drawStarsAndAurora(ctx, w, nightFactor);
     this.drawCelestial(ctx, w);
     this.drawClouds(ctx, w, camX, nightFactor);
+
+    // 2. World plane shifted smoothly by worldOffsetY (0 on landscape, >0 on tall portrait)
+    ctx.save();
+    ctx.translate(0, this.worldOffsetY);
+
     this.drawParallaxMountains(ctx, camX, nightFactor, w.isBloodMoon);
     this.drawParallaxForest(ctx, camX, nightFactor);
     this.drawGround(ctx, camX, nightFactor);
 
-    // 2. World Entities
     this.drawTrees(ctx, w, camX, nightFactor);
     this.drawRocks(ctx, w, camX, nightFactor);
     this.drawCamps(ctx, w, camX);
@@ -192,22 +232,27 @@ export class PixelRenderer {
     this.drawHall(ctx, w, camX);
     this.drawShops(ctx, w, camX);
     this.drawFarms(ctx, w, camX);
+    this.drawBoatAndDock(ctx, w, camX);
+    this.drawShrinesAndPuzzle(ctx, w, camX);
     this.drawWalls(ctx, w, camX);
     this.drawWildlife(ctx, w, camX);
     this.drawVillagers(ctx, w, camX);
     this.drawEnemies(ctx, w, camX);
     if (monarch) this.drawMonarch(ctx, w, monarch, camX, 1, Math.round(monarch.x - camX), GROUND_Y);
+    this.drawFireTrailsAndLightning(ctx, w, camX);
     this.drawCoins(ctx, w, camX);
     this.drawArrows(ctx, w, camX);
     this.drawWorldParticles(ctx, w, camX);
 
+    ctx.restore();
+
     if (nightFactor > 0.08) this.drawLighting(ctx, w, camX, nightFactor);
 
-    // 3. Fjord Water Reflection
+    // 3. Fjord Water Reflection filling 100% of bottom
     this.drawWaterReflection(ctx, w, nightFactor);
     this.drawSnowParticles(ctx, w);
 
-    // 4. Placeholders & Animated Flying Coins (drawn above reflection & darkness so crystal clear!)
+    // 4. Floating Coin Placeholder & Flying Coins
     if (w.mode === 'playing' && w.activePrompt) {
       this.drawFloatingPrompt(ctx, w, camX);
     }
@@ -215,7 +260,7 @@ export class PixelRenderer {
 
     ctx.restore();
 
-    // 5. Overlays & HUD
+    // 5. Screen Overlays & HUD
     if (w.mode === 'login') {
       this.drawLoginOverlay(ctx, w);
     } else {
@@ -227,38 +272,41 @@ export class PixelRenderer {
   }
 
   // =========================================================================
-  // LOGIN SCREEN (Nova Campanha / Carregar Campanha)
+  // LOGIN SCREEN (Responsive Portrait + Landscape)
   // =========================================================================
   private drawLoginOverlay(ctx: CanvasRenderingContext2D, w: WorldState): void {
     ctx.fillStyle = 'rgba(5, 9, 17, 0.56)';
-    ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+    ctx.fillRect(0, 0, this.viewW, this.viewH);
 
-    const cx = LOGICAL_WIDTH / 2;
+    const cx = Math.round(this.viewW / 2);
+    const cy = Math.round(this.viewH * 0.45);
     const saved = getSavedCampaignSummary();
+
+    const titleY = Math.max(66, cy - 42);
 
     // Golden Crown Emblem
     ctx.fillStyle = '#f7c948';
-    ctx.fillRect(cx - 12, 34, 24, 6);
-    ctx.fillRect(cx - 12, 26, 5, 8);
-    ctx.fillRect(cx - 2, 22, 4, 12);
-    ctx.fillRect(cx + 7, 26, 5, 8);
+    ctx.fillRect(cx - 12, titleY - 40, 24, 6);
+    ctx.fillRect(cx - 12, titleY - 48, 5, 8);
+    ctx.fillRect(cx - 2, titleY - 52, 4, 12);
+    ctx.fillRect(cx + 7, titleY - 48, 5, 8);
     ctx.fillStyle = '#fff5bd';
-    ctx.fillRect(cx - 10, 36, 20, 2);
+    ctx.fillRect(cx - 10, titleY - 38, 20, 2);
 
     ctx.textAlign = 'center';
     ctx.fillStyle = '#fff4d1';
     ctx.font = 'bold 28px Georgia, serif';
-    ctx.fillText('CORONA', cx, 74);
+    ctx.fillText('CORONA', cx, titleY);
 
     ctx.fillStyle = '#9ec4e0';
     ctx.font = '8px monospace';
-    ctx.fillText('SAGAS DO NORTE', cx, 88);
+    ctx.fillText(t('subtitle'), cx, titleY + 14);
 
-    // Button 1: Nova Campanha
-    const btnW = 190;
+    const btnW = Math.min(200, this.viewW - 28);
     const btnH = 26;
-    const bx = cx - btnW / 2;
-    const by1 = 108;
+    const bx = Math.round(cx - btnW / 2);
+    const by1 = titleY + 34;
+
     ctx.fillStyle = 'rgba(20, 32, 48, 0.92)';
     ctx.fillRect(bx, by1, btnW, btnH);
     ctx.strokeStyle = '#efc462';
@@ -266,11 +314,10 @@ export class PixelRenderer {
     ctx.strokeRect(bx + 0.5, by1 + 0.5, btnW - 1, btnH - 1);
     ctx.fillStyle = '#ffe58a';
     ctx.font = 'bold 9px monospace';
-    ctx.fillText('NOVA CAMPANHA', cx, by1 + 16);
+    ctx.fillText(t('new_campaign'), cx, by1 + 16);
     this.addHit('login_new', bx, by1, btnW, btnH);
 
-    // Button 2: Carregar Campanha
-    const by2 = 142;
+    const by2 = by1 + 34;
     ctx.fillStyle = saved ? 'rgba(16, 28, 42, 0.92)' : 'rgba(14, 18, 25, 0.65)';
     ctx.fillRect(bx, by2, btnW, 34);
     ctx.strokeStyle = saved ? 'rgba(140, 210, 255, 0.7)' : 'rgba(120, 136, 155, 0.25)';
@@ -280,72 +327,79 @@ export class PixelRenderer {
       drawShieldEmblem(ctx, saved.crest, bx + 20, by2 + 17, 9);
       ctx.textAlign = 'left';
       ctx.fillStyle = '#d9eeff';
-      ctx.font = 'bold 9px monospace';
-      ctx.fillText('CARREGAR CAMPANHA', bx + 38, by2 + 14);
+      ctx.font = 'bold 8px monospace';
+      ctx.fillText(t('load_campaign'), bx + 36, by2 + 14);
       ctx.fillStyle = '#95b2cc';
       ctx.font = '7px monospace';
-      ctx.fillText(`Dia ${saved.day} · ${saved.villagers} súditos · ${saved.gold} ouro`, bx + 38, by2 + 25);
+      ctx.fillText(
+        `${t('day_short')} ${saved.day} · ${saved.villagers} ${t('subjects')} · ${saved.gold} ${t('gold')}`,
+        bx + 36,
+        by2 + 25
+      );
       this.addHit('login_load', bx, by2, btnW, 34);
     } else {
       ctx.textAlign = 'center';
       ctx.fillStyle = '#6f8194';
       ctx.font = 'bold 8px monospace';
-      ctx.fillText('CARREGAR CAMPANHA', cx, by2 + 15);
+      ctx.fillText(t('load_campaign'), cx, by2 + 15);
       ctx.font = '7px monospace';
-      ctx.fillText('(Nenhuma campanha salva ainda)', cx, by2 + 26);
+      ctx.fillText(t('no_save'), cx, by2 + 26);
     }
 
-    // Subtle hint bar
     ctx.textAlign = 'center';
     const pulse = 0.6 + 0.4 * Math.sin(w.elapsed * 3);
     ctx.fillStyle = `rgba(205, 224, 242, ${pulse.toFixed(2)})`;
     ctx.font = '7px monospace';
-    ctx.fillText('Clique em uma opção ou pressione ESPAÇO para Nova Campanha', cx, 198);
+    ctx.fillText(t('login_hint'), cx, by2 + 54);
     ctx.textAlign = 'left';
   }
 
   // =========================================================================
-  // CHARACTER SELECT SCREEN (Black Background, 20s Timer, Starter Skins Only)
+  // CHARACTER SELECT SCREEN (Black Background, 20s Timer, Portrait + Landscape)
   // =========================================================================
   private drawCharSelectScreen(ctx: CanvasRenderingContext2D, w: WorldState): void {
-    // Pure black background
     ctx.fillStyle = '#040507';
-    ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+    ctx.fillRect(0, 0, this.viewW, this.viewH);
 
-    // Subtle dark vignette spotlight under character
-    const spot = ctx.createRadialGradient(132, 162, 6, 132, 162, 76);
-    spot.addColorStop(0, 'rgba(239, 196, 98, 0.14)');
-    spot.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = spot;
-    ctx.fillRect(40, 80, 190, 140);
+    const isPortrait = this.viewW < 380;
+    const rightSafe = 40; // Reserve space for top-right Menu button
+    const padX = isPortrait ? 12 : 18;
 
-    // Header + 20s Countdown Timer
     ctx.fillStyle = '#fff2c9';
-    ctx.font = 'bold 12px Georgia, serif';
-    ctx.fillText('ESCOLHA SEU MONARCA', 18, 26);
+    ctx.font = isPortrait ? 'bold 10px Georgia, serif' : 'bold 12px Georgia, serif';
+    ctx.fillText(t('choose_monarch'), padX, 22);
     ctx.fillStyle = '#8b99a8';
     ctx.font = '7px monospace';
-    ctx.fillText('Skins iniciais · Cavalo comum (lento, sem super poderes)', 18, 38);
+    ctx.fillText(t('starter_note'), padX, 34);
 
     const secs = Math.ceil(w.selectTimer);
     const urgent = secs <= 5;
     ctx.textAlign = 'right';
     ctx.fillStyle = urgent ? '#ff646c' : '#efc462';
-    ctx.font = 'bold 14px monospace';
-    ctx.fillText(`${secs}s`, LOGICAL_WIDTH - 18, 28);
+    ctx.font = 'bold 13px monospace';
+    ctx.fillText(`${secs}s`, this.viewW - rightSafe, 24);
     ctx.textAlign = 'left';
 
-    // Countdown progress bar
+    const barW = this.viewW - padX * 2;
     ctx.fillStyle = '#181e28';
-    ctx.fillRect(18, 45, LOGICAL_WIDTH - 36, 3);
+    ctx.fillRect(padX, 41, barW, 3);
     ctx.fillStyle = urgent ? '#ff646c' : '#efc462';
-    ctx.fillRect(18, 45, Math.round(((LOGICAL_WIDTH - 36) * w.selectTimer) / 20), 3);
+    ctx.fillRect(padX, 41, Math.round((barW * w.selectTimer) / 20), 3);
 
-    // Left Preview Pedestal: 3x pixel art mounted Monarch
+    const previewX = isPortrait ? Math.round(this.viewW / 2) : Math.round(this.viewW * 0.28);
+    const previewY = isPortrait ? 148 : Math.round(this.viewH * 0.7);
+    const previewScale = isPortrait ? 2.6 : 3;
+
+    const spot = ctx.createRadialGradient(previewX, previewY - 24, 6, previewX, previewY - 24, 68);
+    spot.addColorStop(0, 'rgba(239, 196, 98, 0.14)');
+    spot.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = spot;
+    ctx.fillRect(previewX - 72, previewY - 94, 144, 110);
+
     ctx.fillStyle = '#161b24';
-    ctx.fillRect(62, 188, 140, 6);
+    ctx.fillRect(previewX - 58, previewY + 1, 116, 5);
     ctx.fillStyle = '#2b3442';
-    ctx.fillRect(72, 187, 120, 2);
+    ctx.fillRect(previewX - 48, previewY, 96, 2);
 
     const previewMonarch: Monarch = {
       ...w.monarchs[0],
@@ -354,20 +408,22 @@ export class PixelRenderer {
       sprinting: false,
       hasCrown: true,
     };
-    this.drawMonarch(ctx, w, previewMonarch, 0, 3, 132, 187);
+    this.drawMonarch(ctx, w, previewMonarch, 0, previewScale, previewX, previewY);
 
-    // Right Selector Panel (4 rows)
     const rows = [
-      { key: 'outfit', label: 'TRAJE', val: OUTFIT_PRESETS[w.appearance.outfitIndex].name },
-      { key: 'hair', label: 'CABELO', val: HAIR_PRESETS[w.appearance.hairIndex].name },
-      { key: 'horse', label: 'CAVALO INICIAL', val: HORSE_PRESETS[w.appearance.horseIndex].name },
-      { key: 'crown', label: 'COROA', val: CROWN_PRESETS[w.appearance.crownIndex].name },
+      { key: 'outfit', label: t('outfit'), val: OUTFIT_PRESETS[w.appearance.outfitIndex].name },
+      { key: 'hair', label: t('hair'), val: HAIR_PRESETS[w.appearance.hairIndex].name },
+      { key: 'horse', label: t('horse'), val: HORSE_PRESETS[w.appearance.horseIndex].name },
+      { key: 'crown', label: t('crown'), val: CROWN_PRESETS[w.appearance.crownIndex].name },
     ];
 
-    const px = 236;
-    const pw = 224;
+    const px = isPortrait ? padX : Math.round(this.viewW * 0.5);
+    const pw = isPortrait ? this.viewW - padX * 2 : Math.min(232, this.viewW - px - padX);
+    const startY = isPortrait ? 168 : 62;
+    const rowStep = isPortrait ? 33 : 34;
+
     rows.forEach((row, idx) => {
-      const ry = 66 + idx * 34;
+      const ry = startY + idx * rowStep;
       const focused = this.charSelectFocusRow === idx;
       ctx.fillStyle = focused ? '#141a24' : '#0c0f15';
       ctx.fillRect(px, ry, pw, 28);
@@ -382,46 +438,47 @@ export class PixelRenderer {
       ctx.font = 'bold 8px monospace';
       ctx.fillText(row.val, px + 26, ry + 22);
 
-      // Prev arrow button
       ctx.fillStyle = '#1d2533';
       ctx.fillRect(px + 4, ry + 5, 18, 18);
       ctx.fillStyle = '#efc462';
       ctx.textAlign = 'center';
       ctx.font = 'bold 9px monospace';
       ctx.fillText('◀', px + 13, ry + 17);
-      this.addHit(`char_prev_${row.key}`, px + 4, ry + 5, 18, 18);
+      this.addHit(`char_prev_${row.key}`, px + 2, ry + 2, 24, 24);
 
-      // Next arrow button
       ctx.fillStyle = '#1d2533';
       ctx.fillRect(px + pw - 22, ry + 5, 18, 18);
       ctx.fillStyle = '#efc462';
       ctx.fillText('▶', px + pw - 13, ry + 17);
-      this.addHit(`char_next_${row.key}`, px + pw - 22, ry + 5, 18, 18);
+      this.addHit(`char_next_${row.key}`, px + pw - 24, ry + 2, 24, 24);
       ctx.textAlign = 'left';
     });
 
-    // Bottom buttons: Randomize + Confirm
+    const btnY = startY + rows.length * rowStep + 6;
+    const randW = Math.round(pw * 0.4);
+    const confW = pw - randW - 6;
+
     ctx.fillStyle = '#161d29';
-    ctx.fillRect(px, 212, 92, 24);
+    ctx.fillRect(px, btnY, randW, 24);
     ctx.strokeStyle = '#3b485c';
-    ctx.strokeRect(px + 0.5, 212.5, 91, 23);
+    ctx.strokeRect(px + 0.5, btnY + 0.5, randW - 1, 23);
     ctx.textAlign = 'center';
     ctx.fillStyle = '#cbd8e6';
     ctx.font = 'bold 8px monospace';
-    ctx.fillText('ALEATÓRIO', px + 46, 227);
-    this.addHit('char_random', px, 212, 92, 24);
+    ctx.fillText(t('random'), px + randW / 2, btnY + 15);
+    this.addHit('char_random', px, btnY, randW, 24);
 
     ctx.fillStyle = '#2b2412';
-    ctx.fillRect(px + 100, 212, 124, 24);
+    ctx.fillRect(px + randW + 6, btnY, confW, 24);
     ctx.strokeStyle = '#efc462';
-    ctx.strokeRect(px + 100.5, 212.5, 123, 23);
+    ctx.strokeRect(px + randW + 6.5, btnY + 0.5, confW - 1, 23);
     ctx.fillStyle = '#ffe58a';
-    ctx.fillText('CONFIRMAR [ESPAÇO]', px + 162, 227);
-    this.addHit('char_confirm', px + 100, 212, 124, 24);
+    ctx.fillText(t('confirm'), px + randW + 6 + confW / 2, btnY + 15);
+    this.addHit('char_confirm', px + randW + 6, btnY, confW, 24);
 
     ctx.fillStyle = '#6f7e91';
     ctx.font = '7px monospace';
-    ctx.fillText('↑/↓ Categoria  ·  ←/→ Trocar  ·  Ou clique nos botões', LOGICAL_WIDTH / 2, 256);
+    ctx.fillText(t('char_hint'), Math.round(this.viewW / 2), Math.min(this.viewH - 10, btnY + 40));
     ctx.textAlign = 'left';
   }
 
@@ -429,44 +486,47 @@ export class PixelRenderer {
   // CREST SELECT SCREEN (Black Background, Centered Shield, 30s Timer)
   // =========================================================================
   private drawCrestSelectScreen(ctx: CanvasRenderingContext2D, w: WorldState): void {
-    // Pure black background
     ctx.fillStyle = '#040507';
-    ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+    ctx.fillRect(0, 0, this.viewW, this.viewH);
 
-    const cx = LOGICAL_WIDTH / 2;
+    const cx = Math.round(this.viewW / 2);
+    const isPortrait = this.viewW < 390;
+    const padX = isPortrait ? 12 : 18;
+    const rightSafe = 40;
 
-    // Header + 30s Countdown Timer
     ctx.fillStyle = '#fff2c9';
-    ctx.font = 'bold 12px Georgia, serif';
-    ctx.fillText('FORJE O BRASÃO DO SEU CLÃ', 18, 25);
+    ctx.font = isPortrait ? 'bold 10px Georgia, serif' : 'bold 12px Georgia, serif';
+    ctx.fillText(t('forge_crest'), padX, 22);
     ctx.fillStyle = '#8b99a8';
     ctx.font = '7px monospace';
-    ctx.fillText('Escolha definitiva: define bandeiras, tropas e castelo', 18, 36);
+    ctx.fillText(t('crest_note'), padX, 33);
 
     const secs = Math.ceil(w.selectTimer);
     const urgent = secs <= 6;
     ctx.textAlign = 'right';
     ctx.fillStyle = urgent ? '#ff646c' : '#efc462';
-    ctx.font = 'bold 14px monospace';
-    ctx.fillText(`${secs}s`, LOGICAL_WIDTH - 18, 27);
+    ctx.font = 'bold 13px monospace';
+    ctx.fillText(`${secs}s`, this.viewW - rightSafe, 24);
     ctx.textAlign = 'left';
 
+    const barW = this.viewW - padX * 2;
     ctx.fillStyle = '#181e28';
-    ctx.fillRect(18, 43, LOGICAL_WIDTH - 36, 3);
+    ctx.fillRect(padX, 40, barW, 3);
     ctx.fillStyle = urgent ? '#ff646c' : '#efc462';
-    ctx.fillRect(18, 43, Math.round(((LOGICAL_WIDTH - 36) * w.selectTimer) / 30), 3);
+    ctx.fillRect(padX, 40, Math.round((barW * w.selectTimer) / 30), 3);
 
-    // Subtle halo behind centered shield
-    const halo = ctx.createRadialGradient(cx, 122, 10, cx, 122, 62);
+    const shieldY = isPortrait ? 104 : Math.round(this.viewH * 0.45);
+    const shieldR = isPortrait ? 36 : 42;
+
+    const halo = ctx.createRadialGradient(cx, shieldY, 10, cx, shieldY, shieldR + 20);
     halo.addColorStop(0, 'rgba(255, 255, 255, 0.08)');
     halo.addColorStop(1, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = halo;
-    ctx.fillRect(cx - 64, 58, 128, 128);
+    ctx.fillRect(cx - shieldR - 20, shieldY - shieldR - 20, (shieldR + 20) * 2, (shieldR + 20) * 2);
 
-    // LARGE CENTERED NORDIC SHIELD!
-    drawShieldEmblem(ctx, w.crest, cx, 122, 42);
+    // CENTERED NORDIC SHIELD
+    drawShieldEmblem(ctx, w.crest, cx, shieldY, shieldR);
 
-    // Left controls: Shape & Pattern
     const shapeName = SHIELD_SHAPES.find((s) => s.id === w.crest.shape)?.name ?? '';
     const patternName = SHIELD_PATTERNS.find((p) => p.id === w.crest.pattern)?.name ?? '';
 
@@ -481,38 +541,35 @@ export class PixelRenderer {
       focused: boolean
     ) => {
       ctx.fillStyle = focused ? '#141a24' : '#0b0e14';
-      ctx.fillRect(x, y, width, 34);
+      ctx.fillRect(x, y, width, 32);
       ctx.strokeStyle = focused ? '#efc462' : '#252d3a';
-      ctx.strokeRect(x + 0.5, y + 0.5, width - 1, 33);
+      ctx.strokeRect(x + 0.5, y + 0.5, width - 1, 31);
 
       ctx.fillStyle = '#7e8fa3';
       ctx.font = '6px monospace';
       ctx.textAlign = 'center';
-      ctx.fillText(title, x + width / 2, y + 10);
+      ctx.fillText(title, x + width / 2, y + 9);
       ctx.fillStyle = '#eef4fa';
       ctx.font = 'bold 7px monospace';
-      ctx.fillText(value, x + width / 2, y + 25);
+      ctx.fillText(value, x + width / 2, y + 23);
 
       ctx.fillStyle = '#1c2432';
-      ctx.fillRect(x + 3, y + 14, 16, 16);
-      ctx.fillRect(x + width - 19, y + 14, 16, 16);
+      ctx.fillRect(x + 3, y + 12, 16, 16);
+      ctx.fillRect(x + width - 19, y + 12, 16, 16);
       ctx.fillStyle = '#efc462';
       ctx.font = 'bold 8px monospace';
-      ctx.fillText('◀', x + 11, y + 25);
-      ctx.fillText('▶', x + width - 11, y + 25);
+      ctx.fillText('◀', x + 11, y + 23);
+      ctx.fillText('▶', x + width - 11, y + 23);
       ctx.textAlign = 'left';
 
-      this.addHit(prevId, x + 3, y + 14, 16, 16);
-      this.addHit(nextId, x + width - 19, y + 14, 16, 16);
+      this.addHit(prevId, x, y + 8, 22, 24);
+      this.addHit(nextId, x + width - 22, y + 8, 22, 24);
     };
 
-    drawSelectorBox(18, 72, 152, 'FORMATO DO ESCUDO', shapeName, 'crest_prev_shape', 'crest_next_shape', this.crestSelectFocusRow === 0);
-    drawSelectorBox(18, 118, 152, 'PADRÃO NÓRDICO', patternName, 'crest_prev_pattern', 'crest_next_pattern', this.crestSelectFocusRow === 1);
-
-    // Right controls: Color 1 (Background) & Color 2 (Pattern) Swatches
     const drawColorPalette = (
       x: number,
       y: number,
+      width: number,
       title: string,
       colors: Array<{ name: string; hex: string }>,
       activeHex: string,
@@ -520,79 +577,102 @@ export class PixelRenderer {
       focused: boolean
     ) => {
       ctx.fillStyle = focused ? '#141a24' : '#0b0e14';
-      ctx.fillRect(x, y, 152, 42);
+      ctx.fillRect(x, y, width, 40);
       ctx.strokeStyle = focused ? '#efc462' : '#252d3a';
-      ctx.strokeRect(x + 0.5, y + 0.5, 151, 41);
+      ctx.strokeRect(x + 0.5, y + 0.5, width - 1, 39);
 
       ctx.fillStyle = '#7e8fa3';
       ctx.font = '6px monospace';
       ctx.fillText(title, x + 7, y + 10);
 
+      const avail = width - 14;
+      const step = avail / 8;
+      const sw = Math.max(10, Math.floor(step - 3));
       colors.forEach((c, i) => {
-        const sx = x + 7 + (i % 8) * 17.5;
-        const sy = y + 16;
+        const sx = Math.round(x + 7 + i * step);
+        const sy = y + 15;
         const isSel = c.hex === activeHex;
         ctx.fillStyle = c.hex;
-        ctx.fillRect(Math.round(sx), sy, 14, 18);
+        ctx.fillRect(sx, sy, sw, 18);
         ctx.strokeStyle = isSel ? '#ffffff' : 'rgba(255,255,255,0.22)';
         ctx.lineWidth = isSel ? 1.5 : 1;
-        ctx.strokeRect(Math.round(sx) + 0.5, sy + 0.5, 13, 17);
-        this.addHit(`${prefix}_${i}`, Math.round(sx), sy, 14, 18);
+        ctx.strokeRect(sx + 0.5, sy + 0.5, sw - 1, 17);
+        this.addHit(`${prefix}_${i}`, sx - 1, sy - 2, sw + 2, 22);
       });
       ctx.lineWidth = 1;
     };
 
-    drawColorPalette(310, 72, 'COR 1 — FUNDO DO ESCUDO', CREST_BG_COLORS, w.crest.primaryColor, 'crest_bg', this.crestSelectFocusRow === 2);
-    drawColorPalette(310, 122, 'COR 2 — PADRÃO NÓRDICO', CREST_FG_COLORS, w.crest.secondaryColor, 'crest_fg', this.crestSelectFocusRow === 3);
+    let confirmY: number;
+    if (isPortrait) {
+      const boxW = this.viewW - padX * 2;
+      const topY = shieldY + shieldR + 14;
+      drawSelectorBox(padX, topY, boxW, t('shield_shape'), shapeName, 'crest_prev_shape', 'crest_next_shape', this.crestSelectFocusRow === 0);
+      drawSelectorBox(padX, topY + 37, boxW, t('nordic_pattern'), patternName, 'crest_prev_pattern', 'crest_next_pattern', this.crestSelectFocusRow === 1);
+      drawColorPalette(padX, topY + 75, boxW, t('color_bg'), CREST_BG_COLORS, w.crest.primaryColor, 'crest_bg', this.crestSelectFocusRow === 2);
+      drawColorPalette(padX, topY + 120, boxW, t('color_fg'), CREST_FG_COLORS, w.crest.secondaryColor, 'crest_fg', this.crestSelectFocusRow === 3);
+      confirmY = topY + 168;
+    } else {
+      const sideW = Math.min(156, Math.max(126, Math.round(this.viewW * 0.31)));
+      const rightX = this.viewW - padX - sideW;
+      const rowY = Math.round(this.viewH * 0.27);
+      drawSelectorBox(padX, rowY, sideW, t('shield_shape'), shapeName, 'crest_prev_shape', 'crest_next_shape', this.crestSelectFocusRow === 0);
+      drawSelectorBox(padX, rowY + 44, sideW, t('nordic_pattern'), patternName, 'crest_prev_pattern', 'crest_next_pattern', this.crestSelectFocusRow === 1);
+      drawColorPalette(rightX, rowY, sideW, t('color_bg'), CREST_BG_COLORS, w.crest.primaryColor, 'crest_bg', this.crestSelectFocusRow === 2);
+      drawColorPalette(rightX, rowY + 46, sideW, t('color_fg'), CREST_FG_COLORS, w.crest.secondaryColor, 'crest_fg', this.crestSelectFocusRow === 3);
 
-    // Mini Flag preview underneath shield showing how clan colors look!
-    ctx.fillStyle = '#6f7e91';
-    ctx.font = '6px monospace';
+      // Flag preview under centered shield
+      const flagY = shieldY + shieldR + 18;
+      ctx.fillStyle = '#6f7e91';
+      ctx.font = '6px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(t('flag_preview'), cx, flagY);
+      ctx.fillStyle = '#7a6855';
+      ctx.fillRect(cx - 18, flagY + 5, 2, 20);
+      ctx.fillStyle = w.crest.primaryColor;
+      ctx.fillRect(cx - 16, flagY + 6, 30, 12);
+      ctx.fillStyle = w.crest.secondaryColor;
+      ctx.fillRect(cx - 16, flagY + 10, 30, 3);
+      ctx.fillRect(cx - 5, flagY + 6, 3, 12);
+
+      confirmY = Math.min(this.viewH - 42, flagY + 34);
+    }
+
+    const cbW = Math.min(200, this.viewW - padX * 2);
+    const cbX = Math.round(cx - cbW / 2);
     ctx.textAlign = 'center';
-    ctx.fillText('PRÉVIA DA BANDEIRA DO CLÃ', cx, 184);
-    ctx.fillStyle = '#7a6855';
-    ctx.fillRect(cx - 20, 190, 2, 24);
-    ctx.fillStyle = w.crest.primaryColor;
-    ctx.fillRect(cx - 18, 191, 34, 14);
-    ctx.fillStyle = w.crest.secondaryColor;
-    ctx.fillRect(cx - 18, 196, 34, 4);
-    ctx.fillRect(cx - 6, 191, 4, 14);
-
-    // Confirm Button
-    const cbW = 198;
-    const cbX = cx - cbW / 2;
     ctx.fillStyle = '#2b2412';
-    ctx.fillRect(cbX, 224, cbW, 24);
+    ctx.fillRect(cbX, confirmY, cbW, 24);
     ctx.strokeStyle = '#efc462';
-    ctx.strokeRect(cbX + 0.5, 224.5, cbW - 1, 23);
+    ctx.strokeRect(cbX + 0.5, confirmY + 0.5, cbW - 1, 23);
     ctx.fillStyle = '#ffe58a';
     ctx.font = 'bold 8px monospace';
-    ctx.fillText('SELAR BRASÃO E INICIAR [ESPAÇO]', cx, 239);
-    this.addHit('crest_confirm', cbX, 224, cbW, 24);
+    ctx.fillText(t('seal_crest'), cx, confirmY + 15);
+    this.addHit('crest_confirm', cbX, confirmY, cbW, 24);
 
     ctx.fillStyle = '#6f7e91';
     ctx.font = '7px monospace';
-    ctx.fillText('↑/↓ Selecionar opção  ·  ←/→ Mudar  ·  Após confirmar, não pode alterar', cx, 261);
+    ctx.fillText(t('crest_hint'), cx, Math.min(this.viewH - 8, confirmY + 36));
     ctx.textAlign = 'left';
   }
 
   // =========================================================================
-  // WORLD RENDERING
+  // SKY, PARALLAX & WORLD LAYERS (Responsive width/height)
   // =========================================================================
   private drawStarsAndAurora(ctx: CanvasRenderingContext2D, w: WorldState, nightFactor: number): void {
     for (const s of this.stars) {
       const twinkle = 0.45 + 0.55 * Math.sin(w.elapsed * 2.4 + s.phase);
       ctx.fillStyle = `rgba(225, 240, 255, ${(nightFactor * twinkle * 0.85).toFixed(2)})`;
-      ctx.fillRect(s.x, s.y, s.size, s.size);
+      ctx.fillRect(Math.round(s.rx * this.viewW), Math.round(s.ry * this.waterScreenY), s.size, s.size);
     }
 
     const auroraAlpha = Math.max(0, (nightFactor - 0.35) / 0.65) * (w.isBloodMoon ? 0.35 : 0.68);
     if (auroraAlpha <= 0.02) return;
 
-    for (let x = 0; x < LOGICAL_WIDTH; x += 3) {
+    const auroraBaseY = Math.round(this.waterScreenY * 0.24);
+    for (let x = 0; x < this.viewW; x += 3) {
       const wave1 = Math.sin(x * 0.018 + w.elapsed * 0.45) * 14;
       const wave2 = Math.cos(x * 0.032 - w.elapsed * 0.32) * 8;
-      const baseY = 38 + wave1 + wave2;
+      const baseY = auroraBaseY + wave1 + wave2;
       const colHeight = 26 + Math.sin(x * 0.05 + w.elapsed * 0.9) * 12;
       const shimmer = 0.55 + 0.45 * Math.sin(x * 0.09 + w.elapsed * 1.6);
 
@@ -613,11 +693,12 @@ export class PixelRenderer {
   }
 
   private drawCelestial(ctx: CanvasRenderingContext2D, w: WorldState): void {
-    const t = w.timeOfDay;
-    if (t < 0.5) {
-      const p = t / 0.5;
-      const x = Math.round(45 + p * (LOGICAL_WIDTH - 90));
-      const y = Math.round(135 - Math.sin(p * Math.PI) * 98);
+    const tVal = w.timeOfDay;
+    const skyH = this.groundScreenY;
+    if (tVal < 0.5) {
+      const p = tVal / 0.5;
+      const x = Math.round(32 + p * (this.viewW - 64));
+      const y = Math.round(skyH * 0.62 - Math.sin(p * Math.PI) * (skyH * 0.44));
       ctx.fillStyle = 'rgba(255, 224, 150, 0.18)';
       ctx.beginPath();
       ctx.arc(x, y, 16, 0, Math.PI * 2);
@@ -627,9 +708,9 @@ export class PixelRenderer {
       ctx.fillStyle = '#fffbe3';
       ctx.fillRect(x - 4, y - 4, 8, 8);
     } else {
-      const p = (t - 0.5) / 0.5;
-      const x = Math.round(65 + p * (LOGICAL_WIDTH - 130));
-      const y = Math.round(115 - Math.sin(p * Math.PI) * 76);
+      const p = (tVal - 0.5) / 0.5;
+      const x = Math.round(40 + p * (this.viewW - 80));
+      const y = Math.round(skyH * 0.56 - Math.sin(p * Math.PI) * (skyH * 0.36));
       ctx.fillStyle = w.isBloodMoon ? 'rgba(255, 70, 80, 0.28)' : 'rgba(180, 220, 255, 0.18)';
       ctx.beginPath();
       ctx.arc(x, y, 15, 0, Math.PI * 2);
@@ -644,10 +725,11 @@ export class PixelRenderer {
   private drawClouds(ctx: CanvasRenderingContext2D, w: WorldState, camX: number, nightFactor: number): void {
     const cloudCol = lerpRGB({ r: 220, g: 232, b: 242 }, { r: 34, g: 52, b: 74 }, nightFactor);
     ctx.fillStyle = rgbStr(cloudCol, 0.48);
-    for (let i = 0; i < 6; i++) {
-      const worldOffset = (i * 110 + w.elapsed * (3 + (i % 3)) - camX * 0.08) % (LOGICAL_WIDTH + 120);
-      const cx = Math.round(((worldOffset + LOGICAL_WIDTH + 120) % (LOGICAL_WIDTH + 120)) - 60);
-      const cy = 28 + (i % 3) * 20;
+    const wrapW = this.viewW + 120;
+    for (let i = 0; i < 7; i++) {
+      const worldOffset = (i * 110 + w.elapsed * (3 + (i % 3)) - camX * 0.08) % wrapW;
+      const cx = Math.round(((worldOffset + wrapW) % wrapW) - 60);
+      const cy = Math.round(this.groundScreenY * 0.18) + (i % 3) * 20;
       const cw = 36 + (i % 3) * 18;
       ctx.fillRect(cx, cy, cw, 5);
       ctx.fillRect(cx + 8, cy - 4, cw - 16, 4);
@@ -669,7 +751,7 @@ export class PixelRenderer {
 
     const span = 120;
     const offset = Math.floor(camX * 0.12) % span;
-    for (let i = -1; i < Math.ceil(LOGICAL_WIDTH / span) + 2; i++) {
+    for (let i = -1; i < Math.ceil(this.viewW / span) + 2; i++) {
       const bx = i * span - offset;
       const peakH = 72 + (Math.abs(i * 37) % 3) * 18;
       const peakX = bx + 54;
@@ -698,7 +780,7 @@ export class PixelRenderer {
     const midSpan = 96;
     const midOff = Math.floor(camX * 0.28) % midSpan;
     ctx.fillStyle = rgbStr(midCol);
-    for (let i = -1; i < Math.ceil(LOGICAL_WIDTH / midSpan) + 2; i++) {
+    for (let i = -1; i < Math.ceil(this.viewW / midSpan) + 2; i++) {
       const bx = i * midSpan - midOff;
       const h = 42 + (Math.abs(i * 19) % 3) * 12;
       ctx.beginPath();
@@ -715,7 +797,7 @@ export class PixelRenderer {
     const step = 20;
     const off = Math.floor(camX * 0.5) % step;
     ctx.fillStyle = rgbStr(pineCol);
-    for (let i = -1; i < Math.ceil(LOGICAL_WIDTH / step) + 2; i++) {
+    for (let i = -1; i < Math.ceil(this.viewW / step) + 2; i++) {
       const tx = i * step - off;
       const h = 24 + (Math.abs(i * 13) % 4) * 7;
       const topY = GROUND_Y - h;
@@ -732,7 +814,7 @@ export class PixelRenderer {
     mistGrad.addColorStop(0, 'rgba(170, 204, 224, 0)');
     mistGrad.addColorStop(1, `rgba(170, 204, 224, ${lerp(0.16, 0.05, nightFactor).toFixed(2)})`);
     ctx.fillStyle = mistGrad;
-    ctx.fillRect(0, GROUND_Y - 26, LOGICAL_WIDTH, 26);
+    ctx.fillRect(0, GROUND_Y - 26, this.viewW, 26);
   }
 
   private drawGround(ctx: CanvasRenderingContext2D, camX: number, nightFactor: number): void {
@@ -742,20 +824,20 @@ export class PixelRenderer {
     const stoneBank = lerpRGB({ r: 74, g: 82, b: 92 }, { r: 24, g: 32, b: 42 }, nightFactor);
 
     ctx.fillStyle = rgbStr(grassTop);
-    ctx.fillRect(0, GROUND_Y - 2, LOGICAL_WIDTH, 3);
+    ctx.fillRect(0, GROUND_Y - 2, this.viewW, 3);
     ctx.fillStyle = rgbStr(soil);
-    ctx.fillRect(0, GROUND_Y + 1, LOGICAL_WIDTH, WATER_Y - GROUND_Y - 1);
+    ctx.fillRect(0, GROUND_Y + 1, this.viewW, 4);
     ctx.fillStyle = rgbStr(stoneBank);
-    ctx.fillRect(0, WATER_Y - 2, LOGICAL_WIDTH, 2);
+    ctx.fillRect(0, GROUND_Y + 4, this.viewW, 2);
 
     const startTile = Math.floor(camX / 24);
-    for (let t = startTile; t <= startTile + Math.ceil(LOGICAL_WIDTH / 24) + 1; t++) {
-      const sx = t * 24 - camX;
-      if ((t * 7) % 3 === 0) {
+    for (let tile = startTile; tile <= startTile + Math.ceil(this.viewW / 24) + 1; tile++) {
+      const sx = tile * 24 - camX;
+      if ((tile * 7) % 3 === 0) {
         ctx.fillStyle = rgbStr(snowEdge);
         ctx.fillRect(sx + 2, GROUND_Y - 2, 10, 2);
       }
-      if ((t * 11) % 4 === 0) {
+      if ((tile * 11) % 4 === 0) {
         ctx.fillStyle = rgbStr(grassTop);
         ctx.fillRect(sx + 14, GROUND_Y - 4, 2, 2);
         ctx.fillRect(sx + 17, GROUND_Y - 3, 1, 2);
@@ -768,22 +850,22 @@ export class PixelRenderer {
     const midGreen = lerpRGB({ r: 44, g: 76, b: 66 }, { r: 16, g: 31, b: 38 }, nightFactor);
     const snow = lerpRGB({ r: 212, g: 228, b: 238 }, { r: 72, g: 98, b: 118 }, nightFactor);
 
-    for (const t of w.trees) {
-      if (t.chopped) continue;
-      const sx = Math.round(t.x - camX);
-      if (sx < -32 || sx > LOGICAL_WIDTH + 32) continue;
+    for (const tr of w.trees) {
+      if (tr.chopped) continue;
+      const sx = Math.round(tr.x - camX);
+      if (sx < -32 || sx > this.viewW + 32) continue;
 
-      const shake = t.hitShake > 0 ? Math.round(Math.sin(w.elapsed * 60) * 2) : 0;
-      const sway = Math.round(Math.sin(w.elapsed * 1.1 + t.swayOffset) * 1);
+      const shake = tr.hitShake > 0 ? Math.round(Math.sin(w.elapsed * 60) * 2) : 0;
+      const sway = Math.round(Math.sin(w.elapsed * 1.1 + tr.swayOffset) * 1);
       const bx = sx + shake;
 
       ctx.fillStyle = '#3d2c24';
       ctx.fillRect(bx - 2, GROUND_Y - 14, 4, 14);
 
-      const tiers = 3 + (t.variant === 2 ? 1 : 0);
+      const tiers = 3 + (tr.variant === 2 ? 1 : 0);
       for (let tier = 0; tier < tiers; tier++) {
-        const ty = GROUND_Y - 12 - tier * Math.floor((t.height - 14) / tiers);
-        const halfW = 13 - tier * 2.5 + (t.variant === 1 ? 2 : 0);
+        const ty = GROUND_Y - 12 - tier * Math.floor((tr.height - 14) / tiers);
+        const halfW = 13 - tier * 2.5 + (tr.variant === 1 ? 2 : 0);
         const topY = ty - 16;
         const shift = Math.round((sway * (tier + 1)) / tiers);
 
@@ -800,7 +882,7 @@ export class PixelRenderer {
         ctx.fillRect(bx + shift - Math.floor(halfW * 0.55), topY + 7, Math.floor(halfW * 0.5), 2);
       }
 
-      if (t.marked) {
+      if (tr.marked) {
         const bob = Math.round(Math.sin(w.elapsed * 6) * 1.5);
         ctx.fillStyle = '#f7d265';
         ctx.fillRect(bx - 3, GROUND_Y - 22 + bob, 6, 6);
@@ -820,22 +902,19 @@ export class PixelRenderer {
     for (const r of w.rocks) {
       if (r.mined) continue;
       const sx = Math.round(r.x - camX);
-      if (sx < -24 || sx > LOGICAL_WIDTH + 24) continue;
+      if (sx < -24 || sx > this.viewW + 24) continue;
 
       const shake = r.hitShake > 0 ? Math.round(Math.sin(w.elapsed * 60) * 2) : 0;
       const bx = sx + shake;
       const rw = r.variant === 0 ? 18 : r.variant === 1 ? 22 : 16;
       const rh = r.variant === 0 ? 13 : r.variant === 1 ? 15 : 11;
 
-      // Main Nordic boulder silhouette
       ctx.fillStyle = rgbStr(stoneDark);
       ctx.fillRect(bx - Math.floor(rw / 2), GROUND_Y - rh + 3, rw, rh - 3);
       ctx.fillStyle = rgbStr(stoneMid);
       ctx.fillRect(bx - Math.floor(rw / 2) + 2, GROUND_Y - rh, rw - 5, rh - 2);
-      // Snow cap
       ctx.fillStyle = rgbStr(snow);
       ctx.fillRect(bx - Math.floor(rw / 2) + 3, GROUND_Y - rh, rw - 7, 2);
-      // Cracks / mineral gleam
       ctx.fillStyle = '#dce8f2';
       ctx.fillRect(bx + 1, GROUND_Y - Math.floor(rh * 0.55), 2, 2);
 
@@ -854,7 +933,7 @@ export class PixelRenderer {
   private drawCamps(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     for (const camp of w.camps) {
       const sx = Math.round(camp.x - camX);
-      if (sx < -40 || sx > LOGICAL_WIDTH + 40) continue;
+      if (sx < -40 || sx > this.viewW + 40) continue;
 
       ctx.fillStyle = '#5c4638';
       ctx.beginPath();
@@ -879,7 +958,7 @@ export class PixelRenderer {
   private drawChests(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     for (const chest of w.chests) {
       const sx = Math.round(chest.x - camX);
-      if (sx < -24 || sx > LOGICAL_WIDTH + 24) continue;
+      if (sx < -24 || sx > this.viewW + 24) continue;
 
       ctx.fillStyle = '#5c3b21';
       ctx.fillRect(sx - 7, GROUND_Y - 9, 14, 9);
@@ -904,7 +983,7 @@ export class PixelRenderer {
   private drawPortals(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     for (const p of w.portals) {
       const sx = Math.round(p.x - camX);
-      if (sx < -48 || sx > LOGICAL_WIDTH + 48) continue;
+      if (sx < -48 || sx > this.viewW + 48) continue;
       if (p.destroyed) {
         ctx.fillStyle = '#3b424d';
         ctx.fillRect(sx - 16, GROUND_Y - 6, 32, 6);
@@ -935,13 +1014,12 @@ export class PixelRenderer {
 
   private drawHall(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     const sx = Math.round(w.hall.x - camX);
-    if (sx < -80 || sx > LOGICAL_WIDTH + 80) return;
+    if (sx < -80 || sx > this.viewW + 80) return;
 
     const lvl = w.hall.level;
     const primary = w.crest.primaryColor;
     const secondary = w.crest.secondaryColor;
 
-    // Twin Clan Flagpoles flanking the central Hall once campfire is lit!
     if (lvl >= 1) {
       const wave = Math.round(Math.sin(w.elapsed * 4.5) * 1.5);
       for (const fx of [-38, 38]) {
@@ -975,15 +1053,12 @@ export class PixelRenderer {
       ctx.closePath();
       ctx.fill();
 
-      // Colored clan ridge trim
       ctx.fillStyle = secondary;
       ctx.fillRect(sx - hallW / 2 - 4, GROUND_Y - hallH + 3, hallW + 8, 2);
 
-      // Snow on roof ridge
       ctx.fillStyle = '#d4e6f2';
       ctx.fillRect(sx - 6, GROUND_Y - hallH - (lvl === 3 ? 22 : 16), 12, 3);
 
-      // Clan Banner + Mini Shield Emblem on the Castle/Hall!
       ctx.fillStyle = primary;
       ctx.fillRect(sx - 18, GROUND_Y - hallH + 6, 8, 15);
       ctx.fillRect(sx + 10, GROUND_Y - hallH + 6, 8, 15);
@@ -993,7 +1068,6 @@ export class PixelRenderer {
 
       drawShieldEmblem(ctx, w.crest, sx, GROUND_Y - hallH - 2, 7);
 
-      // Warm lit doorway
       ctx.fillStyle = '#241710';
       ctx.fillRect(sx - 6, GROUND_Y - 16, 12, 16);
       ctx.fillStyle = '#ffae42';
@@ -1006,7 +1080,6 @@ export class PixelRenderer {
       }
     }
 
-    // Campfire stones
     ctx.fillStyle = '#5a6470';
     ctx.fillRect(sx - 10, GROUND_Y - 3, 20, 3);
     ctx.fillStyle = '#3b281c';
@@ -1037,9 +1110,8 @@ export class PixelRenderer {
 
     for (const shop of w.shops) {
       const sx = Math.round(shop.x - camX);
-      if (sx < -32 || sx > LOGICAL_WIDTH + 32) continue;
+      if (sx < -32 || sx > this.viewW + 32) continue;
 
-      // Timber rack stand with clan-colored awning trim
       ctx.fillStyle = '#4e3524';
       ctx.fillRect(sx - 13, GROUND_Y - 22, 3, 22);
       ctx.fillRect(sx + 10, GROUND_Y - 22, 3, 22);
@@ -1073,7 +1145,6 @@ export class PixelRenderer {
           ctx.fillStyle = '#6b472b';
           ctx.fillRect(tx + 1, GROUND_Y - 7, 2, 3);
         } else {
-          // Seed pouch
           ctx.fillStyle = '#8c6943';
           ctx.fillRect(tx, GROUND_Y - 11, 4, 5);
           ctx.fillStyle = '#7bd468';
@@ -1087,57 +1158,562 @@ export class PixelRenderer {
     if (w.hall.level < 1) return;
     for (const farm of w.farms) {
       const sx = Math.round(farm.x - camX);
-      if (sx < -36 || sx > LOGICAL_WIDTH + 36) continue;
+      if (sx < -42 || sx > this.viewW + 42) continue;
 
       if (farm.level === 0) {
-        // Fertile Nordic soil marker
         ctx.fillStyle = '#473628';
         ctx.fillRect(sx - 18, GROUND_Y - 2, 36, 3);
         ctx.fillStyle = '#6da658';
         ctx.fillRect(sx - 8, GROUND_Y - 5, 2, 3);
         ctx.fillRect(sx + 6, GROUND_Y - 5, 2, 3);
       } else {
-        // Fenced Nordic barley farm
+        const span = farm.level === 3 ? 28 : farm.level === 2 ? 24 : 20;
         ctx.fillStyle = '#4a3524';
-        ctx.fillRect(sx - 20, GROUND_Y - 3, 40, 3);
-        // Fence posts
+        ctx.fillRect(sx - span, GROUND_Y - 3, span * 2, 3);
         ctx.fillStyle = '#6b4c32';
-        ctx.fillRect(sx - 20, GROUND_Y - 10, 2, 10);
-        ctx.fillRect(sx + 18, GROUND_Y - 10, 2, 10);
-        ctx.fillRect(sx - 20, GROUND_Y - 7, 40, 2);
+        ctx.fillRect(sx - span, GROUND_Y - 10, 2, 10);
+        ctx.fillRect(sx + span - 2, GROUND_Y - 10, 2, 10);
+        ctx.fillRect(sx - span, GROUND_Y - 7, span * 2, 2);
 
-        // Growing golden barley stalks
         const stalkH = Math.max(2, Math.round(3 + farm.cropProgress * 9));
-        for (let bx = -16; bx <= 14; bx += 4) {
+        for (let bx = -span + 4; bx <= span - 6; bx += 4) {
           ctx.fillStyle = farm.cropProgress > 0.7 ? '#e6c050' : '#73b359';
           ctx.fillRect(sx + bx, GROUND_Y - 3 - stalkH, 2, stalkH);
         }
 
-        // Lv2 farmhouse shed with clan banner
         if (farm.level >= 2) {
           ctx.fillStyle = '#5c412c';
           ctx.fillRect(sx - 8, GROUND_Y - 18, 16, 15);
           ctx.fillStyle = w.crest.primaryColor;
           ctx.fillRect(sx - 10, GROUND_Y - 21, 20, 4);
         }
+        if (farm.level >= 3) {
+          ctx.fillStyle = w.crest.secondaryColor;
+          ctx.fillRect(sx - 10, GROUND_Y - 22, 20, 1);
+          ctx.fillStyle = '#ffae42';
+          ctx.fillRect(sx - 2, GROUND_Y - 12, 4, 5);
+        }
+
+        // Farmer capacity badge (0/5 .. 5/5)
+        const count = w.villagers.filter(
+          (v) => v.role === 'producer' && v.assignedFarmId === farm.id && v.state !== 'embarked'
+        ).length;
+        ctx.fillStyle = 'rgba(8, 14, 24, 0.72)';
+        ctx.fillRect(sx - 11, GROUND_Y - 28, 22, 7);
+        ctx.fillStyle = count >= MAX_FARMERS_PER_FARM ? '#ffe066' : '#a7e89b';
+        ctx.font = '6px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${count}/${MAX_FARMERS_PER_FARM}`, sx, GROUND_Y - 22);
+        ctx.textAlign = 'left';
       }
 
       if (farm.underConstruction) {
         ctx.fillStyle = 'rgba(10,14,20,0.8)';
-        ctx.fillRect(sx - 12, GROUND_Y - 26, 24, 4);
+        ctx.fillRect(sx - 12, GROUND_Y - 34, 24, 4);
         ctx.fillStyle = '#82e08a';
-        ctx.fillRect(sx - 11, GROUND_Y - 25, Math.round(22 * farm.buildProgress), 2);
+        ctx.fillRect(sx - 11, GROUND_Y - 33, Math.round(22 * farm.buildProgress), 2);
       }
     }
+  }
+
+  private drawBoatAndDock(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    // 1. Harbor Dock (Required on Islands 2..7 before sailing freely!)
+    if (w.dock.required) {
+      const dx = Math.round(w.dock.x - camX);
+      if (dx > -48 && dx < this.viewW + 48) {
+        if (!w.dock.built) {
+          // Unbuilt dock pilings on the shore
+          ctx.fillStyle = '#523b2a';
+          ctx.fillRect(dx - 16, GROUND_Y - 8, 3, 12);
+          ctx.fillRect(dx, GROUND_Y - 10, 3, 14);
+          ctx.fillRect(dx + 14, GROUND_Y - 8, 3, 12);
+          if (w.dock.coinsPaid > 0 || w.dock.underConstruction) {
+            ctx.fillStyle = 'rgba(10,14,20,0.8)';
+            ctx.fillRect(dx - 16, GROUND_Y - 18, 32, 4);
+            ctx.fillStyle = '#efc462';
+            ctx.fillRect(dx - 15, GROUND_Y - 17, Math.round(30 * w.dock.buildProgress), 2);
+          }
+        } else {
+          // Completed Nordic Harbor Pier with lantern & clan flag!
+          ctx.fillStyle = '#5c3f28';
+          ctx.fillRect(dx - 20, GROUND_Y - 7, 40, 4);
+          ctx.fillStyle = '#3d2818';
+          ctx.fillRect(dx - 18, GROUND_Y - 3, 3, 9);
+          ctx.fillRect(dx - 2, GROUND_Y - 3, 3, 9);
+          ctx.fillRect(dx + 14, GROUND_Y - 3, 3, 9);
+          // Pier lantern post
+          ctx.fillStyle = '#4a3220';
+          ctx.fillRect(dx + 14, GROUND_Y - 24, 2, 17);
+          ctx.fillStyle = '#ffbe4f';
+          ctx.fillRect(dx + 12, GROUND_Y - 22, 4, 4);
+          ctx.fillStyle = w.crest.primaryColor;
+          ctx.fillRect(dx - 18, GROUND_Y - 20, 10, 6);
+          ctx.fillStyle = w.crest.secondaryColor;
+          ctx.fillRect(dx - 18, GROUND_Y - 18, 10, 2);
+        }
+      }
+    }
+
+    // 2. Drakkar Viking Longship
+    const bx = Math.round(w.boat.x - camX);
+    if (bx > -64 && bx < this.viewW + 64) {
+      const prog = w.boat.built ? 1 : w.boat.buildProgress;
+      // Hull
+      ctx.fillStyle = '#4e331f';
+      ctx.fillRect(bx - 22, GROUND_Y - 8, 44, 8);
+      if (prog > 0.25) {
+        ctx.fillStyle = '#6e492c';
+        ctx.fillRect(bx - 26, GROUND_Y - 11, 52, 5);
+        // Curved Nordic prows
+        ctx.fillRect(bx - 29, GROUND_Y - 17, 4, 8);
+        ctx.fillRect(bx + 25, GROUND_Y - 17, 4, 8);
+      }
+      if (prog > 0.6) {
+        // Dragon head prow + Mast
+        ctx.fillStyle = '#8c603a';
+        ctx.fillRect(bx + 27, GROUND_Y - 22, 5, 6);
+        ctx.fillStyle = w.crest.secondaryColor;
+        ctx.fillRect(bx + 29, GROUND_Y - 21, 2, 2);
+        ctx.fillStyle = '#4a311e';
+        ctx.fillRect(bx - 1, GROUND_Y - 38, 3, 28);
+      }
+      if (w.boat.built) {
+        // Striped Clan-Colored Viking Sail!
+        ctx.fillStyle = w.crest.primaryColor;
+        ctx.fillRect(bx - 14, GROUND_Y - 35, 28, 18);
+        ctx.fillStyle = w.crest.secondaryColor;
+        for (let sx = -10; sx <= 10; sx += 8) {
+          ctx.fillRect(bx + sx, GROUND_Y - 35, 3, 18);
+        }
+        // Mini shields lining the Drakkar hull
+        for (let sx = -16; sx <= 16; sx += 8) {
+          ctx.fillStyle = w.crest.primaryColor;
+          ctx.fillRect(bx + sx - 2, GROUND_Y - 11, 5, 5);
+          ctx.fillStyle = w.crest.secondaryColor;
+          ctx.fillRect(bx + sx - 1, GROUND_Y - 10, 3, 3);
+        }
+
+        // Embarked Crew summary badge above boat when anyone boarded
+        const totalCrew =
+          w.boat.crewArchers + w.boat.crewWarriors + w.boat.crewProducers + w.boat.crewBuilders;
+        if (totalCrew > 0) {
+          ctx.fillStyle = 'rgba(8, 14, 24, 0.8)';
+          ctx.fillRect(bx - 28, GROUND_Y - 47, 56, 9);
+          ctx.fillStyle = '#ffe58a';
+          ctx.font = '6px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(
+            `A${w.boat.crewArchers} E${w.boat.crewWarriors} F${w.boat.crewProducers} C${w.boat.crewBuilders}`,
+            bx,
+            GROUND_Y - 40
+          );
+          ctx.textAlign = 'left';
+        }
+      } else if (w.boat.coinsPaid > 0 || w.boat.underConstruction) {
+        ctx.fillStyle = 'rgba(10,14,20,0.82)';
+        ctx.fillRect(bx - 18, GROUND_Y - 22, 36, 4);
+        ctx.fillStyle = '#efc462';
+        ctx.fillRect(bx - 17, GROUND_Y - 21, Math.round(34 * prog), 2);
+      }
+    }
+
+    // 3. Ship Crew Bell (Sino — 1 coin to call up to 4 of each class!)
+    if (w.boat.built && w.dock.built) {
+      const bellX = Math.round(w.boat.bellX - camX);
+      if (bellX > -24 && bellX < this.viewW + 24) {
+        ctx.fillStyle = '#4f3523';
+        ctx.fillRect(bellX - 1, GROUND_Y - 20, 2, 20);
+        ctx.fillRect(bellX - 5, GROUND_Y - 20, 10, 2);
+        const swing = w.boat.bellRung ? Math.round(Math.sin(w.elapsed * 8) * 1) : 0;
+        ctx.fillStyle = '#f2c74e';
+        ctx.fillRect(bellX - 2 + swing, GROUND_Y - 18, 5, 5);
+        ctx.fillStyle = '#fff3b0';
+        ctx.fillRect(bellX - 1 + swing, GROUND_Y - 17, 2, 2);
+      }
+    }
+  }
+
+  private drawShrinesAndPuzzle(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    // 1. Nordic God Shrine (Thor, Freya, Odin, Loki — 1 per island!)
+    if (w.godShrine) {
+      const sx = Math.round(w.godShrine.x - camX);
+      if (sx > -48 && sx < this.viewW + 48) {
+        const def = GOD_DEFS[w.godShrine.godId];
+        const isActive = w.activeGod === w.godShrine.godId;
+        const pulse = 0.65 + 0.35 * Math.sin(w.elapsed * 3.5);
+
+        // Sacred aura when blessed or unlocked
+        if (w.godShrine.unlocked) {
+          ctx.fillStyle = isActive
+            ? `rgba(255, 224, 110, ${(0.22 * pulse).toFixed(2)})`
+            : `rgba(126, 245, 255, ${(0.14 * pulse).toFixed(2)})`;
+          ctx.beginPath();
+          ctx.arc(sx, GROUND_Y - 22, isActive ? 24 : 18, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Carved Nordic stone dais + standing monolith
+        ctx.fillStyle = '#475261';
+        ctx.fillRect(sx - 15, GROUND_Y - 5, 30, 5);
+        ctx.fillStyle = '#5c697a';
+        ctx.fillRect(sx - 11, GROUND_Y - 9, 22, 4);
+        ctx.fillStyle = '#38424f';
+        ctx.fillRect(sx - 8, GROUND_Y - 36, 16, 27);
+        ctx.fillStyle = '#68778a';
+        ctx.fillRect(sx - 6, GROUND_Y - 40, 12, 5);
+
+        // Glowing God Rune Emblem
+        ctx.fillStyle = w.godShrine.unlocked ? def.color : '#8da3b8';
+        ctx.fillRect(sx - 3, GROUND_Y - 30, 6, 12);
+        ctx.fillStyle = isActive ? '#ffffff' : '#182230';
+        ctx.fillRect(sx - 1, GROUND_Y - 27, 2, 6);
+
+        // God name plate
+        ctx.fillStyle = 'rgba(8, 14, 24, 0.78)';
+        ctx.fillRect(sx - 18, GROUND_Y - 50, 36, 8);
+        ctx.fillStyle = def.color;
+        ctx.font = 'bold 6px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(def.name.toUpperCase(), sx, GROUND_Y - 44);
+        ctx.textAlign = 'left';
+      }
+    }
+
+    // 2. Special Mount Shrine (1 per island 2..7!)
+    if (w.mountShrine) {
+      const sx = Math.round(w.mountShrine.x - camX);
+      if (sx > -48 && sx < this.viewW + 48) {
+        const def = MOUNT_DEFS[w.mountShrine.mountId];
+        const lang = getLanguage();
+        // Nordic wooden archway stable
+        ctx.fillStyle = '#4f3622';
+        ctx.fillRect(sx - 16, GROUND_Y - 28, 3, 28);
+        ctx.fillRect(sx + 13, GROUND_Y - 28, 3, 28);
+        ctx.fillStyle = '#3b4a5c';
+        ctx.fillRect(sx - 19, GROUND_Y - 32, 38, 5);
+        ctx.fillStyle = def.accentColor;
+        ctx.fillRect(sx - 18, GROUND_Y - 28, 36, 2);
+
+        // Mount emblem silhouette inside stable
+        const bob = Math.round(Math.sin(w.elapsed * 3) * 1);
+        ctx.fillStyle = w.mountShrine.unlocked ? def.accentColor : '#6e7f91';
+        if (w.mountShrine.mountId === 'harpy') {
+          ctx.fillRect(sx - 5, GROUND_Y - 15 + bob, 10, 6);
+          ctx.fillRect(sx - 11, GROUND_Y - 18 + bob, 6, 4);
+          ctx.fillRect(sx + 5, GROUND_Y - 18 + bob, 6, 4);
+        } else if (w.mountShrine.mountId === 'bear') {
+          ctx.fillRect(sx - 8, GROUND_Y - 15, 16, 9);
+          ctx.fillRect(sx - 7, GROUND_Y - 6, 4, 6);
+          ctx.fillRect(sx + 3, GROUND_Y - 6, 4, 6);
+        } else {
+          ctx.fillRect(sx - 7, GROUND_Y - 13, 14, 6);
+          ctx.fillRect(sx - 6, GROUND_Y - 7, 2, 7);
+          ctx.fillRect(sx + 4, GROUND_Y - 7, 2, 7);
+          ctx.fillRect(sx + 4, GROUND_Y - 18, 4, 6);
+        }
+
+        ctx.fillStyle = 'rgba(8, 14, 24, 0.78)';
+        ctx.fillRect(sx - 24, GROUND_Y - 42, 48, 8);
+        ctx.fillStyle = def.accentColor;
+        ctx.font = 'bold 5.5px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(def.name[lang].slice(0, 12).toUpperCase(), sx, GROUND_Y - 36);
+        ctx.textAlign = 'left';
+      }
+    }
+
+    // 3. Island Rune Puzzle (3 Standing Stones -> +2 Diamonds & +4 Gold!)
+    if (w.puzzle) {
+      const sx = Math.round(w.puzzle.x - camX);
+      if (sx > -48 && sx < this.viewW + 48) {
+        const offsets = [-13, 0, 13];
+        const heights = [20, 26, 20];
+        offsets.forEach((ox, idx) => {
+          const lit = w.puzzle!.solved || idx < w.puzzle!.coinsPaid;
+          const h = heights[idx];
+          ctx.fillStyle = '#333e4d';
+          ctx.fillRect(sx + ox - 4, GROUND_Y - h, 8, h);
+          ctx.fillStyle = '#4e5d70';
+          ctx.fillRect(sx + ox - 3, GROUND_Y - h - 2, 6, 3);
+          ctx.fillStyle = lit ? '#7ef5ff' : '#1b2633';
+          ctx.fillRect(sx + ox - 1, GROUND_Y - h + 4, 2, Math.max(6, h - 10));
+        });
+        if (w.puzzle.solved) {
+          ctx.fillStyle = 'rgba(126, 245, 255, 0.16)';
+          ctx.fillRect(sx - 16, GROUND_Y - 46, 32, 46);
+        }
+      }
+    }
+  }
+
+  private drawFireTrailsAndLightning(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    // Fire Steed burning ground trails
+    for (const f of w.fireTrails) {
+      const sx = Math.round(f.x - camX);
+      if (sx < -20 || sx > this.viewW + 20) continue;
+      const ratio = Math.min(1, f.life / f.maxLife);
+      const flick = Math.floor(w.elapsed * 16 + f.x) % 3;
+      ctx.fillStyle = 'rgba(255, 92, 24, 0.85)';
+      ctx.fillRect(sx - 6, GROUND_Y - Math.round((7 + flick) * ratio), 12, Math.round((7 + flick) * ratio));
+      ctx.fillStyle = '#ffbe42';
+      ctx.fillRect(sx - 4, GROUND_Y - Math.round((5 + (flick % 2)) * ratio), 8, Math.round((5 + (flick % 2)) * ratio));
+      ctx.fillStyle = '#fff5ad';
+      ctx.fillRect(sx - 2, GROUND_Y - Math.round(3 * ratio), 4, Math.round(3 * ratio));
+    }
+
+    // Sleipnir Lightning Bolts
+    for (const bolt of w.lightningBolts) {
+      const x1 = Math.round(bolt.fromX - camX);
+      const y1 = Math.round(bolt.fromY);
+      const x2 = Math.round(bolt.toX - camX);
+      const y2 = Math.round(bolt.toY);
+      const midX = Math.round((x1 + x2) / 2 + (Math.sin(w.elapsed * 70) > 0 ? 7 : -7));
+      const midY = Math.round((y1 + y2) / 2 - 4);
+
+      ctx.save();
+      ctx.strokeStyle = '#7ef5ff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(midX, midY);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#fff8c4';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(midX, midY);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Ice Horse Frost Wave / Bear Roar Shockwave Ring
+    const m = w.monarchs[0];
+    if (m && m.roarTimer > 0) {
+      const sx = Math.round(m.x - camX);
+      const prog = 1 - m.roarTimer / 0.65;
+      const radius = 14 + prog * 125;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, (1 - prog) * 0.85);
+      ctx.strokeStyle = m.mount === 'ice_horse' ? '#7ef2ff' : '#ffba52';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(sx, GROUND_Y - 14, radius, Math.PI, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // =========================================================================
+  // KINGDOM TWO CROWNS STYLE WORLD MAP (7 NORDIC ISLANDS)
+  // =========================================================================
+  private drawWorldMapScreen(ctx: CanvasRenderingContext2D, w: WorldState): void {
+    const lang = getLanguage();
+    const isPortrait = this.viewW < 380;
+
+    // Deep dark Nordic ocean chart backdrop
+    const seaGrad = ctx.createLinearGradient(0, 0, 0, this.viewH);
+    seaGrad.addColorStop(0, '#07101c');
+    seaGrad.addColorStop(0.5, '#0b1b2d');
+    seaGrad.addColorStop(1, '#060c15');
+    ctx.fillStyle = seaGrad;
+    ctx.fillRect(0, 0, this.viewW, this.viewH);
+
+    // Subtle nautical grid lines
+    ctx.strokeStyle = 'rgba(130, 175, 210, 0.08)';
+    ctx.lineWidth = 1;
+    for (let x = 24; x < this.viewW; x += 36) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, this.viewH);
+      ctx.stroke();
+    }
+    for (let y = 24; y < this.viewH; y += 36) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(this.viewW, y);
+      ctx.stroke();
+    }
+
+    // Header
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffe58a';
+    ctx.font = isPortrait ? 'bold 10px Georgia, serif' : 'bold 13px Georgia, serif';
+    ctx.fillText(t('map_title'), Math.round(this.viewW / 2), 22);
+    ctx.fillStyle = '#9ec4e0';
+    ctx.font = '7px monospace';
+    ctx.fillText(
+      w.worldMapContext === 'sail' ? t('map_sail_hint') : t('map_view_hint'),
+      Math.round(this.viewW / 2),
+      34
+    );
+
+    const chartTop = 44;
+    const chartH = Math.max(96, this.viewH - 134);
+    const getPos = (idx: number) => {
+      const def = ISLAND_DEFINITIONS[idx];
+      if (isPortrait) {
+        const col = idx % 2;
+        const row = Math.floor(idx / 2);
+        return {
+          x: Math.round(this.viewW * (col === 0 ? 0.28 : 0.72)),
+          y: Math.round(chartTop + 20 + row * Math.min(48, (chartH - 28) / 3.2)),
+        };
+      }
+      return {
+        x: Math.round(24 + def.mapX * (this.viewW - 48)),
+        y: Math.round(chartTop + def.mapY * chartH),
+      };
+    };
+
+    // Dotted Nordic sea route connecting islands I -> VII
+    ctx.strokeStyle = 'rgba(239, 196, 98, 0.35)';
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ISLAND_DEFINITIONS.forEach((_, i) => {
+      const p = getPos(i);
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const romans = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+
+    ISLAND_DEFINITIONS.forEach((def, idx) => {
+      const pos = getPos(idx);
+      const prog = w.islands.find((item) => item.id === def.id);
+      const isCurrent = def.id === w.currentIsland;
+      const isSelected = def.id === this.selectedMapIsland;
+      const colonized = Boolean(prog?.colonized);
+
+      // Selection ring
+      if (isSelected) {
+        ctx.strokeStyle = '#ffe066';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, 17 + Math.sin(w.elapsed * 4) * 1.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+
+      // Island silhouette mound
+      ctx.fillStyle = colonized ? '#2d5948' : '#1f2c3b';
+      ctx.beginPath();
+      ctx.ellipse(pos.x, pos.y + 3, 14, 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = colonized ? '#51876a' : '#35485c';
+      ctx.beginPath();
+      ctx.moveTo(pos.x - 10, pos.y + 3);
+      ctx.lineTo(pos.x, pos.y - 8);
+      ctx.lineTo(pos.x + 10, pos.y + 3);
+      ctx.closePath();
+      ctx.fill();
+
+      // Clan Flag on colonized islands + Golden Crown on current island
+      if (colonized) {
+        ctx.fillStyle = '#c4a478';
+        ctx.fillRect(pos.x + 2, pos.y - 14, 1, 10);
+        ctx.fillStyle = w.crest.primaryColor;
+        ctx.fillRect(pos.x + 3, pos.y - 14, 6, 4);
+        ctx.fillStyle = w.crest.secondaryColor;
+        ctx.fillRect(pos.x + 3, pos.y - 12, 6, 1);
+      }
+      if (isCurrent) {
+        this.drawCrownSprite(ctx, w, pos.x - 3, pos.y - 14);
+      }
+
+      // Roman numeral label
+      ctx.fillStyle = isSelected ? '#ffe58a' : '#d6e5f2';
+      ctx.font = 'bold 7px monospace';
+      ctx.fillText(romans[idx], pos.x, pos.y + 17);
+
+      this.addHit(`map_island_${def.id}`, pos.x - 18, pos.y - 18, 36, 38);
+    });
+
+    // Bottom Island Details Card
+    const selDef = getIslandDef(this.selectedMapIsland);
+    const selProg = w.islands.find((item) => item.id === selDef.id);
+    const cardW = Math.min(350, this.viewW - 20);
+    const cardX = Math.round((this.viewW - cardW) / 2);
+    const cardY = this.viewH - 78;
+
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.94)';
+    ctx.fillRect(cardX, cardY, cardW, 70);
+    ctx.strokeStyle = 'rgba(239, 196, 98, 0.6)';
+    ctx.strokeRect(cardX + 0.5, cardY + 0.5, cardW - 1, 69);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ffe58a';
+    ctx.font = 'bold 8px monospace';
+    ctx.fillText(selDef.name[lang], cardX + 10, cardY + 14);
+
+    const statusTxt =
+      selDef.id === w.currentIsland
+        ? t('map_current')
+        : selProg?.colonized
+          ? t('map_colonized')
+          : t('map_unexplored');
+    ctx.textAlign = 'right';
+    ctx.fillStyle = selDef.id === w.currentIsland ? '#ffe066' : selProg?.colonized ? '#7ee08f' : '#8da9c4';
+    ctx.font = 'bold 7px monospace';
+    ctx.fillText(statusTxt, cardX + cardW - 10, cardY + 14);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#c8dceb';
+    ctx.font = '6.5px monospace';
+    const godTxt = selDef.godId ? `Deus: ${GOD_DEFS[selDef.godId].name}` : 'Sem Deus';
+    const mountTxt = selDef.mountId ? ` · Montaria: ${MOUNT_DEFS[selDef.mountId].name[lang]}` : ' · Drakkar';
+    ctx.fillText(`${godTxt}${mountTxt}`, cardX + 10, cardY + 26);
+
+    const diamStr =
+      selDef.maxDiamonds > 0
+        ? `◆ ${selProg?.diamondsCollected ?? 0}/${selDef.maxDiamonds}`
+        : '⛵ Drakkar (30 + 10)';
+    const dockStr = selDef.id > 1 ? (selProg?.dockBuilt ? ' · Porto OK' : ' · Porto 30g') : '';
+    ctx.fillStyle = '#7ef5ff';
+    ctx.fillText(`${diamStr}${dockStr}`, cardX + 10, cardY + 38);
+
+    // Action buttons: Sail (if in sail context & different island) + Close
+    const canSailHere = w.worldMapContext === 'sail' && selDef.id !== w.currentIsland;
+    if (canSailHere) {
+      const btnW = 110;
+      const bx = cardX + cardW - btnW - 10;
+      const by = cardY + 44;
+      ctx.fillStyle = '#2b2412';
+      ctx.fillRect(bx, by, btnW, 20);
+      ctx.strokeStyle = '#efc462';
+      ctx.strokeRect(bx + 0.5, by + 0.5, btnW - 1, 19);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffe58a';
+      ctx.font = 'bold 8px monospace';
+      ctx.fillText(t('map_sail_btn'), bx + btnW / 2, by + 13);
+      this.addHit('map_sail_confirm', bx, by, btnW, 20);
+    }
+
+    const closeW = 90;
+    const closeX = cardX + 10;
+    const closeY = cardY + 44;
+    ctx.fillStyle = '#162030';
+    ctx.fillRect(closeX, closeY, closeW, 20);
+    ctx.strokeStyle = 'rgba(180, 210, 235, 0.45)';
+    ctx.strokeRect(closeX + 0.5, closeY + 0.5, closeW - 1, 19);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#d4e4f2';
+    ctx.font = 'bold 7px monospace';
+    ctx.fillText(t('map_close'), closeX + closeW / 2, closeY + 13);
+    this.addHit('map_close', closeX, closeY, closeW, 20);
+    ctx.textAlign = 'left';
   }
 
   private drawWalls(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     for (const wall of w.walls) {
       const sx = Math.round(wall.x - camX);
-      if (sx < -30 || sx > LOGICAL_WIDTH + 30) continue;
+      if (sx < -30 || sx > this.viewW + 30) continue;
 
       if (wall.destroyed) {
-        // Splintered ruined wall awaiting builders to reform!
         ctx.fillStyle = '#4a3221';
         ctx.fillRect(sx - 9, GROUND_Y - 7, 5, 7);
         ctx.fillRect(sx + 3, GROUND_Y - 5, 6, 5);
@@ -1164,7 +1740,6 @@ export class PixelRenderer {
           ctx.fillRect(sx + px, GROUND_Y - h - 4, 3, 4);
         }
 
-        // Player's custom Clan Shield Emblem mounted on Lv2+ walls!
         if (wall.level >= 2) {
           drawShieldEmblem(ctx, w.crest, sx, GROUND_Y - Math.floor(h * 0.58), 5.2);
           const fl = Math.floor(w.elapsed * 10 + wall.id) % 2;
@@ -1200,7 +1775,7 @@ export class PixelRenderer {
   private drawWildlife(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     for (const prey of w.wildlife) {
       const sx = Math.round(prey.x - camX);
-      if (sx < -20 || sx > LOGICAL_WIDTH + 20) continue;
+      if (sx < -20 || sx > this.viewW + 20) continue;
       const hop = Math.abs(prey.vx) > 2 ? Math.abs(Math.round(Math.sin(prey.animTime) * 2)) : 0;
 
       if (prey.kind === 'rabbit') {
@@ -1221,8 +1796,9 @@ export class PixelRenderer {
 
   private drawVillagers(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     for (const v of w.villagers) {
+      if (v.state === 'embarked') continue;
       const sx = Math.round(v.x - camX);
-      if (sx < -20 || sx > LOGICAL_WIDTH + 20) continue;
+      if (sx < -20 || sx > this.viewW + 20) continue;
       this.drawSingleVillager(ctx, w, v, sx);
     }
   }
@@ -1233,41 +1809,34 @@ export class PixelRenderer {
     const primary = w.crest.primaryColor;
     const secondary = w.crest.secondaryColor;
 
-    // Legs
     ctx.fillStyle = '#2d2522';
     ctx.fillRect(sx - 2 + stride, GROUND_Y - 4, 2, 4);
     ctx.fillRect(sx + 1 - stride, GROUND_Y - 4, 2, 4);
 
-    // Tunic / armor colored by clan crest!
     if (v.role === 'wanderer') ctx.fillStyle = '#6c5a4c';
     else if (v.role === 'peasant') ctx.fillStyle = '#9c866d';
     else if (v.role === 'warrior') ctx.fillStyle = primary;
     else if (v.role === 'archer') ctx.fillStyle = primary;
     else if (v.role === 'builder') ctx.fillStyle = '#4e5d6c';
-    else ctx.fillStyle = '#5c734b'; // producer
+    else ctx.fillStyle = '#5c734b';
 
     ctx.fillRect(sx - 3, GROUND_Y - 11 - walkBob, 6, 7);
 
-    // Clan secondary trim stripe on all recruited specialists
     if (v.role !== 'wanderer' && v.role !== 'peasant') {
       ctx.fillStyle = secondary;
       ctx.fillRect(sx - 3, GROUND_Y - 7 - walkBob, 6, 1);
     }
 
-    // Head
     ctx.fillStyle = '#e5be9e';
     ctx.fillRect(sx - 2, GROUND_Y - 15 - walkBob, 4, 4);
 
     if (v.role === 'warrior') {
-      // Iron Nordic helm + sword + clan-colored shield!
       ctx.fillStyle = '#9aa8b8';
       ctx.fillRect(sx - 3, GROUND_Y - 17 - walkBob, 6, 3);
       ctx.fillStyle = secondary;
       ctx.fillRect(sx - 1, GROUND_Y - 16 - walkBob, 2, 1);
-      // Sword
       ctx.fillStyle = '#d4e2f0';
       ctx.fillRect(sx + v.facing * 4, GROUND_Y - 16 - walkBob, 2, 7);
-      // Mini Clan Shield
       ctx.fillStyle = primary;
       ctx.fillRect(sx - v.facing * 4 - 1, GROUND_Y - 12 - walkBob, 4, 6);
       ctx.fillStyle = secondary;
@@ -1285,7 +1854,6 @@ export class PixelRenderer {
       ctx.fillStyle = '#8c6036';
       ctx.fillRect(sx + v.facing * 3, GROUND_Y - 12 - walkBob, 1, 5);
     } else if (v.role === 'producer') {
-      // Straw hat / hood + clan scarf + seed pouch
       ctx.fillStyle = '#c9a66b';
       ctx.fillRect(sx - 4, GROUND_Y - 16 - walkBob, 8, 2);
       ctx.fillStyle = primary;
@@ -1302,7 +1870,6 @@ export class PixelRenderer {
       ctx.fillRect(sx - 1, GROUND_Y - 20 - walkBob, 3, 3);
     }
 
-    // Visual tactical order arrow over unit when dispatched via Z/X/C/V!
     if (v.orderFlashTimer > 0) {
       ctx.fillStyle = secondary;
       ctx.font = 'bold 8px monospace';
@@ -1315,12 +1882,70 @@ export class PixelRenderer {
   private drawEnemies(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     for (const e of w.enemies) {
       const sx = Math.round(e.x - camX);
-      if (sx < -24 || sx > LOGICAL_WIDTH + 24) continue;
+      if (sx < -24 || sx > this.viewW + 24) continue;
       this.drawSingleEnemy(ctx, w, e, sx);
     }
   }
 
   private drawSingleEnemy(ctx: CanvasRenderingContext2D, w: WorldState, e: Enemy, sx: number): void {
+    const frozen = e.frozenTimer > 0;
+
+    // 1. Aerial Hel Crow (flying enemy hovering above walls!)
+    if (e.kind === 'hel_crow') {
+      const sy = Math.round(e.y);
+      const wing = Math.round(Math.sin(e.animTime * 1.8) * 4);
+      ctx.fillStyle = e.hitFlash > 0 ? '#ffffff' : frozen ? '#8ce8ff' : '#1d1629';
+      ctx.fillRect(sx - 5, sy - 3, 10, 5);
+      // Flapping wings
+      ctx.fillStyle = e.hitFlash > 0 ? '#ffffff' : '#322447';
+      ctx.fillRect(sx - 10, sy - 4 - wing, 6, 3);
+      ctx.fillRect(sx + 4, sy - 4 + wing, 6, 3);
+      // Glowing cyan eye & beak
+      ctx.fillStyle = '#6bf7ff';
+      ctx.fillRect(sx + e.facing * 3, sy - 2, 2, 1);
+      ctx.fillStyle = '#a89cb8';
+      ctx.fillRect(sx + e.facing * 5, sy - 1, 2, 2);
+      return;
+    }
+
+    // 2. Fast Spectral Wolf
+    if (e.kind === 'wolf_wraith') {
+      const stride = Math.round(Math.sin(e.animTime) * 3);
+      ctx.fillStyle = e.hitFlash > 0 ? '#ffffff' : frozen ? '#8ce8ff' : '#263a4d';
+      ctx.fillRect(sx - 6, GROUND_Y - 9, 12, 5);
+      ctx.fillRect(sx + e.facing * 5 - (e.facing < 0 ? 3 : 0), GROUND_Y - 12, 4, 4);
+      ctx.fillStyle = '#182430';
+      ctx.fillRect(sx - 5 + stride, GROUND_Y - 4, 2, 4);
+      ctx.fillRect(sx + 3 - stride, GROUND_Y - 4, 2, 4);
+      ctx.fillStyle = '#6bf7ff';
+      ctx.fillRect(sx + e.facing * 7, GROUND_Y - 11, 2, 1);
+      return;
+    }
+
+    // 3. Giant Frost Troll (boss wall-smasher!)
+    if (e.kind === 'frost_troll') {
+      const bob = Math.round(Math.abs(Math.sin(e.animTime)) * 2);
+      const stride = Math.round(Math.sin(e.animTime) * 3);
+      const baseY = GROUND_Y - bob;
+      ctx.fillStyle = e.hitFlash > 0 ? '#ffffff' : '#2d4759';
+      ctx.fillRect(sx - 6 + stride, GROUND_Y - 8, 4, 8);
+      ctx.fillRect(sx + 2 - stride, GROUND_Y - 8, 4, 8);
+      ctx.fillStyle = e.hitFlash > 0 ? '#ffffff' : frozen ? '#9bf0ff' : '#4a6e82';
+      ctx.fillRect(sx - 9, baseY - 26, 18, 18);
+      // Frosty shoulders & horned head
+      ctx.fillStyle = '#b9e0f2';
+      ctx.fillRect(sx - 9, baseY - 26, 18, 3);
+      ctx.fillStyle = '#3b596b';
+      ctx.fillRect(sx - 4, baseY - 32, 8, 6);
+      ctx.fillStyle = '#6bf7ff';
+      ctx.fillRect(sx + (e.facing > 0 ? 1 : -3), baseY - 30, 2, 2);
+      // Heavy club
+      ctx.fillStyle = '#5c4128';
+      ctx.fillRect(sx + e.facing * 9, baseY - 24, 4, 15);
+      return;
+    }
+
+    // 4. Draugr Raider & Draugr Brute
     const isBrute = e.kind === 'draugr_brute';
     const bob = Math.round(Math.abs(Math.sin(e.animTime)) * 2);
     const stride = Math.round(Math.sin(e.animTime) * 2.5);
@@ -1332,7 +1957,7 @@ export class PixelRenderer {
     ctx.fillRect(sx - 3 + stride, GROUND_Y - 5, 2, 5);
     ctx.fillRect(sx + 1 - stride, GROUND_Y - 5, 2, 5);
 
-    ctx.fillStyle = e.hitFlash > 0 ? '#ffffff' : isBrute ? '#2f4557' : '#253847';
+    ctx.fillStyle = e.hitFlash > 0 ? '#ffffff' : frozen ? '#8ce8ff' : isBrute ? '#2f4557' : '#253847';
     ctx.fillRect(sx - Math.floor(bodyW / 2), baseY - 5 - bodyH, bodyW, bodyH);
 
     ctx.fillStyle = e.hitFlash > 0 ? '#ffffff' : '#85a6b5';
@@ -1390,71 +2015,172 @@ export class PixelRenderer {
     const bob = moving ? Math.round(Math.abs(gallop) * (m.sprinting ? 2.5 : 1.5)) : 0;
     const legA = moving ? Math.round(gallop * 4) : 0;
     const legB = moving ? Math.round(-gallop * 4) : 0;
+    const flyOffset = scale === 1 ? Math.round(m.flyY) : 0;
 
     ctx.save();
     ctx.translate(screenX, groundY);
     ctx.scale(scale, scale);
 
-    // Shadow
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
-    ctx.fillRect(-11, -1, 22, 2);
+    // Ground shadow stays on ground even while Harpy flies overhead!
+    ctx.fillStyle = flyOffset > 4 ? 'rgba(0, 0, 0, 0.16)' : 'rgba(0, 0, 0, 0.28)';
+    const shadowW = Math.max(10, 22 - Math.round(flyOffset * 0.2));
+    ctx.fillRect(-Math.round(shadowW / 2), -1, shadowW, 2);
 
-    // Starter Horse legs
-    ctx.fillStyle = horse.legs;
-    ctx.fillRect(-7 + legA, -7, 2, 7);
-    ctx.fillRect(-4 + legB, -7, 2, 7);
-    ctx.fillRect(3 + legB, -7, 2, 7);
-    ctx.fillRect(6 + legA, -7, 2, 7);
+    ctx.translate(0, -flyOffset);
 
-    // Horse body
-    ctx.fillStyle = horse.coat;
-    ctx.fillRect(-9, -14 - bob, 18, 7);
-    // Tail & Mane
-    ctx.fillStyle = horse.mane;
-    ctx.fillRect(-f * 11, -13 - bob, 3, 5);
-    ctx.fillStyle = horse.coat;
-    ctx.fillRect(f * 6 - (f < 0 ? 4 : 0), -19 - bob, 5, 7);
-    ctx.fillRect(f * 9 - (f < 0 ? 5 : 0), -20 - bob, 5, 4);
-    ctx.fillStyle = horse.mane;
-    ctx.fillRect(f * 5 - (f < 0 ? 2 : 0), -19 - bob, 2, 5);
+    let riderYOffset = 0;
 
-    // Saddlecloth in Clan Colors!
+    if (m.mount === 'harpy') {
+      // Feathered Winged Harpy (flies high over enemies!)
+      const wing = Math.round(Math.sin(w.elapsed * (flyOffset > 2 ? 18 : 6)) * (flyOffset > 2 ? 6 : 2));
+      ctx.fillStyle = '#c49648';
+      ctx.fillRect(-3, -6, 2, 6);
+      ctx.fillRect(2, -6, 2, 6);
+      // Wings
+      ctx.fillStyle = '#6c428f';
+      ctx.fillRect(-14, -15 - bob - wing, 10, 5);
+      ctx.fillRect(4, -15 - bob - wing, 10, 5);
+      ctx.fillStyle = '#d4a6ff';
+      ctx.fillRect(-13, -15 - bob - wing, 8, 2);
+      ctx.fillRect(5, -15 - bob - wing, 8, 2);
+      // Body & feathered head
+      ctx.fillStyle = '#533070';
+      ctx.fillRect(-7, -14 - bob, 14, 8);
+      ctx.fillStyle = '#d4a6ff';
+      ctx.fillRect(f * 5 - (f < 0 ? 4 : 0), -18 - bob, 5, 6);
+      ctx.fillStyle = '#ffe066';
+      ctx.fillRect(f * 9 - (f < 0 ? 3 : 0), -17 - bob, 3, 2);
+    } else if (m.mount === 'wolf') {
+      // Sleek Giant Nordic Wolf
+      ctx.fillStyle = '#526578';
+      ctx.fillRect(-8 + legA, -6, 2, 6);
+      ctx.fillRect(-5 + legB, -6, 2, 6);
+      ctx.fillRect(4 + legB, -6, 2, 6);
+      ctx.fillRect(7 + legA, -6, 2, 6);
+      ctx.fillStyle = '#7e97b0';
+      ctx.fillRect(-10, -13 - bob, 20, 7);
+      // Bushy tail
+      ctx.fillStyle = '#a7c2db';
+      ctx.fillRect(-f * 13 - (f < 0 ? 2 : 0), -14 - bob, 5, 4);
+      // Snout + ears + icy eye
+      ctx.fillStyle = '#7e97b0';
+      ctx.fillRect(f * 7 - (f < 0 ? 4 : 0), -17 - bob, 6, 5);
+      ctx.fillRect(f * 11 - (f < 0 ? 3 : 0), -15 - bob, 4, 3);
+      ctx.fillStyle = '#cde4f7';
+      ctx.fillRect(f * 7, -19 - bob, 2, 2);
+      ctx.fillStyle = '#7ef5ff';
+      ctx.fillRect(f * 10, -16 - bob, 2, 1);
+      riderYOffset = 1;
+    } else if (m.mount === 'bear') {
+      // Heavy Armored Nordic War-Bear
+      ctx.fillStyle = '#4a321e';
+      ctx.fillRect(-9 + legA, -7, 4, 7);
+      ctx.fillRect(-4 + legB, -7, 4, 7);
+      ctx.fillRect(2 + legB, -7, 4, 7);
+      ctx.fillRect(6 + legA, -7, 4, 7);
+      ctx.fillStyle = '#6e492c';
+      ctx.fillRect(-11, -17 - bob, 22, 11);
+      // Steel shoulder armor plates
+      ctx.fillStyle = '#9aa8b8';
+      ctx.fillRect(-7, -17 - bob, 14, 4);
+      ctx.fillStyle = '#c9935b';
+      ctx.fillRect(-7, -15 - bob, 14, 1);
+      // Bear head & snout
+      ctx.fillStyle = '#6e492c';
+      ctx.fillRect(f * 8 - (f < 0 ? 6 : 0), -18 - bob, 7, 7);
+      ctx.fillStyle = '#4a321e';
+      ctx.fillRect(f * 13 - (f < 0 ? 3 : 0), -15 - bob, 3, 3);
+      ctx.fillStyle = '#ffd15c';
+      ctx.fillRect(f * 11, -17 - bob, 2, 1);
+      riderYOffset = -2;
+    } else if (m.mount === 'sleipnir') {
+      // Odin's 8-Legged Steed (Sleipnir!)
+      const legC = moving ? Math.round(Math.sin(m.animTime + 1.4) * 4) : 0;
+      const legD = moving ? Math.round(-Math.sin(m.animTime + 1.4) * 4) : 0;
+      ctx.fillStyle = '#b4c5d6';
+      ctx.fillRect(-8 + legA, -7, 2, 7);
+      ctx.fillRect(-6 + legC, -7, 2, 7);
+      ctx.fillRect(-4 + legB, -7, 2, 7);
+      ctx.fillRect(-2 + legD, -7, 2, 7);
+      ctx.fillRect(2 + legB, -7, 2, 7);
+      ctx.fillRect(4 + legD, -7, 2, 7);
+      ctx.fillRect(6 + legA, -7, 2, 7);
+      ctx.fillRect(8 + legC, -7, 2, 7);
+      // Majestic silver-white coat + golden rune mane
+      ctx.fillStyle = '#e2edf7';
+      ctx.fillRect(-10, -14 - bob, 20, 7);
+      ctx.fillStyle = '#ffe58a';
+      ctx.fillRect(-f * 12, -13 - bob, 4, 6);
+      ctx.fillStyle = '#e2edf7';
+      ctx.fillRect(f * 6 - (f < 0 ? 4 : 0), -20 - bob, 5, 7);
+      ctx.fillRect(f * 9 - (f < 0 ? 5 : 0), -21 - bob, 5, 4);
+      ctx.fillStyle = '#ffe58a';
+      ctx.fillRect(f * 5 - (f < 0 ? 2 : 0), -20 - bob, 2, 6);
+      ctx.fillStyle = '#7ef5ff';
+      ctx.fillRect(f * 10, -20 - bob, 2, 1);
+    } else {
+      // Starter Horse, Ice Horse, or Fire Horse
+      const isIce = m.mount === 'ice_horse';
+      const isFire = m.mount === 'fire_horse';
+      const legCol = isIce ? '#66c9e0' : isFire ? '#40211c' : horse.legs;
+      const coatCol = isIce ? '#b8f4ff' : isFire ? '#362321' : horse.coat;
+      const maneCol = isIce ? '#3ed4f7' : isFire ? (Math.floor(w.elapsed * 12) % 2 === 0 ? '#ff7d38' : '#ffe066') : horse.mane;
+
+      ctx.fillStyle = legCol;
+      ctx.fillRect(-7 + legA, -7, 2, 7);
+      ctx.fillRect(-4 + legB, -7, 2, 7);
+      ctx.fillRect(3 + legB, -7, 2, 7);
+      ctx.fillRect(6 + legA, -7, 2, 7);
+      if (isFire || isIce) {
+        ctx.fillStyle = isFire ? '#ff9838' : '#d6fbff';
+        ctx.fillRect(-7 + legA, -2, 2, 2);
+        ctx.fillRect(6 + legA, -2, 2, 2);
+      }
+
+      ctx.fillStyle = coatCol;
+      ctx.fillRect(-9, -14 - bob, 18, 7);
+      ctx.fillStyle = maneCol;
+      ctx.fillRect(-f * 11, -13 - bob, 3, 5);
+      ctx.fillStyle = coatCol;
+      ctx.fillRect(f * 6 - (f < 0 ? 4 : 0), -19 - bob, 5, 7);
+      ctx.fillRect(f * 9 - (f < 0 ? 5 : 0), -20 - bob, 5, 4);
+      ctx.fillStyle = maneCol;
+      ctx.fillRect(f * 5 - (f < 0 ? 2 : 0), -19 - bob, 2, 5);
+    }
+
+    // Saddle cloth + Monarch Rider
     ctx.fillStyle = primary;
-    ctx.fillRect(-4, -14 - bob, 8, 5);
+    ctx.fillRect(-4, -14 - bob + riderYOffset, 8, 5);
     ctx.fillStyle = secondary;
-    ctx.fillRect(-4, -10 - bob, 8, 1);
+    ctx.fillRect(-4, -10 - bob + riderYOffset, 8, 1);
 
-    // Flowing Cape in Clan Primary Color!
     const capeSway = moving ? (m.sprinting ? 5 : 3) : 1;
     ctx.fillStyle = primary;
-    ctx.fillRect(-f * (4 + capeSway) - (f > 0 ? 4 : 0), -21 - bob, 6 + capeSway, 7);
+    ctx.fillRect(-f * (4 + capeSway) - (f > 0 ? 4 : 0), -21 - bob + riderYOffset, 6 + capeSway, 7);
 
-    // Monarch outfit torso + trim
     ctx.fillStyle = outfit.tunic;
-    ctx.fillRect(-3, -21 - bob, 6, 8);
+    ctx.fillRect(-3, -21 - bob + riderYOffset, 6, 8);
     ctx.fillStyle = secondary;
-    ctx.fillRect(-3, -15 - bob, 6, 1);
+    ctx.fillRect(-3, -15 - bob + riderYOffset, 6, 1);
 
-    // Head + Hair/Beard/Hood
     ctx.fillStyle = outfit.skin;
-    ctx.fillRect(-2, -25 - bob, 4, 4);
+    ctx.fillRect(-2, -25 - bob + riderYOffset, 4, 4);
     ctx.fillStyle = hair.color;
-    ctx.fillRect(-3, -25 - bob, 1, 4);
+    ctx.fillRect(-3, -25 - bob + riderYOffset, 1, 4);
     if (outfit.hasBeard) {
-      ctx.fillRect(f > 0 ? 0 : -2, -22 - bob, 3, 3);
+      ctx.fillRect(f > 0 ? 0 : -2, -22 - bob + riderYOffset, 3, 3);
     }
     if (outfit.hasHood) {
       ctx.fillStyle = outfit.tunic;
-      ctx.fillRect(-3, -26 - bob, 6, 2);
+      ctx.fillRect(-3, -26 - bob + riderYOffset, 6, 2);
     }
 
     if (m.hasCrown) {
-      this.drawCrownSprite(ctx, w, 0, -27 - bob);
+      this.drawCrownSprite(ctx, w, 0, -27 - bob + riderYOffset);
     }
 
     ctx.restore();
 
-    // Fallen Crown + Stamina strip (only in world space scale === 1)
     if (scale === 1) {
       if (!m.hasCrown && m.crownStolenByEnemyId === null) {
         const cx = Math.round(m.crownX - camX);
@@ -1478,7 +2204,7 @@ export class PixelRenderer {
   private drawCoins(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     for (const c of w.coins) {
       const sx = Math.round(c.x - camX);
-      if (sx < -8 || sx > LOGICAL_WIDTH + 8) continue;
+      if (sx < -8 || sx > this.viewW + 8) continue;
       const sy = Math.round(c.y);
       ctx.fillStyle = '#b87f14';
       ctx.fillRect(sx - 2, sy - 2, 4, 4);
@@ -1489,32 +2215,39 @@ export class PixelRenderer {
 
   private drawFlyingCoins(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     for (const fc of w.flyingCoins) {
-      const t = Math.min(1, fc.progress);
-      // Smooth upward parabolic arc from horse rising into placeholder slot!
-      const ease = 1 - Math.pow(1 - t, 2);
+      const p = Math.min(1, fc.progress);
+      const ease = 1 - Math.pow(1 - p, 2);
       const wx = lerp(fc.startX, fc.targetX, ease);
-      const wy = lerp(fc.startY, fc.targetY, ease) - Math.sin(t * Math.PI) * 26;
+      const wy = lerp(fc.startY, fc.targetY, ease) - Math.sin(p * Math.PI) * 26;
       const sx = Math.round(wx - camX);
-      const sy = Math.round(wy);
+      const sy = Math.round(wy + this.worldOffsetY);
 
-      // Trail shimmer
-      ctx.fillStyle = 'rgba(255, 232, 130, 0.35)';
-      ctx.fillRect(sx - 2, sy + 2, 4, 4);
-
-      // Gleaming flying coin
-      ctx.fillStyle = '#b87f14';
-      ctx.fillRect(sx - 3, sy - 3, 6, 6);
-      ctx.fillStyle = '#ffe066';
-      ctx.fillRect(sx - 2, sy - 2, 4, 4);
-      ctx.fillStyle = '#fff9d6';
-      ctx.fillRect(sx - 1, sy - 2, 2, 2);
+      if (fc.currency === 'diamond') {
+        ctx.fillStyle = 'rgba(126, 245, 255, 0.45)';
+        ctx.fillRect(sx - 2, sy + 2, 4, 4);
+        ctx.fillStyle = '#2da8c4';
+        ctx.fillRect(sx - 3, sy - 3, 6, 6);
+        ctx.fillStyle = '#7ef5ff';
+        ctx.fillRect(sx - 2, sy - 2, 4, 4);
+        ctx.fillStyle = '#e8feff';
+        ctx.fillRect(sx - 1, sy - 2, 2, 2);
+      } else {
+        ctx.fillStyle = 'rgba(255, 232, 130, 0.35)';
+        ctx.fillRect(sx - 2, sy + 2, 4, 4);
+        ctx.fillStyle = '#b87f14';
+        ctx.fillRect(sx - 3, sy - 3, 6, 6);
+        ctx.fillStyle = '#ffe066';
+        ctx.fillRect(sx - 2, sy - 2, 4, 4);
+        ctx.fillStyle = '#fff9d6';
+        ctx.fillRect(sx - 1, sy - 2, 2, 2);
+      }
     }
   }
 
   private drawArrows(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     for (const a of w.arrows) {
       const sx = Math.round(a.x - camX);
-      if (sx < -12 || sx > LOGICAL_WIDTH + 12) continue;
+      if (sx < -12 || sx > this.viewW + 12) continue;
       const sy = Math.round(a.y);
       const angle = Math.atan2(a.vy, a.vx);
       const dx = Math.cos(angle) * 5;
@@ -1532,7 +2265,7 @@ export class PixelRenderer {
     for (const p of w.particles) {
       if (p.kind === 'snow') continue;
       const sx = Math.round(p.x - camX);
-      if (sx < -8 || sx > LOGICAL_WIDTH + 8) continue;
+      if (sx < -8 || sx > this.viewW + 8) continue;
       ctx.globalAlpha = p.alpha;
       ctx.fillStyle = p.color;
       ctx.fillRect(sx, Math.round(p.y), p.size, p.size);
@@ -1544,19 +2277,20 @@ export class PixelRenderer {
     ctx.fillStyle = w.isBloodMoon
       ? `rgba(26, 6, 14, ${(nightFactor * 0.34).toFixed(2)})`
       : `rgba(6, 14, 28, ${(nightFactor * 0.36).toFixed(2)})`;
-    ctx.fillRect(0, 0, LOGICAL_WIDTH, WATER_Y);
+    ctx.fillRect(0, 0, this.viewW, this.waterScreenY);
 
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
 
     const drawGlow = (worldX: number, y: number, radius: number, color: string) => {
       const sx = Math.round(worldX - camX);
-      if (sx < -radius || sx > LOGICAL_WIDTH + radius) return;
-      const g = ctx.createRadialGradient(sx, y, 2, sx, y, radius);
+      const sy = Math.round(y + this.worldOffsetY);
+      if (sx < -radius || sx > this.viewW + radius) return;
+      const g = ctx.createRadialGradient(sx, sy, 2, sx, sy, radius);
       g.addColorStop(0, color);
       g.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = g;
-      ctx.fillRect(sx - radius, y - radius, radius * 2, radius * 2);
+      ctx.fillRect(sx - radius, sy - radius, radius * 2, radius * 2);
     };
 
     if (w.hall.level >= 1) {
@@ -1581,36 +2315,56 @@ export class PixelRenderer {
   }
 
   private drawWaterReflection(ctx: CanvasRenderingContext2D, w: WorldState, nightFactor: number): void {
-    this.reflectionCtx.clearRect(0, 0, LOGICAL_WIDTH, WATER_Y);
-    this.reflectionCtx.drawImage(ctx.canvas, 0, 0, LOGICAL_WIDTH, WATER_Y, 0, 0, LOGICAL_WIDTH, WATER_Y);
+    this.reflectionCtx.clearRect(0, 0, this.viewW, this.waterScreenY);
+    this.reflectionCtx.drawImage(
+      ctx.canvas,
+      0,
+      0,
+      this.viewW,
+      this.waterScreenY,
+      0,
+      0,
+      this.viewW,
+      this.waterScreenY
+    );
 
-    const waterH = LOGICAL_HEIGHT - WATER_Y;
-    const waterGrad = ctx.createLinearGradient(0, WATER_Y, 0, LOGICAL_HEIGHT);
+    const waterH = Math.max(10, this.viewH - this.waterScreenY);
+    const waterGrad = ctx.createLinearGradient(0, this.waterScreenY, 0, this.viewH);
     const wTop = lerpRGB({ r: 24, g: 52, b: 74 }, { r: 7, g: 16, b: 28 }, nightFactor);
     const wBot = lerpRGB({ r: 10, g: 24, b: 38 }, { r: 3, g: 8, b: 16 }, nightFactor);
     waterGrad.addColorStop(0, rgbStr(wTop));
     waterGrad.addColorStop(1, rgbStr(wBot));
     ctx.fillStyle = waterGrad;
-    ctx.fillRect(0, WATER_Y, LOGICAL_WIDTH, waterH);
+    ctx.fillRect(0, this.waterScreenY, this.viewW, waterH);
 
     ctx.save();
     ctx.globalAlpha = 0.42;
     for (let dy = 0; dy < waterH; dy += 2) {
-      const srcY = Math.max(0, WATER_Y - 4 - Math.floor(dy * 1.45));
+      const srcY = Math.max(0, this.waterScreenY - 4 - Math.floor(dy * 1.45));
       const wave = Math.round(Math.sin(w.elapsed * 2.8 + dy * 0.32) * (1 + dy * 0.05));
-      ctx.drawImage(this.reflectionCanvas, 0, srcY, LOGICAL_WIDTH, 2, wave, WATER_Y + dy, LOGICAL_WIDTH, 2);
+      ctx.drawImage(
+        this.reflectionCanvas,
+        0,
+        srcY,
+        this.viewW,
+        2,
+        wave,
+        this.waterScreenY + dy,
+        this.viewW,
+        2
+      );
     }
     ctx.restore();
 
     ctx.fillStyle = `rgba(185, 225, 250, ${lerp(0.16, 0.1, nightFactor).toFixed(2)})`;
-    for (let i = 0; i < 14; i++) {
-      const sx = Math.round(((i * 73 + w.elapsed * (8 + (i % 3) * 4)) % (LOGICAL_WIDTH + 40)) - 20);
-      const sy = WATER_Y + 4 + ((i * 11) % (waterH - 8));
+    for (let i = 0; i < 16; i++) {
+      const sx = Math.round(((i * 73 + w.elapsed * (8 + (i % 3) * 4)) % (this.viewW + 40)) - 20);
+      const sy = this.waterScreenY + 4 + ((i * 11) % Math.max(6, waterH - 8));
       ctx.fillRect(sx, sy, 12 + (i % 4) * 5, 1);
     }
 
     ctx.fillStyle = `rgba(190, 224, 242, ${lerp(0.32, 0.14, nightFactor).toFixed(2)})`;
-    ctx.fillRect(0, WATER_Y, LOGICAL_WIDTH, 1);
+    ctx.fillRect(0, this.waterScreenY, this.viewW, 1);
   }
 
   private drawSnowParticles(ctx: CanvasRenderingContext2D, w: WorldState): void {
@@ -1628,53 +2382,79 @@ export class PixelRenderer {
     if (!pr) return;
     const sx = Math.round(pr.x - camX);
     const bob = Math.round(Math.sin(w.elapsed * 5) * 1.5);
-    const sy = Math.round(pr.y + bob);
+    const sy = Math.round(pr.y + this.worldOffsetY + bob);
 
+    const isDiamond = pr.currency === 'diamond';
+    const isLargeCost = pr.cost > 9;
     const slotStep = 10;
-    const slotsW = pr.cost * slotStep - 2;
+    const slotsW = isLargeCost ? 78 : pr.cost * slotStep - 2;
     const boxW = Math.max(slotsW + 18, pr.label.length * 4.7 + 14);
-    const bx = Math.max(8, Math.min(LOGICAL_WIDTH - boxW - 8, Math.round(sx - boxW / 2)));
+    const bx = Math.max(8, Math.min(this.viewW - boxW - 8, Math.round(sx - boxW / 2)));
 
-    // Generous touch/click hitbox covering the coin slots & prompt box!
     this.addHit('prompt_coin_slot', bx - 8, sy - 26, boxW + 16, 40);
 
-    ctx.fillStyle = 'rgba(8, 14, 24, 0.88)';
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.9)';
     ctx.fillRect(bx, sy - 21, boxW, 26);
-    ctx.strokeStyle = 'rgba(239, 196, 98, 0.82)';
+    ctx.strokeStyle = isDiamond ? 'rgba(126, 245, 255, 0.9)' : 'rgba(239, 196, 98, 0.85)';
     ctx.lineWidth = 1;
     ctx.strokeRect(bx + 0.5, sy - 20.5, boxW - 1, 25);
 
-    ctx.fillStyle = '#e6eef7';
+    ctx.fillStyle = isDiamond ? '#b5fbff' : '#e6eef7';
     ctx.font = '7px monospace';
     ctx.textAlign = 'center';
     ctx.fillText(pr.label, bx + boxW / 2, sy - 12);
 
-    const startX = Math.round(bx + boxW / 2 - slotsW / 2);
-    for (let i = 0; i < pr.cost; i++) {
-      const cx = startX + i * slotStep;
-      const cy = sy - 7;
-      if (i < pr.paid) {
-        ctx.fillStyle = '#f7d265';
-        ctx.fillRect(cx, cy, 7, 7);
-        ctx.fillStyle = '#fff5bd';
-        ctx.fillRect(cx + 1, cy + 1, 2, 2);
-      } else if (i < pr.paid + pr.pending) {
-        ctx.fillStyle = 'rgba(255, 224, 102, 0.55)';
-        ctx.fillRect(cx, cy, 7, 7);
-        ctx.strokeStyle = '#fff3b0';
-        ctx.strokeRect(cx + 0.5, cy + 0.5, 6, 6);
-      } else {
-        ctx.fillStyle = 'rgba(247, 210, 101, 0.2)';
-        ctx.fillRect(cx, cy, 7, 7);
-        ctx.strokeStyle = '#f7d265';
-        ctx.strokeRect(cx + 0.5, cy + 0.5, 6, 6);
+    if (isLargeCost) {
+      // Compact coin icon + progress bar + paid/cost readout (for 10g / 12g / 16g / 30g structures!)
+      const barW = 46;
+      const barX = Math.round(bx + boxW / 2 - barW / 2 - 12);
+      const barY = sy - 6;
+      ctx.fillStyle = '#f7d265';
+      ctx.fillRect(barX - 9, barY - 1, 6, 6);
+      ctx.fillStyle = '#fff5bd';
+      ctx.fillRect(barX - 8, barY, 2, 2);
+
+      ctx.fillStyle = 'rgba(247, 210, 101, 0.18)';
+      ctx.fillRect(barX, barY, barW, 5);
+      ctx.fillStyle = '#f7d265';
+      ctx.fillRect(barX, barY, Math.round(barW * Math.min(1, (pr.paid + pr.pending) / pr.cost)), 5);
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#ffe58a';
+      ctx.font = 'bold 7px monospace';
+      ctx.fillText(`${pr.paid}/${pr.cost}`, barX + barW + 4, barY + 5);
+    } else {
+      const startX = Math.round(bx + boxW / 2 - slotsW / 2);
+      const fullCol = isDiamond ? '#7ef5ff' : '#f7d265';
+      const shineCol = isDiamond ? '#ebfeff' : '#fff5bd';
+      const pendingCol = isDiamond ? 'rgba(126, 245, 255, 0.55)' : 'rgba(255, 224, 102, 0.55)';
+      const emptyCol = isDiamond ? 'rgba(126, 245, 255, 0.2)' : 'rgba(247, 210, 101, 0.2)';
+      for (let i = 0; i < pr.cost; i++) {
+        const cx = startX + i * slotStep;
+        const cy = sy - 7;
+        if (i < pr.paid) {
+          ctx.fillStyle = fullCol;
+          ctx.fillRect(cx, cy, 7, 7);
+          ctx.fillStyle = shineCol;
+          ctx.fillRect(cx + 1, cy + 1, 2, 2);
+        } else if (i < pr.paid + pr.pending) {
+          ctx.fillStyle = pendingCol;
+          ctx.fillRect(cx, cy, 7, 7);
+          ctx.strokeStyle = shineCol;
+          ctx.strokeRect(cx + 0.5, cy + 0.5, 6, 6);
+        } else {
+          ctx.fillStyle = emptyCol;
+          ctx.fillRect(cx, cy, 7, 7);
+          ctx.strokeStyle = fullCol;
+          ctx.strokeRect(cx + 0.5, cy + 0.5, 6, 6);
+        }
       }
     }
     ctx.textAlign = 'left';
   }
 
   // =========================================================================
-  // PIXEL-ART CLASS ICONS + TOP HUD + TACTICAL COMMAND BAR (TOUCH + Z/X/C/V)
+  // TOP HUD (Adapts to Portrait + Landscape & Reserves Top-Right for Menu Btn)
   // =========================================================================
   private drawPixelIcon(
     ctx: CanvasRenderingContext2D,
@@ -1723,6 +2503,9 @@ export class PixelRenderer {
     const monarch = w.monarchs[0];
     if (!monarch) return;
 
+    const isNarrow = this.viewW < 420;
+    const menuReserve = 34; // Space for top-right Menu button (☰)
+
     const countRole = (role: Villager['role']) => {
       let left = 0;
       let right = 0;
@@ -1740,29 +2523,79 @@ export class PixelRenderer {
     const archers = countRole('archer');
     const producers = countRole('producer');
 
-    // Top-left Clan Crest + Day badge + 6m Day / 6m Night progress strip
+    // Top-left Clan Crest + Day badge + 6m Day / 6m Night bar
     ctx.fillStyle = 'rgba(8, 14, 24, 0.8)';
-    ctx.fillRect(6, 5, 78, 26);
+    ctx.fillRect(6, 5, 76, 26);
     ctx.strokeStyle = w.isBloodMoon ? 'rgba(255, 94, 108, 0.7)' : 'rgba(205, 224, 242, 0.25)';
     ctx.lineWidth = 1;
-    ctx.strokeRect(6.5, 5.5, 77, 25);
+    ctx.strokeRect(6.5, 5.5, 75, 25);
 
     drawShieldEmblem(ctx, w.crest, 18, 18, 7);
 
     ctx.fillStyle = w.isNight ? (w.isBloodMoon ? '#ff6464' : '#9ed4ff') : '#ffd966';
-    ctx.fillRect(30, 11, 5, 5);
+    ctx.fillRect(29, 11, 5, 5);
     ctx.fillStyle = '#e8f0f8';
     ctx.font = 'bold 8px monospace';
-    ctx.fillText(`DIA ${w.day}`, 39, 17);
+    ctx.fillText(`${t('day_short')} ${w.day}`, 37, 17);
 
-    // Phase progress bar (0..0.5 Day, 0.5..1.0 Night)
     const phaseProg = w.timeOfDay < 0.5 ? w.timeOfDay / 0.5 : (w.timeOfDay - 0.5) / 0.5;
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fillRect(30, 22, 48, 3);
+    ctx.fillRect(29, 22, 47, 3);
     ctx.fillStyle = w.isNight ? (w.isBloodMoon ? '#ff6464' : '#74b9ff') : '#f7d265';
-    ctx.fillRect(30, 22, Math.max(1, Math.round(48 * phaseProg)), 3);
+    ctx.fillRect(29, 22, Math.max(1, Math.round(47 * phaseProg)), 3);
 
-    // TOP CENTER: 4 CLICKABLE/TAPPABLE PIXEL-ART CLASS ICONS (Martelo, Espada, Arco, Semente)
+    // Gold & Diamond Resource Pouch (cleanly left of Top-Right Menu button!)
+    const showDiamonds = monarch.diamonds > 0 || w.currentIsland > 1;
+    const goldW = showDiamonds ? 76 : 50;
+    const goldX = this.viewW - menuReserve - goldW - 4;
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.82)';
+    ctx.fillRect(goldX, 5, goldW, 26);
+    ctx.strokeStyle = 'rgba(239, 196, 98, 0.5)';
+    ctx.strokeRect(goldX + 0.5, 5.5, goldW - 1, 25);
+
+    ctx.fillStyle = '#f7d265';
+    ctx.fillRect(goldX + 6, 14, 7, 7);
+    ctx.fillStyle = '#fff5bd';
+    ctx.fillRect(goldX + 7, 15, 2, 2);
+
+    ctx.fillStyle = '#ffe58a';
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText(`${monarch.coins}`, goldX + 16, 21);
+
+    if (showDiamonds) {
+      // Cyan diamond gem icon + count
+      const dx = goldX + 43;
+      ctx.fillStyle = '#7ef5ff';
+      ctx.fillRect(dx, 14, 6, 6);
+      ctx.fillStyle = '#e8feff';
+      ctx.fillRect(dx + 1, 15, 2, 2);
+      ctx.fillStyle = '#a8f8ff';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(`${monarch.diamonds}`, dx + 9, 21);
+    }
+
+    // Active God blessing & Night Threat mini-pills below Top-Left Day box
+    let subY = isNarrow ? 65 : 34;
+    if (w.activeGod) {
+      const god = GOD_DEFS[w.activeGod];
+      ctx.fillStyle = 'rgba(8, 14, 24, 0.82)';
+      ctx.fillRect(6, subY, 76, 13);
+      ctx.strokeStyle = god.color;
+      ctx.strokeRect(6.5, subY + 0.5, 75, 12);
+      ctx.fillStyle = god.color;
+      ctx.font = 'bold 6.5px monospace';
+      ctx.fillText(`★ ${god.name.toUpperCase()}`, 11, subY + 9);
+      subY += 15;
+    }
+    if (w.threatLevel >= 2) {
+      ctx.fillStyle = 'rgba(8, 14, 24, 0.78)';
+      ctx.fillRect(6, subY, 76, 12);
+      ctx.fillStyle = w.isBloodMoon ? '#ff646c' : '#9cc5e3';
+      ctx.font = '6px monospace';
+      ctx.fillText(`☠ ${t('threat_lbl')} ${w.threatLevel}`, 11, subY + 8);
+    }
+
+    // 4 CLICKABLE/TAPPABLE PIXEL-ART CLASS ICONS (Single row on landscape, Row 2 on narrow/portrait!)
     const badges: Array<{
       id: string;
       icon: 'hammer' | 'sword' | 'bow' | 'seed';
@@ -1776,68 +2609,56 @@ export class PixelRenderer {
       { id: 'hud_cmd_produce', icon: 'seed', key: 'V', cmd: 'produce', counts: producers },
     ];
 
-    const badgeW = 63;
     const badgeH = 26;
-    const totalW = badges.length * badgeW + (badges.length - 1) * 4;
-    const startX = Math.round((LOGICAL_WIDTH - totalW) / 2) + 8;
+    const badgeGap = 3;
+    const badgeW = isNarrow ? Math.min(62, Math.floor((this.viewW - 12 - badgeGap * 3) / 4)) : 56;
+    const totalW = badges.length * badgeW + (badges.length - 1) * badgeGap;
+    const badgeY = isNarrow ? 35 : 5;
+    const badgeStartX = isNarrow
+      ? Math.round((this.viewW - totalW) / 2)
+      : Math.round(84 + (goldX - 88 - totalW) / 2);
 
     badges.forEach((b, idx) => {
-      const bx = startX + idx * (badgeW + 4);
-      const by = 5;
+      const bx = badgeStartX + idx * (badgeW + badgeGap);
       const active = w.activeCommand === b.cmd;
 
-      // Register generous touch/click hitbox for each top icon!
-      this.addHit(b.id, bx - 1, by - 2, badgeW + 2, badgeH + 4);
+      this.addHit(b.id, bx - 1, badgeY - 2, badgeW + 2, badgeH + 4);
 
       ctx.fillStyle = active ? 'rgba(46, 36, 12, 0.96)' : 'rgba(8, 14, 24, 0.8)';
-      ctx.fillRect(bx, by, badgeW, badgeH);
+      ctx.fillRect(bx, badgeY, badgeW, badgeH);
       ctx.strokeStyle = active ? '#ffe066' : 'rgba(195, 215, 236, 0.28)';
-      ctx.strokeRect(bx + 0.5, by + 0.5, badgeW - 1, badgeH - 1);
+      ctx.strokeRect(bx + 0.5, badgeY + 0.5, badgeW - 1, badgeH - 1);
 
-      this.drawPixelIcon(ctx, b.icon, bx + 4, by + 8);
+      this.drawPixelIcon(ctx, b.icon, bx + 4, badgeY + 8);
 
       ctx.fillStyle = active ? '#ffe58a' : '#eef4fa';
       ctx.font = 'bold 8px monospace';
-      ctx.fillText(`${b.counts.total}`, bx + 16, by + 14);
+      ctx.fillText(`${b.counts.total}`, bx + 16, badgeY + 14);
 
       ctx.fillStyle = '#90a8bf';
       ctx.font = '6px monospace';
-      ctx.fillText(`${b.counts.left}◀|▶${b.counts.right}`, bx + 15, by + 23);
+      ctx.fillText(`${b.counts.left}◀|▶${b.counts.right}`, bx + 14, badgeY + 23);
 
       ctx.fillStyle = active ? '#ffe066' : 'rgba(160, 185, 210, 0.65)';
       ctx.font = 'bold 6px monospace';
       ctx.textAlign = 'right';
-      ctx.fillText(`[${b.key}]`, bx + badgeW - 3, by + 11);
+      ctx.fillText(`[${b.key}]`, bx + badgeW - 3, badgeY + 11);
       ctx.textAlign = 'left';
     });
 
-    // Top-right Gold Coin Pouch
-    ctx.fillStyle = 'rgba(8, 14, 24, 0.82)';
-    ctx.fillRect(LOGICAL_WIDTH - 62, 5, 56, 26);
-    ctx.strokeStyle = 'rgba(239, 196, 98, 0.5)';
-    ctx.strokeRect(LOGICAL_WIDTH - 61.5, 5.5, 55, 25);
-
-    ctx.fillStyle = '#f7d265';
-    ctx.fillRect(LOGICAL_WIDTH - 55, 14, 7, 7);
-    ctx.fillStyle = '#fff5bd';
-    ctx.fillRect(LOGICAL_WIDTH - 54, 15, 2, 2);
-
-    ctx.fillStyle = '#ffe58a';
-    ctx.font = 'bold 9px monospace';
-    ctx.fillText(`${monarch.coins}`, LOGICAL_WIDTH - 44, 21);
-
-    // Active Tactical Command Banner (tap icon at top OR hold Z/X/C/V)
+    // Active Tactical Command Banner
     if (w.activeCommand !== 'none' || w.commandFeedback) {
       const cmdLabels: Record<Exclude<CommandMode, 'none'>, string> = {
-        attack: 'COMANDO DE ATAQUE [Z] — GUERREIROS',
-        archer: 'COMANDO DE ARCO [X] — ARQUEIROS',
-        build: 'COMANDO DE CONSTRUÇÃO [C] — CONSTRUTORES',
-        produce: 'COMANDO DE PRODUÇÃO [V] — PRODUTORES',
+        attack: t('cmd_attack'),
+        archer: t('cmd_archer'),
+        build: t('cmd_build'),
+        produce: t('cmd_produce'),
       };
       const showMode = w.activeCommand !== 'none' ? w.activeCommand : w.commandFeedback!.mode;
-      const barX = LOGICAL_WIDTH / 2 - 156;
-      const barW = 312;
-      const barY = 35;
+      const barW = Math.min(300, this.viewW - 16);
+      const barX = Math.round((this.viewW - barW) / 2);
+      const barY = isNarrow ? 65 : 35;
+
       ctx.fillStyle = 'rgba(10, 16, 26, 0.9)';
       ctx.fillRect(barX, barY, barW, 24);
       ctx.strokeStyle = '#efc462';
@@ -1848,20 +2669,17 @@ export class PixelRenderer {
       ctx.font = 'bold 7px monospace';
       ctx.fillText(
         showMode !== 'none' ? cmdLabels[showMode] : '',
-        LOGICAL_WIDTH / 2 - 10,
+        Math.round(this.viewW / 2) - (w.touchCommandMode !== 'none' ? 10 : 0),
         barY + 10
       );
       ctx.fillStyle = '#d4e6f7';
       ctx.font = '7px monospace';
       ctx.fillText(
-        w.commandFeedback
-          ? w.commandFeedback.text
-          : 'Toque/clique na ESQUERDA ou DIREITA da tela para enviar tropas',
-        LOGICAL_WIDTH / 2 - 10,
+        w.commandFeedback ? w.commandFeedback.text : t('cmd_hint'),
+        Math.round(this.viewW / 2) - (w.touchCommandMode !== 'none' ? 10 : 0),
         barY + 20
       );
 
-      // Clickable Close [×] button when toggled via tap/click
       if (w.touchCommandMode !== 'none') {
         const closeX = barX + barW - 22;
         const closeY = barY + 4;
@@ -1877,7 +2695,7 @@ export class PixelRenderer {
       ctx.textAlign = 'left';
     }
 
-    // Subtle visual Touch / Mouse directional ripple feedback
+    // Visual Touch / Mouse directional ripple feedback
     if (w.touchIndicator && w.mode === 'playing') {
       const ti = w.touchIndicator;
       const alpha = Math.min(0.65, ti.timer * 2.2);
@@ -1897,10 +2715,43 @@ export class PixelRenderer {
       ctx.textAlign = 'left';
     }
 
-    // Minimap bar along bottom of water
-    const mapW = 148;
-    const mapX = Math.round((LOGICAL_WIDTH - mapW) / 2);
-    const mapY = LOGICAL_HEIGHT - 10;
+    // Clickable/Tappable Mount Active Power Button (⚡) in Bottom-Right when riding a special mount!
+    if (monarch.mount !== 'starter') {
+      const mDef = MOUNT_DEFS[monarch.mount];
+      const maxCd = Math.max(0.5, mDef.powerCooldown * (w.activeGod === 'loki' ? 0.65 : 1));
+      const ready = monarch.mountPowerCooldown <= 0;
+      const pw = 42;
+      const ph = 26;
+      const px = this.viewW - pw - 8;
+      const py = this.viewH - ph - 8;
+
+      this.addHit('hud_mount_power', px - 4, py - 4, pw + 8, ph + 8);
+
+      ctx.fillStyle = ready ? 'rgba(18, 28, 44, 0.92)' : 'rgba(10, 14, 22, 0.78)';
+      ctx.fillRect(px, py, pw, ph);
+      ctx.strokeStyle = ready ? mDef.accentColor : 'rgba(150, 170, 195, 0.35)';
+      ctx.strokeRect(px + 0.5, py + 0.5, pw - 1, ph - 1);
+
+      if (!ready) {
+        const fill = 1 - Math.min(1, monarch.mountPowerCooldown / maxCd);
+        ctx.fillStyle = 'rgba(126, 245, 255, 0.22)';
+        ctx.fillRect(px + 1, py + ph - 4, Math.round((pw - 2) * fill), 3);
+      }
+
+      ctx.textAlign = 'center';
+      ctx.fillStyle = ready ? mDef.accentColor : '#8ba0b5';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(ready ? '⚡' : `${Math.ceil(monarch.mountPowerCooldown)}s`, px + pw / 2, py + 12);
+      ctx.fillStyle = '#c8dceb';
+      ctx.font = '5.5px monospace';
+      ctx.fillText('SHIFT', px + pw / 2, py + 21);
+      ctx.textAlign = 'left';
+    }
+
+    // Minimap bar along bottom of fjord water
+    const mapW = Math.min(160, this.viewW - (monarch.mount !== 'starter' ? 116 : 36));
+    const mapX = Math.round((this.viewW - mapW) / 2);
+    const mapY = this.viewH - 10;
     ctx.fillStyle = 'rgba(6, 12, 20, 0.62)';
     ctx.fillRect(mapX, mapY, mapW, 4);
 
@@ -1931,85 +2782,98 @@ export class PixelRenderer {
     const fadeIn = Math.min(1, (b.maxTimer - b.timer) / 0.35);
     const fadeOut = Math.min(1, b.timer / 0.55);
     const alpha = Math.min(fadeIn, fadeOut);
-    const yOff = w.activeCommand !== 'none' || w.commandFeedback ? 58 : 34;
+    const isNarrow = this.viewW < 420;
+    const baseY = isNarrow ? 66 : 36;
+    const yOff = w.activeCommand !== 'none' || w.commandFeedback ? baseY + 28 : baseY;
+    const bw = Math.min(304, this.viewW - 16);
+    const bx = Math.round((this.viewW - bw) / 2);
 
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = 'rgba(8, 14, 24, 0.8)';
-    ctx.fillRect(LOGICAL_WIDTH / 2 - 152, yOff, 304, 30);
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.82)';
+    ctx.fillRect(bx, yOff, bw, 30);
     ctx.fillStyle = b.accent;
-    ctx.fillRect(LOGICAL_WIDTH / 2 - 152, yOff, 304, 1);
-    ctx.fillRect(LOGICAL_WIDTH / 2 - 152, yOff + 29, 304, 1);
+    ctx.fillRect(bx, yOff, bw, 1);
+    ctx.fillRect(bx, yOff + 29, bw, 1);
 
     ctx.textAlign = 'center';
     ctx.fillStyle = b.accent;
-    ctx.font = 'bold 9px monospace';
-    ctx.fillText(b.title, LOGICAL_WIDTH / 2, yOff + 12);
+    ctx.font = 'bold 8px monospace';
+    ctx.fillText(b.title, Math.round(this.viewW / 2), yOff + 12);
 
     ctx.fillStyle = '#d4e2ef';
-    ctx.font = '7px monospace';
-    ctx.fillText(b.subtitle, LOGICAL_WIDTH / 2, yOff + 23);
+    ctx.font = '6.5px monospace';
+    ctx.fillText(b.subtitle, Math.round(this.viewW / 2), yOff + 23);
     ctx.restore();
     ctx.textAlign = 'left';
   }
 
   private drawPauseOverlay(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = 'rgba(6, 12, 22, 0.72)';
-    ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
-    const cx = LOGICAL_WIDTH / 2;
+    ctx.fillRect(0, 0, this.viewW, this.viewH);
+    const cx = Math.round(this.viewW / 2);
+    const cy = Math.round(this.viewH / 2);
+
     ctx.textAlign = 'center';
     ctx.fillStyle = '#f7d265';
     ctx.font = 'bold 16px Georgia, serif';
-    ctx.fillText('PAUSADO', cx, 108);
+    ctx.fillText(t('paused'), cx, cy - 22);
     ctx.fillStyle = '#d4e2ef';
     ctx.font = '8px monospace';
-    ctx.fillText('Pressione P para continuar · Sua campanha foi salva', cx, 128);
+    ctx.fillText(t('paused_hint'), cx, cy - 4);
 
-    // Return to login button
+    const bw = Math.min(168, this.viewW - 28);
     ctx.fillStyle = '#182436';
-    ctx.fillRect(cx - 76, 146, 152, 22);
+    ctx.fillRect(cx - bw / 2, cy + 12, bw, 22);
     ctx.strokeStyle = 'rgba(239, 196, 98, 0.6)';
-    ctx.strokeRect(cx - 75.5, 146.5, 151, 21);
+    ctx.strokeRect(cx - bw / 2 + 0.5, cy + 12.5, bw - 1, 21);
     ctx.fillStyle = '#ffe58a';
     ctx.font = 'bold 8px monospace';
-    ctx.fillText('VOLTAR AO MENU INICIAL', cx, 160);
-    this.addHit('pause_menu', cx - 76, 146, 152, 22);
+    ctx.fillText(t('back_main_menu'), cx, cy + 26);
+    this.addHit('pause_menu', cx - bw / 2, cy + 12, bw, 22);
     ctx.textAlign = 'left';
   }
 
   private drawGameOverOverlay(ctx: CanvasRenderingContext2D, w: WorldState): void {
     ctx.fillStyle = 'rgba(14, 6, 12, 0.8)';
-    ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
-    const cx = LOGICAL_WIDTH / 2;
+    ctx.fillRect(0, 0, this.viewW, this.viewH);
+    const cx = Math.round(this.viewW / 2);
+    const cy = Math.round(this.viewH / 2);
 
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ff6b78';
     ctx.font = 'bold 20px Georgia, serif';
-    ctx.fillText('A COROA CAIU', cx, 84);
+    ctx.fillText(t('crown_fell'), cx, cy - 46);
 
     ctx.fillStyle = '#d4dde8';
     ctx.font = '8px monospace';
-    ctx.fillText('Os Draugrs levaram sua coroa para os portais de Helheim.', cx, 102);
+    ctx.fillText(t('crown_fell_sub'), cx, cy - 28);
 
+    const sw = Math.min(230, this.viewW - 24);
     ctx.fillStyle = 'rgba(8, 14, 24, 0.85)';
-    ctx.fillRect(cx - 115, 114, 230, 56);
+    ctx.fillRect(cx - sw / 2, cy - 16, sw, 56);
     ctx.strokeStyle = 'rgba(255, 107, 120, 0.45)';
-    ctx.strokeRect(cx - 114.5, 114.5, 229, 55);
+    ctx.strokeRect(cx - sw / 2 + 0.5, cy - 15.5, sw - 1, 55);
 
     ctx.fillStyle = '#f7d265';
-    ctx.fillText(`Dias Sobrevividos: ${w.stats.daysSurvived}`, cx, 130);
+    ctx.fillText(`${t('days_survived')}: ${w.stats.daysSurvived}`, cx, cy);
     ctx.fillStyle = '#cfe0ee';
-    ctx.fillText(`Draugrs Derrotados: ${w.stats.draugrSlain}`, cx, 143);
-    ctx.fillText(`Aldeões Recrutados: ${w.stats.villagersRecruited}   ·   Muralhas: ${w.stats.wallsBuilt}`, cx, 156);
+    ctx.fillText(`${t('draugr_slain')}: ${w.stats.draugrSlain}`, cx, cy + 13);
+    ctx.fillText(
+      `${t('recruited_lbl')}: ${w.stats.villagersRecruited}  ·  ${t('walls_lbl')}: ${w.stats.wallsBuilt}`,
+      cx,
+      cy + 26
+    );
 
+    const bw = Math.min(196, this.viewW - 28);
     ctx.fillStyle = '#2b2412';
-    ctx.fillRect(cx - 96, 186, 192, 24);
+    ctx.fillRect(cx - bw / 2, cy + 54, bw, 24);
     ctx.strokeStyle = '#efc462';
-    ctx.strokeRect(cx - 95.5, 186.5, 191, 23);
+    ctx.strokeRect(cx - bw / 2 + 0.5, cy + 54.5, bw - 1, 23);
     ctx.fillStyle = '#ffe58a';
     ctx.font = 'bold 8px monospace';
-    ctx.fillText('VOLTAR AO LOGIN / NOVA CAMPANHA', cx, 201);
-    this.addHit('gameover_menu', cx - 96, 186, 192, 24);
+    ctx.fillText(t('back_main_menu'), cx, cy + 69);
+    this.addHit('gameover_menu', cx - bw / 2, cy + 54, bw, 24);
     ctx.textAlign = 'left';
   }
 }

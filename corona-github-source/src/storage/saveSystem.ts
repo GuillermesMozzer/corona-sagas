@@ -53,9 +53,30 @@ export function loadCampaign(): WorldState | null {
     state.commandFeedback = null;
     state.touchIndicator = null;
     state.nightWaveStage = state.nightWaveStage ?? 0;
+    state.viewWidth = state.viewWidth ?? 480;
+    state.viewHeight = state.viewHeight ?? 270;
+    state.dayHalfMinutes = state.dayHalfMinutes ?? 3;
+    state.currentIsland = state.currentIsland ?? 1;
+    state.threatLevel = state.threatLevel ?? 1;
+    state.worldMapContext = 'inspect';
+    state.unlockedGods = state.unlockedGods ?? [];
+    state.unlockedMounts = state.unlockedMounts ?? ['starter'];
     state.flyingCoins = state.flyingCoins ?? [];
+    state.fireTrails = state.fireTrails ?? [];
+    state.lightningBolts = state.lightningBolts ?? [];
+    state.godShrine = state.godShrine ?? null;
+    state.mountShrine = state.mountShrine ?? null;
+    state.puzzle = state.puzzle ?? null;
     state.rocks = state.rocks ?? [];
     state.farms = state.farms ?? [];
+    if (state.monarchs?.[0]) {
+      const m = state.monarchs[0];
+      m.flyTimer = m.flyTimer ?? 0;
+      m.flyY = m.flyY ?? 0;
+      m.roarTimer = m.roarTimer ?? 0;
+      m.wolfBiteCooldown = m.wolfBiteCooldown ?? 0;
+    }
+    if (!state.boat || !state.dock || !state.islands) return null;
     return state;
   } catch {
     return null;

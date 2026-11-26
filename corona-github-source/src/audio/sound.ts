@@ -1,25 +1,69 @@
+const MUSIC_KEY = 'corona_music_v1';
+const SFX_KEY = 'corona_sfx_v1';
+
 class ProceduralAudio {
   private ctx: AudioContext | null = null;
-  private enabled = true;
+  private sfxEnabled = true;
+  private musicEnabled = true;
   private lastHoofTime = 0;
+  private musicInterval: number | null = null;
+  private musicStep = 0;
+  private nightMood = false;
 
-  public isEnabled(): boolean {
-    return this.enabled;
+  constructor() {
+    try {
+      const m = window.localStorage.getItem(MUSIC_KEY);
+      if (m === '0') this.musicEnabled = false;
+      const s = window.localStorage.getItem(SFX_KEY);
+      if (s === '0') this.sfxEnabled = false;
+    } catch {
+      // Ignore storage errors
+    }
   }
 
-  public setEnabled(on: boolean): void {
-    this.enabled = on;
+  public isSfxEnabled(): boolean {
+    return this.sfxEnabled;
   }
 
-  public toggle(): boolean {
-    this.enabled = !this.enabled;
-    return this.enabled;
+  public isMusicEnabled(): boolean {
+    return this.musicEnabled;
+  }
+
+  public setNightMood(isNight: boolean): void {
+    this.nightMood = isNight;
+  }
+
+  public toggleSfx(): boolean {
+    this.sfxEnabled = !this.sfxEnabled;
+    try {
+      window.localStorage.setItem(SFX_KEY, this.sfxEnabled ? '1' : '0');
+    } catch {
+      // Ignore
+    }
+    return this.sfxEnabled;
+  }
+
+  public toggleMusic(): boolean {
+    this.musicEnabled = !this.musicEnabled;
+    try {
+      window.localStorage.setItem(MUSIC_KEY, this.musicEnabled ? '1' : '0');
+    } catch {
+      // Ignore
+    }
+    if (this.musicEnabled) {
+      this.unlock();
+      this.startMusicLoop();
+    } else {
+      this.stopMusicLoop();
+    }
+    return this.musicEnabled;
   }
 
   public unlock(): void {
-    if (!this.enabled) return;
     if (!this.ctx) {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (AudioCtx) {
         this.ctx = new AudioCtx();
       }
@@ -27,17 +71,83 @@ class ProceduralAudio {
     if (this.ctx && this.ctx.state === 'suspended') {
       void this.ctx.resume();
     }
+    if (this.musicEnabled) {
+      this.startMusicLoop();
+    }
   }
 
-  private getCtx(): AudioContext | null {
-    if (!this.enabled) return null;
+  private startMusicLoop(): void {
+    if (this.musicInterval !== null || typeof window === 'undefined' || !window.setInterval) return;
+    this.musicInterval = window.setInterval(() => {
+      this.playMusicBeat();
+    }, 950);
+  }
+
+  private stopMusicLoop(): void {
+    if (this.musicInterval !== null && typeof window !== 'undefined' && window.clearInterval) {
+      window.clearInterval(this.musicInterval);
+      this.musicInterval = null;
+    }
+  }
+
+  private playMusicBeat(): void {
+    if (!this.musicEnabled || !this.ctx || this.ctx.state !== 'running') return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    // Contemplative Nordic D-Dorian (Day) vs D-Aeolian / dark fifths (Night)
+    const dayScale = [146.83, 174.61, 220.0, 261.63, 293.66, 329.63, 440.0];
+    const nightScale = [110.0, 130.81, 146.83, 164.81, 196.0, 220.0, 261.63];
+    const scale = this.nightMood ? nightScale : dayScale;
+    const pattern = [0, 2, 4, 2, 3, 5, 4, 1];
+    const noteFreq = scale[pattern[this.musicStep % pattern.length]];
+
+    // Warm soft harp/lyre pluck
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(noteFreq, now);
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(this.nightMood ? 520 : 880, now);
+
+    gain.gain.setValueAtTime(0.0005, now);
+    gain.gain.linearRampToValueAtTime(0.022, now + 0.08);
+    gain.gain.exponentialRampToValueAtTime(0.0005, now + 1.65);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 1.7);
+
+    // Every 4 beats, add a subtle low Nordic drone fifth
+    if (this.musicStep % 4 === 0) {
+      const drone = ctx.createOscillator();
+      const dGain = ctx.createGain();
+      drone.type = 'sine';
+      drone.frequency.setValueAtTime(this.nightMood ? 73.42 : 110.0, now);
+      dGain.gain.setValueAtTime(0.0005, now);
+      dGain.gain.linearRampToValueAtTime(0.018, now + 0.4);
+      dGain.gain.exponentialRampToValueAtTime(0.0005, now + 3.4);
+      drone.connect(dGain);
+      dGain.connect(ctx.destination);
+      drone.start(now);
+      drone.stop(now + 3.5);
+    }
+
+    this.musicStep += 1;
+  }
+
+  private getSfxCtx(): AudioContext | null {
+    if (!this.sfxEnabled) return null;
     if (!this.ctx) this.unlock();
     if (!this.ctx || this.ctx.state !== 'running') return null;
     return this.ctx;
   }
 
   public playCoinDrop(): void {
-    const ctx = this.getCtx();
+    const ctx = this.getSfxCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
@@ -54,7 +164,7 @@ class ProceduralAudio {
   }
 
   public playCoinPickup(): void {
-    const ctx = this.getCtx();
+    const ctx = this.getSfxCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
     [1318, 1760].forEach((freq, i) => {
@@ -72,7 +182,7 @@ class ProceduralAudio {
   }
 
   public playBuildComplete(): void {
-    const ctx = this.getCtx();
+    const ctx = this.getSfxCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
     [293.66, 369.99, 440, 587.33].forEach((freq, i) => {
@@ -91,7 +201,7 @@ class ProceduralAudio {
   }
 
   public playHammer(): void {
-    const ctx = this.getCtx();
+    const ctx = this.getSfxCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
@@ -108,7 +218,7 @@ class ProceduralAudio {
   }
 
   public playBowShot(): void {
-    const ctx = this.getCtx();
+    const ctx = this.getSfxCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
@@ -125,7 +235,7 @@ class ProceduralAudio {
   }
 
   public playHit(): void {
-    const ctx = this.getCtx();
+    const ctx = this.getSfxCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
@@ -142,10 +252,10 @@ class ProceduralAudio {
   }
 
   public playHorn(dark = false): void {
-    const ctx = this.getCtx();
+    const ctx = this.getSfxCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
-    const base = dark ? 110 : 146.83; // A2 vs D3
+    const base = dark ? 110 : 146.83;
     const osc1 = ctx.createOscillator();
     const osc2 = ctx.createOscillator();
     const filter = ctx.createBiquadFilter();
@@ -177,7 +287,7 @@ class ProceduralAudio {
   }
 
   public playCrownKnock(): void {
-    const ctx = this.getCtx();
+    const ctx = this.getSfxCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
     [520, 390, 260].forEach((freq, i) => {
@@ -196,7 +306,7 @@ class ProceduralAudio {
   }
 
   public playHoof(sprinting: boolean): void {
-    const ctx = this.getCtx();
+    const ctx = this.getSfxCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
     const interval = sprinting ? 0.17 : 0.3;
@@ -217,7 +327,7 @@ class ProceduralAudio {
   }
 
   public playCoinSlot(): void {
-    const ctx = this.getCtx();
+    const ctx = this.getSfxCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
@@ -234,7 +344,7 @@ class ProceduralAudio {
   }
 
   public playOrder(side: -1 | 1): void {
-    const ctx = this.getCtx();
+    const ctx = this.getSfxCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
     const f1 = side < 0 ? 392 : 440;
