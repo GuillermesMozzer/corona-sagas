@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Corona — Sagas do Norte</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #050608;
+      color: #e6edf3;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      overflow: hidden;
+      overscroll-behavior: none;
+      touch-action: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    #game-shell {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at 50% 40%, #101b2c 0%, #050608 85%);
+      touch-action: none;
+    }
+    #game-canvas {
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.78);
+      background: #040507;
+      outline: none;
+      cursor: pointer;
+      touch-action: none;
+    }
+    #top-controls {
+      position: absolute;
+      bottom: max(8px, env(safe-area-inset-bottom));
+      left: max(10px, env(safe-area-inset-left));
+      display: flex;
+      gap: 6px;
+      z-index: 10;
+    }
+    .hud-btn {
+      background: rgba(11, 18, 29, 0.8);
+      border: 1px solid rgba(190, 215, 240, 0.24);
+      color: #d8e5f2;
+      font-family: inherit;
+      font-size: 11px;
+      padding: 6px 10px;
+      border-radius: 5px;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      backdrop-filter: blur(4px);
+    }
+    .hud-btn:hover, .hud-btn:active {
+      background: rgba(25, 39, 60, 0.94);
+      border-color: rgba(235, 198, 108, 0.7);
+    }
+    #help-drawer {
+      position: absolute;
+      bottom: 46px;
+      left: max(10px, env(safe-area-inset-left));
+      width: 340px;
+      max-width: calc(100vw - 20px);
+      background: rgba(9, 15, 25, 0.95);
+      border: 1px solid rgba(210, 226, 245, 0.24);
+      border-radius: 6px;
+      padding: 12px 14px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #cedae6;
+      z-index: 15;
+      display: none;
+      backdrop-filter: blur(6px);
+    }
+    #help-drawer.open { display: block; }
+    #help-drawer h3 {
+      font-size: 12px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #efc462;
+      margin-bottom: 8px;
+    }
+    #help-drawer kbd {
+      display: inline-block;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 3px;
+      padding: 0 5px;
+      font-size: 10px;
+      color: #fff;
+    }
+    #help-drawer ul { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+    #help-drawer .tip {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      color: #9ab2c9;
+    }
+  </style>
+</head>
+<body>
+  <div id="game-shell">
+    <div id="top-controls">
+      <button id="btn-audio" class="hud-btn" title="Ligar/Desligar som">Som: ON</button>
+      <button id="btn-help" class="hud-btn" title="Mostrar controles">Controles (?)</button>
+      <button id="btn-pause" class="hud-btn" title="Pausar jogo">Pausar</button>
+      <button id="btn-restart" class="hud-btn" title="Voltar ao Menu Inicial">Menu</button>
+    </div>
+    <div id="help-drawer">
+      <h3>Corona — Celular, Mouse e Teclado</h3>
+      <ul>
+        <li><strong>Toque / Mouse (Esq ou Dir):</strong> Segura para cavalgar na direção</li>
+        <li><strong>Duplo Toque / Duplo Clique + Segurar:</strong> Galopar (correr)</li>
+        <li><strong>Tocar/Clicar nos Slots de Moeda:</strong> Deposita moedas em árvores, pedras, muros e oficinas</li>
+        <li><strong>Tocar/Clicar nos Ícones no Topo:</strong> Selecione a classe e toque na Esquerda/Direita para enviar tropas</li>
+        <li><strong>Teclado:</strong> <kbd>←</kbd>/<kbd>→</kbd> ou <kbd>A</kbd>/<kbd>D</kbd> (duplo toque corre) · <kbd>Espaço</kbd>/<kbd>S</kbd> moeda · <kbd>Z</kbd>/<kbd>X</kbd>/<kbd>C</kbd>/<kbd>V</kbd> comandos</li>
+      </ul>
+      <div class="tip">
+        Ciclo: <strong>6 min de Dia</strong> e <strong>6 min de Noite</strong>. Em celulares, vire na horizontal para melhor visão!
+      </div>
+    </div>
+    <canvas id="game-canvas" width="480" height="270" tabindex="0"></canvas>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
