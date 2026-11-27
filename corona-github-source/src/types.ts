@@ -446,6 +446,7 @@ export interface Coin {
 export type PromptTargetType =
   | 'hall'
   | 'banker'
+  | 'banker_withdraw'
   | 'forge_build'
   | 'forge_smelt'
   | 'shop'
@@ -520,6 +521,7 @@ export interface FloatingPrompt {
   x: number;
   y: number;
   label: string;
+  actionClass?: string;
   cost: number;
   paid: number;
   pending: number;
@@ -616,6 +618,7 @@ export interface WorldState {
   nextOrderSeq?: number;
   priorityTask?: PriorityTaskRef | null;
   discoveredHud?: DiscoveredHudItems;
+  completedActionClasses?: Record<string, boolean>;
   worldMapContext: 'inspect' | 'sail';
   viewWidth: number;
   viewHeight: number;

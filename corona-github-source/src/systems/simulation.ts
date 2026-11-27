@@ -623,23 +623,40 @@ export function countArchersAssignedToTower(w: WorldState, towerId: number): num
   return c;
 }
 
+function markActionClassCompleted(w: WorldState, actionClass: string): void {
+  const map = (w.completedActionClasses = w.completedActionClasses ?? {});
+  map[actionClass] = true;
+}
+
 export function withdrawFromBanker(w: WorldState): boolean {
   const m = w.monarchs[0];
   if (!m || w.mode !== 'playing' || w.hall.level < 1) return false;
   if (Math.abs(m.x - w.banker.x) > 46) return false;
   if (w.banker.balance <= 0) return false;
-  const room = m.maxCoins - m.coins;
+  const inFlightToMonarch = w.flyingCoins.filter((fc) => fc.targetType === 'banker_withdraw').length;
+  const room = Math.max(0, m.maxCoins - (m.coins + inFlightToMonarch));
   if (room <= 0) {
     showBanner(w, 'BOLSA CHEIA', `Sua bolsa comporta até ${m.maxCoins} moedas!`, '#ffe066');
     return false;
   }
-  const take = Math.min(5, w.banker.balance, room);
+  const take = Math.min(w.banker.balance, room);
   w.banker.balance -= take;
-  m.coins += take;
-  w.resources.gold = m.coins;
-  sound.playCoinPickup();
+  sound.playCoinDrop();
   spawnBurst(w, w.banker.x, GROUND_Y - 18, 8, '#ffe066', 'spark', 40);
-  saveCampaign(w);
+  for (let i = 0; i < take; i++) {
+    w.flyingCoins.push({
+      id: uid(w),
+      startX: w.banker.x + ((i % 3) - 1) * 3,
+      startY: GROUND_Y - 18,
+      targetX: m.x,
+      targetY: GROUND_Y - 16 - m.flyY,
+      progress: -i * 0.14,
+      duration: 0.34,
+      currency: 'coin',
+      targetType: 'banker_withdraw',
+      targetId: 0,
+    });
+  }
   return true;
 }
 
@@ -714,7 +731,7 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
         targetType: 'hall',
         targetId: 0,
       };
-    } else if (resCost.coins > 0 && w.hall.coinsPaid + pending < resCost.coins) {
+    } else if (resCost.coins > 0 && w.hall.coinsPaid < resCost.coins) {
       bestDist = hallDist;
       const nextLv = w.hall.level + 1;
       const label =
@@ -725,6 +742,7 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
         x: w.hall.x,
         y: GROUND_Y - (w.hall.level === 0 ? 30 : 58),
         label,
+        actionClass: w.hall.level === 0 ? 'hall_fire' : 'hall_upgrade',
         cost: resCost.coins,
         paid: w.hall.coinsPaid,
         pending,
@@ -742,14 +760,16 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
     const bankDist = Math.abs(m.x - w.banker.x);
     if (bankDist < 26 && bankDist < bestDist) {
       const ratePct = getBankerDailyRatePct(w.hall.level);
+      const pending = countPendingFlyingCoins(w, 'banker', 0);
       bestDist = bankDist;
       best = {
         x: w.banker.x,
-        y: GROUND_Y - 40,
-        label: `${t('prompt_banker')} (+${ratePct}%/dia)`,
+        y: GROUND_Y - 38,
+        label: t('prompt_banker'),
+        actionClass: 'banker',
         cost: 1,
         paid: 0,
-        pending: 0,
+        pending,
         canWithdraw: w.banker.balance > 0,
         bankBalance: w.banker.balance,
         bankRatePct: ratePct,
@@ -766,12 +786,13 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
       if (!w.forge.built && !w.forge.underConstruction) {
         const fCost = getForgeBuildResourceCost();
         const pending = countPendingFlyingCoins(w, 'forge_build', 0);
-        if (w.forge.coinsPaid + pending < fCost.coins) {
+        if (w.forge.coinsPaid < fCost.coins) {
           bestDist = forgeDist;
           best = {
             x: w.forge.x,
             y: GROUND_Y - 42,
             label: t('prompt_forge_build'),
+            actionClass: 'forge_build',
             cost: fCost.coins,
             paid: w.forge.coinsPaid,
             pending,
@@ -785,13 +806,14 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
       } else if (w.forge.built && w.forge.smeltQueue < 5) {
         const sCost = getForgeSmeltResourceCost();
         const pending = countPendingFlyingCoins(w, 'forge_smelt', 0);
-        if (w.forge.smeltCoinsPaid + pending < sCost.coins) {
+        if (w.forge.smeltCoinsPaid < sCost.coins) {
           const outIron = getForgeIronOutput(w);
           bestDist = forgeDist;
           best = {
             x: w.forge.x,
             y: GROUND_Y - 42,
             label: `${t('prompt_forge_smelt')} (+${outIron})`,
+            actionClass: 'forge_smelt',
             cost: sCost.coins,
             paid: w.forge.smeltCoinsPaid,
             pending,
@@ -814,7 +836,7 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
       if (d < 22 && d < bestDist && shop.stock < shop.maxStock) {
         const pending = countPendingFlyingCoins(w, 'shop', shop.id);
         const shopCost = shop.kind === 'sword' ? 3 : 2;
-        if (shop.coinsPaid + pending < shopCost) {
+        if (shop.coinsPaid < shopCost) {
           bestDist = d;
           const labelMap = {
             bow: t('prompt_bow'),
@@ -826,6 +848,7 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
             x: shop.x,
             y: GROUND_Y - 38,
             label: labelMap[shop.kind],
+            actionClass: `shop_${shop.kind}`,
             cost: shopCost,
             paid: shop.coinsPaid,
             pending,
@@ -846,7 +869,7 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
       const d = Math.abs(m.x - farm.x);
       if (d < 26 && d < bestDist) {
         const pending = countPendingFlyingCoins(w, 'farm', farm.id);
-        if (farm.coinsPaid + pending < fCost.coins) {
+        if (farm.coinsPaid < fCost.coins) {
           bestDist = d;
           best = {
             x: farm.x,
@@ -855,6 +878,7 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
               farm.level === 0
                 ? t('prompt_farm_build')
                 : `${t('prompt_farm_upgrade')} Nv.${farm.level + 1}`,
+            actionClass: farm.level === 0 ? 'farm_build' : 'farm_upgrade',
             cost: fCost.coins,
             paid: farm.coinsPaid,
             pending,
@@ -884,7 +908,7 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
       const d = Math.abs(m.x - tower.x);
       if (d < 24 && d < bestDist) {
         const pending = countPendingFlyingCoins(w, 'tower', tower.id);
-        if (tower.coinsPaid + pending < tCost.coins) {
+        if (tower.coinsPaid < tCost.coins) {
           bestDist = d;
           const label = tower.destroyed
             ? t('prompt_tower_reform')
@@ -895,6 +919,7 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
             x: tower.x,
             y: GROUND_Y - Math.max(34, getTowerHeight(tower.level) + 12),
             label,
+            actionClass: tower.destroyed ? 'tower_reform' : tower.level === 0 ? 'tower_build' : 'tower_upgrade',
             cost: tCost.coins,
             paid: tower.coinsPaid,
             pending,
@@ -919,7 +944,7 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
         const targetType: PromptTargetType =
           buff.kind === 'construction' ? 'buff_construction' : 'buff_forge';
         const pending = countPendingFlyingCoins(w, targetType, 0);
-        if (buff.coinsPaid + pending < bCost.coins) {
+        if (buff.coinsPaid < bCost.coins) {
           bestDist = d;
           best = {
             x: buff.x,
@@ -928,6 +953,7 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
               buff.kind === 'construction'
                 ? t('prompt_buff_construction')
                 : t('prompt_buff_forge'),
+            actionClass: targetType,
             cost: bCost.coins,
             paid: buff.coinsPaid,
             pending,
@@ -948,12 +974,13 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
     if (d < 34 && d < bestDist) {
       const dockCost = getDockBuildResourceCost();
       const pending = countPendingFlyingCoins(w, 'dock_build', 0);
-      if (w.dock.coinsPaid + pending < dockCost.coins) {
+      if (w.dock.coinsPaid < dockCost.coins) {
         bestDist = d;
         best = {
           x: w.dock.x,
           y: GROUND_Y - 40,
           label: t('prompt_dock_build'),
+          actionClass: 'dock_build',
           cost: dockCost.coins,
           paid: w.dock.coinsPaid,
           pending,
@@ -973,12 +1000,13 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
     if (!w.boat.built && !w.boat.underConstruction && boatDist < 34 && boatDist < bestDist) {
       const boatCost = getBoatBuildResourceCost();
       const pending = countPendingFlyingCoins(w, 'boat_build', 0);
-      if (w.boat.coinsPaid + pending < boatCost.coins) {
+      if (w.boat.coinsPaid < boatCost.coins) {
         bestDist = boatDist;
         best = {
           x: w.boat.x,
           y: GROUND_Y - 48,
           label: t('prompt_boat_build'),
+          actionClass: 'boat_build',
           cost: boatCost.coins,
           paid: w.boat.coinsPaid,
           pending,
@@ -991,12 +1019,13 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
       }
     } else if (w.boat.built && w.dock.built && boatDist < 32 && boatDist < bestDist) {
       const pending = countPendingFlyingCoins(w, 'boat_sail', 0);
-      if (w.boat.sailCoinsPaid + pending < BOAT_SAIL_COST) {
+      if (w.boat.sailCoinsPaid < BOAT_SAIL_COST) {
         bestDist = boatDist;
         best = {
           x: w.boat.x,
           y: GROUND_Y - 52,
           label: t('prompt_boat_sail'),
+          actionClass: 'boat_sail',
           cost: BOAT_SAIL_COST,
           paid: w.boat.sailCoinsPaid,
           pending,
@@ -1011,19 +1040,18 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
       const bellDist = Math.abs(m.x - w.boat.bellX);
       if (bellDist < 22 && bellDist < bestDist) {
         const pending = countPendingFlyingCoins(w, 'boat_bell', 0);
-        if (pending < BELL_COST) {
-          bestDist = bellDist;
-          best = {
-            x: w.boat.bellX,
-            y: GROUND_Y - 38,
-            label: t('prompt_boat_bell'),
-            cost: BELL_COST,
-            paid: 0,
-            pending,
-            targetType: 'boat_bell',
-            targetId: 0,
-          };
-        }
+        bestDist = bellDist;
+        best = {
+          x: w.boat.bellX,
+          y: GROUND_Y - 38,
+          label: t('prompt_boat_bell'),
+          actionClass: 'boat_bell',
+          cost: BELL_COST,
+          paid: 0,
+          pending,
+          targetType: 'boat_bell',
+          targetId: 0,
+        };
       }
     }
   }
@@ -1043,7 +1071,7 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
       const d = Math.abs(m.x - wall.x);
       if (d < 26 && d < bestDist) {
         const pending = countPendingFlyingCoins(w, 'wall', wall.id);
-        if (wall.coinsPaid + pending < wCost.coins) {
+        if (wall.coinsPaid < wCost.coins) {
           bestDist = d;
           const label = wall.destroyed
             ? t('prompt_wall_reform')
@@ -1054,6 +1082,7 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
             x: wall.x,
             y: GROUND_Y - Math.max(30, getWallHeight(wall.level) + 12),
             label,
+            actionClass: wall.destroyed ? 'wall_reform' : wall.level === 0 ? 'wall_build' : 'wall_upgrade',
             cost: wCost.coins,
             paid: wall.coinsPaid,
             pending,
@@ -1075,12 +1104,13 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
       const godDef = GOD_DEFS[w.godShrine.godId];
       const pending = countPendingFlyingCoins(w, 'god_shrine', 0);
       if (!w.godShrine.unlocked) {
-        if (w.godShrine.diamondsPaid + pending < godDef.diamondCost) {
+        if (w.godShrine.diamondsPaid < godDef.diamondCost) {
           bestDist = d;
           best = {
             x: w.godShrine.x,
             y: GROUND_Y - 48,
             label: `${godDef.name.toUpperCase()} (${godDef.diamondCost}◆)`,
+            actionClass: 'god_unlock',
             cost: godDef.diamondCost,
             paid: w.godShrine.diamondsPaid,
             pending,
@@ -1090,12 +1120,13 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
           };
         }
       } else if (w.activeGod !== w.godShrine.godId) {
-        if (w.godShrine.coinsPaid + pending < godDef.coinCost) {
+        if (w.godShrine.coinsPaid < godDef.coinCost) {
           bestDist = d;
           best = {
             x: w.godShrine.x,
             y: GROUND_Y - 48,
             label: `INVOCAR ${godDef.name.toUpperCase()}`,
+            actionClass: 'god_invoke',
             cost: godDef.coinCost,
             paid: w.godShrine.coinsPaid,
             pending,
@@ -1116,12 +1147,13 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
       const lang = getLanguage();
       const pending = countPendingFlyingCoins(w, 'mount_shrine', 0);
       if (!w.mountShrine.unlocked) {
-        if (w.mountShrine.diamondsPaid + pending < mountDef.diamondCost) {
+        if (w.mountShrine.diamondsPaid < mountDef.diamondCost) {
           bestDist = d;
           best = {
             x: w.mountShrine.x,
             y: GROUND_Y - 42,
             label: `${mountDef.name[lang].toUpperCase()} (${mountDef.diamondCost}◆)`,
+            actionClass: 'mount_unlock',
             cost: mountDef.diamondCost,
             paid: w.mountShrine.diamondsPaid,
             pending,
@@ -1133,12 +1165,13 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
       } else if (m.mount !== w.mountShrine.mountId) {
         const alreadyTamed = w.unlockedMounts.includes(w.mountShrine.mountId);
         const coinCost = alreadyTamed ? 2 : mountDef.coinCost;
-        if (w.mountShrine.coinsPaid + pending < coinCost) {
+        if (w.mountShrine.coinsPaid < coinCost) {
           bestDist = d;
           best = {
             x: w.mountShrine.x,
             y: GROUND_Y - 42,
             label: `${alreadyTamed ? 'MONTAR' : 'DOMAR'} ${mountDef.name[lang].toUpperCase()}`,
+            actionClass: 'mount_tame',
             cost: coinCost,
             paid: w.mountShrine.coinsPaid,
             pending,
@@ -1156,12 +1189,13 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
     const d = Math.abs(m.x - w.puzzle.x);
     if (d < 30 && d < bestDist) {
       const pending = countPendingFlyingCoins(w, 'puzzle', 0);
-      if (w.puzzle.coinsPaid + pending < 3) {
+      if (w.puzzle.coinsPaid < 3) {
         bestDist = d;
         best = {
           x: w.puzzle.x,
           y: GROUND_Y - 42,
           label: 'ENIGMA RÚNICO (+2◆)',
+          actionClass: 'puzzle',
           cost: 3,
           paid: w.puzzle.coinsPaid,
           pending,
@@ -1178,14 +1212,16 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
     if (v.role !== 'wanderer') continue;
     const d = Math.abs(m.x - v.x);
     if (d < 28 && d < bestDist) {
+      const pending = countPendingFlyingCoins(w, 'wanderer', v.id);
       bestDist = d;
       best = {
         x: v.x,
         y: GROUND_Y - 32,
         label: t('prompt_recruit'),
+        actionClass: 'wanderer',
         cost: 1,
         paid: 0,
-        pending: 0,
+        pending,
         targetType: 'wanderer',
         targetId: v.id,
       };
@@ -1198,20 +1234,19 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
     const d = Math.abs(m.x - rock.x);
     if (d < 26 && d < bestDist) {
       const pending = countPendingFlyingCoins(w, 'rock', rock.id);
-      if (pending < 1) {
-        const spec = getRockSpec(rock.size ?? sizeFromVariant(rock.variant));
-        bestDist = d;
-        best = {
-          x: rock.x,
-          y: GROUND_Y - 28,
-          label: `${t('prompt_rock')} ${t(spec.sizeKey)} (+${spec.stone} · ${spec.time}s)`,
-          cost: 1,
-          paid: 0,
-          pending,
-          targetType: 'rock',
-          targetId: rock.id,
-        };
-      }
+      const spec = getRockSpec(rock.size ?? sizeFromVariant(rock.variant));
+      bestDist = d;
+      best = {
+        x: rock.x,
+        y: GROUND_Y - 28,
+        label: `${t('prompt_rock')} ${t(spec.sizeKey)} (+${spec.stone} · ${spec.time}s)`,
+        actionClass: 'rock',
+        cost: 1,
+        paid: 0,
+        pending,
+        targetType: 'rock',
+        targetId: rock.id,
+      };
     }
   }
 
@@ -1221,20 +1256,19 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
     const d = Math.abs(m.x - tree.x);
     if (d < 26 && d < bestDist) {
       const pending = countPendingFlyingCoins(w, 'tree', tree.id);
-      if (pending < 1) {
-        const spec = getTreeSpec(tree.size ?? sizeFromVariant(tree.variant));
-        bestDist = d;
-        best = {
-          x: tree.x,
-          y: GROUND_Y - 46,
-          label: `${t('prompt_tree')} ${t(spec.sizeKey)} (+${spec.wood} · ${spec.time}s)`,
-          cost: 1,
-          paid: 0,
-          pending,
-          targetType: 'tree',
-          targetId: tree.id,
-        };
-      }
+      const spec = getTreeSpec(tree.size ?? sizeFromVariant(tree.variant));
+      bestDist = d;
+      best = {
+        x: tree.x,
+        y: GROUND_Y - 46,
+        label: `${t('prompt_tree')} ${t(spec.sizeKey)} (+${spec.wood} · ${spec.time}s)`,
+        actionClass: 'tree',
+        cost: 1,
+        paid: 0,
+        pending,
+        targetType: 'tree',
+        targetId: tree.id,
+      };
     }
   }
 
@@ -1242,25 +1276,60 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
 }
 
 function getSlotWorldPos(prompt: FloatingPrompt, slotIndex: number): { x: number; y: number } {
-  if (prompt.cost > 9 || prompt.targetType === 'banker') {
-    return { x: prompt.x, y: prompt.y - 4 };
+  if (prompt.targetType === 'banker') {
+    return { x: prompt.x - 10, y: prompt.y - 4.5 };
+  }
+  if (prompt.cost > 10) {
+    return { x: prompt.x, y: prompt.y - 4.5 };
   }
   const slotStep = 10;
-  const slotsW = prompt.cost * slotStep - 2;
-  const startX = prompt.x - slotsW / 2 + 3;
+  const slotsW = prompt.cost * slotStep - 3;
+  const startX = prompt.x - slotsW / 2;
   return {
-    x: startX + slotIndex * slotStep,
-    y: prompt.y - 4,
+    x: startX + slotIndex * slotStep + 3.5,
+    y: prompt.y - 4.5,
   };
 }
 
 function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
+  if (fc.targetType === 'banker_withdraw') {
+    const m = w.monarchs[0];
+    if (m && m.coins < m.maxCoins) {
+      m.coins += 1;
+      w.resources.gold = m.coins;
+      sound.playCoinPickup();
+      spawnBurst(w, m.x, GROUND_Y - 16 - m.flyY, 4, '#ffe066', 'spark', 24);
+    } else {
+      w.banker.balance += 1;
+    }
+    if (!w.flyingCoins.some((other) => other.targetType === 'banker_withdraw')) {
+      saveCampaign(w);
+    }
+    return;
+  }
+
   sound.playCoinSlot();
   spawnBurst(w, fc.targetX, fc.targetY, 6, fc.currency === 'diamond' ? '#7ef5ff' : '#ffe066', 'spark', 28);
 
   if (fc.targetType === 'banker') {
     w.banker.balance += 1;
+    markActionClassCompleted(w, 'banker');
     spawnBurst(w, w.banker.x, GROUND_Y - 18, 5, '#ffe066', 'spark', 24);
+    return;
+  }
+
+  if (fc.targetType === 'wanderer') {
+    const v = w.villagers.find((u) => u.id === fc.targetId && u.role === 'wanderer');
+    if (v) {
+      v.role = 'peasant';
+      v.state = 'walking_to_center';
+      w.stats.villagersRecruited += 1;
+      markActionClassCompleted(w, 'wanderer');
+      sound.playCoinPickup();
+      spawnBurst(w, v.x, GROUND_Y - 12, 8, '#f7d265', 'spark', 32);
+    } else {
+      spawnCoin(w, fc.targetX, GROUND_Y - 14, 0, -40, true, 0.2);
+    }
     return;
   }
 
@@ -1280,9 +1349,11 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         showBanner(w, 'RECURSOS INSUFICIENTES', `Falta: ${formatMissingMaterials(w, resCost)}`, '#ff8a65');
         return;
       }
+      const prevLevel = w.hall.level;
       consumeMaterials(w, resCost);
       w.hall.coinsPaid = 0;
       w.hall.level += 1;
+      markActionClassCompleted(w, prevLevel === 0 ? 'hall_fire' : 'hall_upgrade');
       sound.playBuildComplete();
       spawnBurst(w, w.hall.x, GROUND_Y - 26, 20, '#ffba52', 'ember', 60);
       if (w.hall.level === 1) {
@@ -1339,6 +1410,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
       w.forge.underConstruction = true;
       w.forge.buildProgress = 0;
       w.forge.orderedAt = stampOrderSeq(w);
+      markActionClassCompleted(w, 'forge_build');
       sound.playHammer();
       showBanner(w, 'FORJA EM CONSTRUÇÃO!', 'Construtores erguendo a Forja de Ferro!', '#ff9b52');
     }
@@ -1362,6 +1434,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
       w.forge.smeltCoinsPaid = 0;
       w.forge.smeltQueue += 1;
       w.forge.smelting = true;
+      markActionClassCompleted(w, 'forge_smelt');
       sound.playHammer();
       spawnBurst(w, w.forge.x, GROUND_Y - 18, 10, '#ff8f3b', 'ember', 40);
     }
@@ -1387,6 +1460,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         consumeMaterials(w, bCost);
         buff.coinsPaid = 0;
         buff.active = true;
+        markActionClassCompleted(w, fc.targetType);
         sound.playHorn(false);
         spawnBurst(w, buff.x, GROUND_Y - 24, 24, kind === 'construction' ? '#7ef5ff' : '#ff9b52', 'spark', 70);
         syncCurrentIslandProgress(w);
@@ -1424,6 +1498,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         shop.coinsPaid = 0;
         shop.built = true;
         shop.stock += 1;
+        markActionClassCompleted(w, `shop_${shop.kind}`);
         sound.playBuildComplete();
         spawnBurst(w, shop.x, GROUND_Y - 18, 10, '#f3d478', 'spark', 36);
       }
@@ -1451,6 +1526,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         farm.underConstruction = true;
         farm.buildProgress = 0;
         farm.orderedAt = stampOrderSeq(w);
+        markActionClassCompleted(w, farm.level === 0 ? 'farm_build' : 'farm_upgrade');
         sound.playHammer();
       }
     }
@@ -1484,6 +1560,10 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         tower.buildProgress = 0;
         tower.orderedAt = stampOrderSeq(w);
         tower.targetLevel = tower.destroyed ? Math.max(1, tower.previousLevel) : tower.level + 1;
+        markActionClassCompleted(
+          w,
+          tower.destroyed ? 'tower_reform' : tower.level === 0 ? 'tower_build' : 'tower_upgrade'
+        );
         sound.playHammer();
         const hasBuilders = w.villagers.some((v) => v.role === 'builder');
         if (!hasBuilders) {
@@ -1512,6 +1592,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         consumeMaterials(w, boatCost);
         w.boat.underConstruction = true;
         w.boat.orderedAt = stampOrderSeq(w);
+        markActionClassCompleted(w, 'boat_build');
         sound.playHammer();
         showBanner(w, 'CASCO DO DRAKKAR PAGO!', 'Seus construtores estão finalizando o barco!', '#efc462');
       }
@@ -1537,6 +1618,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         consumeMaterials(w, dockCost);
         w.dock.underConstruction = true;
         w.dock.orderedAt = stampOrderSeq(w);
+        markActionClassCompleted(w, 'dock_build');
         sound.playHammer();
         showBanner(w, 'PORTO PAGO!', 'Seus construtores estão erguendo o cais!', '#efc462');
       }
@@ -1545,6 +1627,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
   }
 
   if (fc.targetType === 'boat_bell') {
+    markActionClassCompleted(w, 'boat_bell');
     ringShipBell(w);
     return;
   }
@@ -1553,6 +1636,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
     if (w.boat.built && w.dock.built) {
       w.boat.sailCoinsPaid = Math.min(BOAT_SAIL_COST, w.boat.sailCoinsPaid + 1);
       if (w.boat.sailCoinsPaid >= BOAT_SAIL_COST) {
+        markActionClassCompleted(w, 'boat_sail');
         sound.playHorn(false);
         syncCurrentIslandProgress(w);
         w.worldMapContext = 'sail';
@@ -1570,6 +1654,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
       if (w.godShrine.diamondsPaid >= godDef.diamondCost) {
         w.godShrine.diamondsPaid = godDef.diamondCost;
         w.godShrine.unlocked = true;
+        markActionClassCompleted(w, 'god_unlock');
         if (!w.unlockedGods.includes(godDef.id)) w.unlockedGods.push(godDef.id);
         sound.playHorn(false);
         spawnBurst(w, w.godShrine.x, GROUND_Y - 28, 22, godDef.color, 'spark', 65);
@@ -1588,6 +1673,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         w.godShrine.coinsPaid = 0;
         w.godShrine.blessed = true;
         w.activeGod = godDef.id;
+        markActionClassCompleted(w, 'god_invoke');
         // Apply immediate retroactive boosts for Odin (walls & towers +40% HP) and Thor (warriors + Sword Tents!)
         if (godDef.id === 'odin') {
           for (const wall of w.walls) {
@@ -1641,6 +1727,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
       if (w.mountShrine.diamondsPaid >= mountDef.diamondCost) {
         w.mountShrine.diamondsPaid = mountDef.diamondCost;
         w.mountShrine.unlocked = true;
+        markActionClassCompleted(w, 'mount_unlock');
         sound.playHorn(false);
         spawnBurst(w, w.mountShrine.x, GROUND_Y - 24, 20, mountDef.accentColor, 'spark', 60);
         showBanner(
@@ -1663,6 +1750,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         m.flyTimer = 0;
         m.flyY = 0;
         m.roarTimer = 0;
+        markActionClassCompleted(w, 'mount_tame');
         if (!w.unlockedMounts.includes(mountDef.id)) w.unlockedMounts.push(mountDef.id);
         sound.playHorn(false);
         spawnBurst(w, w.mountShrine.x, GROUND_Y - 24, 24, mountDef.accentColor, 'spark', 70);
@@ -1683,6 +1771,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
     w.puzzle.coinsPaid += 1;
     if (w.puzzle.coinsPaid >= 3) {
       w.puzzle.solved = true;
+      markActionClassCompleted(w, 'puzzle');
       const m = w.monarchs[0];
       const isl = w.islands.find((item) => item.id === w.currentIsland);
       const def = getIslandDef(w.currentIsland);
@@ -1737,6 +1826,10 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         wall.buildProgress = 0;
         wall.orderedAt = stampOrderSeq(w);
         wall.targetLevel = wall.destroyed ? Math.max(1, wall.previousLevel) : wall.level + 1;
+        markActionClassCompleted(
+          w,
+          wall.destroyed ? 'wall_reform' : wall.level === 0 ? 'wall_build' : 'wall_upgrade'
+        );
         sound.playHammer();
         const hasBuilders = w.villagers.some((v) => v.role === 'builder');
         if (!hasBuilders) {
@@ -1752,6 +1845,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
     if (tree && !tree.chopped && !tree.marked) {
       tree.marked = true;
       tree.orderedAt = stampOrderSeq(w);
+      markActionClassCompleted(w, 'tree');
       sound.playHammer();
       spawnBurst(w, tree.x, GROUND_Y - 18, 6, '#e5c16b', 'spark', 22);
     }
@@ -1763,6 +1857,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
     if (rock && !rock.mined && !rock.marked) {
       rock.marked = true;
       rock.orderedAt = stampOrderSeq(w);
+      markActionClassCompleted(w, 'rock');
       sound.playHammer();
       spawnBurst(w, rock.x, GROUND_Y - 12, 6, '#cfdbe6', 'stone', 24);
     }
@@ -1773,6 +1868,11 @@ function handleCoinDrop(w: WorldState, m: Monarch): void {
   if (m.dropCooldown > 0) return;
 
   const prompt = w.activePrompt;
+
+  // Do not spend extra coins while the final coin is already jumping into the last slot
+  if (prompt && prompt.targetType !== 'banker' && !prompt.blockedReason && prompt.paid + prompt.pending >= prompt.cost) {
+    return;
+  }
 
   // Prevent wasting coins on a locked Kingdom upgrade prompt
   if (prompt && prompt.blockedReason) {
@@ -1829,7 +1929,7 @@ function handleCoinDrop(w: WorldState, m: Monarch): void {
       targetX: slotPos.x,
       targetY: slotPos.y,
       progress: 0,
-      duration: 0.32,
+      duration: 0.34,
       currency: 'diamond',
       targetType: prompt.targetType,
       targetId: prompt.targetId,
@@ -1841,10 +1941,11 @@ function handleCoinDrop(w: WorldState, m: Monarch): void {
 
   m.coins -= 1;
   w.resources.gold = m.coins;
-  m.dropCooldown = prompt?.targetType === 'banker' ? 0.09 : 0.16;
+  m.dropCooldown = prompt?.targetType === 'banker' ? 0.1 : 0.16;
   sound.playCoinDrop();
 
-  if (prompt && prompt.targetType !== 'wanderer') {
+  // ALWAYS animate the coin jumping from the monarch into the exact command slot!
+  if (prompt) {
     const nextSlotIndex = Math.min(Math.max(0, prompt.cost - 1), prompt.paid + prompt.pending);
     const slotPos = getSlotWorldPos(prompt, nextSlotIndex);
     w.flyingCoins.push({
@@ -1854,7 +1955,7 @@ function handleCoinDrop(w: WorldState, m: Monarch): void {
       targetX: slotPos.x,
       targetY: slotPos.y,
       progress: 0,
-      duration: prompt.targetType === 'banker' ? 0.22 : 0.3,
+      duration: prompt.targetType === 'banker' ? 0.24 : 0.34,
       currency: 'coin',
       targetType: prompt.targetType,
       targetId: prompt.targetId,
@@ -2435,8 +2536,13 @@ function updateMonarch(w: WorldState, m: Monarch, input: InputState, dt: number)
 }
 
 function updateFlyingCoins(w: WorldState, dt: number): void {
+  const m = w.monarchs[0];
   for (let i = w.flyingCoins.length - 1; i >= 0; i--) {
     const fc = w.flyingCoins[i];
+    if (fc.targetType === 'banker_withdraw' && m) {
+      fc.targetX = m.x;
+      fc.targetY = GROUND_Y - 16 - m.flyY;
+    }
     fc.progress += dt / fc.duration;
     if (fc.progress >= 1) {
       w.flyingCoins.splice(i, 1);
@@ -2817,27 +2923,73 @@ function pickBalancedSide(w: WorldState, role: VillagerRole): -1 | 1 {
   return left <= right ? -1 : 1;
 }
 
-function trySweepCoinsToHall(w: WorldState, v: Villager, dt: number): boolean {
-  // If carrying coins, return them to the central Hall (Prefeitura)!
-  if (v.carriedCoins > 0) {
-    v.state = 'returning_coins';
-    if (moveToward(v, w.hall.x, 48, dt)) {
+function deliverCarriedCoinsToBanker(w: WorldState, v: Villager, dt: number): boolean {
+  if (v.carriedCoins <= 0) return false;
+  v.state = 'returning_coins';
+  const useBanker = w.hall.level >= 1;
+  const targetX = useBanker ? w.banker.x : w.hall.x;
+  if (moveToward(v, targetX, 50, dt)) {
+    if (useBanker) {
+      w.banker.balance += v.carriedCoins;
+    } else {
       w.hall.storedTaxCoins = Math.min(60, w.hall.storedTaxCoins + v.carriedCoins);
-      v.carriedCoins = 0;
-      sound.playCoinPickup();
-      spawnBurst(w, w.hall.x, GROUND_Y - 14, 5, '#ffe066', 'spark', 24);
-      v.state = 'idle';
     }
-    return true;
+    v.carriedCoins = 0;
+    sound.playCoinPickup();
+    spawnBurst(w, targetX, GROUND_Y - 16, 6, '#ffe066', 'spark', 26);
+    v.state = 'idle';
+  }
+  return true;
+}
+
+function trySweepCoinsToBanker(w: WorldState, v: Villager, dt: number, isNightTime: boolean): boolean {
+  // If already carrying coins, check if another loose coin is right nearby (< 42px) before heading to Banker
+  if (v.carriedCoins > 0) {
+    if (!isNightTime && v.carriedCoins < 5) {
+      let nearbyCoin: Coin | null = null;
+      let nearbyDist = 42;
+      for (const c of w.coins) {
+        if (!c.grounded) continue;
+        if (c.claimedById !== null && c.claimedById !== v.id) continue;
+        const nearWanderer =
+          c.fromMonarch &&
+          c.age < 5 &&
+          w.villagers.some((o) => o.role === 'wanderer' && Math.abs(o.x - c.x) < 95);
+        if (nearWanderer) continue;
+        const d = Math.abs(c.x - v.x);
+        if (d < nearbyDist) {
+          nearbyDist = d;
+          nearbyCoin = c;
+        }
+      }
+      if (nearbyCoin) {
+        nearbyCoin.claimedById = v.id;
+        v.state = 'seeking_coin';
+        if (moveToward(v, nearbyCoin.x, 52, dt)) {
+          const idx = w.coins.indexOf(nearbyCoin);
+          if (idx >= 0) w.coins.splice(idx, 1);
+          v.carriedCoins += 1;
+          sound.playCoinPickup();
+        }
+        return true;
+      }
+    }
+    return deliverCarriedCoinsToBanker(w, v, dt);
   }
 
-  // Otherwise sweep map for unclaimed loose coins (outside immediate recruitment range of wanderers)
+  if (isNightTime) return false;
+
+  // Sweep the map for loose dropped coins (excluding coins dropped right next to unhired wanderers)
   let bestCoin: Coin | null = null;
-  let bestDist = 420;
+  let bestDist = 1100;
   for (const c of w.coins) {
     if (!c.grounded) continue;
     if (c.claimedById !== null && c.claimedById !== v.id) continue;
-    if (c.fromMonarch && c.age < 6) continue;
+    const nearWanderer =
+      c.fromMonarch &&
+      c.age < 5 &&
+      w.villagers.some((o) => o.role === 'wanderer' && Math.abs(o.x - c.x) < 95);
+    if (nearWanderer) continue;
     const d = Math.abs(c.x - v.x);
     if (d < bestDist) {
       bestDist = d;
@@ -2848,7 +3000,7 @@ function trySweepCoinsToHall(w: WorldState, v: Villager, dt: number): boolean {
   if (bestCoin) {
     bestCoin.claimedById = v.id;
     v.state = 'seeking_coin';
-    if (moveToward(v, bestCoin.x, 48, dt)) {
+    if (moveToward(v, bestCoin.x, 52, dt)) {
       const idx = w.coins.indexOf(bestCoin);
       if (idx >= 0) w.coins.splice(idx, 1);
       v.carriedCoins += 1;
@@ -3074,8 +3226,14 @@ function updateVillagers(w: WorldState, dt: number): void {
       continue;
     }
 
-    // Hand carried coins to Monarch if crossing paths
-    if (v.carriedCoins > 0 && monarch && Math.abs(v.x - monarch.x) < 26 && monarch.coins < monarch.maxCoins) {
+    // Hand carried coins to Monarch if crossing paths (peasants deliver ground coins straight to the Banker!)
+    if (
+      v.role !== 'peasant' &&
+      v.carriedCoins > 0 &&
+      monarch &&
+      Math.abs(v.x - monarch.x) < 26 &&
+      monarch.coins < monarch.maxCoins
+    ) {
       const give = Math.min(v.carriedCoins, monarch.maxCoins - monarch.coins);
       v.carriedCoins -= give;
       monarch.coins += give;
@@ -3105,6 +3263,7 @@ function updateVillagers(w: WorldState, dt: number): void {
           v.role = 'peasant';
           v.state = 'walking_to_center';
           w.stats.villagersRecruited += 1;
+          markActionClassCompleted(w, 'wanderer');
           sound.playCoinPickup();
           spawnBurst(w, v.x, GROUND_Y - 12, 8, '#f7d265', 'spark', 32);
         }
@@ -3121,8 +3280,11 @@ function updateVillagers(w: WorldState, dt: number): void {
       continue;
     }
 
-    // --- PEASANT (only gets profession AFTER picking up an unlocked stocked tool/seed; also sweeps coins to Hall!) ---
+    // --- PEASANT (unemployed hired subject: delivers dropped coins to Banker, or picks up stocked tool/seed!) ---
     if (v.role === 'peasant') {
+      // Finish delivering any coins already carried to the Banker first so no gold is lost
+      if (v.carriedCoins > 0 && deliverCarriedCoinsToBanker(w, v, dt)) continue;
+
       const stockedShop = w.shops
         .filter((s) => isShopUnlocked(w, s.kind) && s.stock > 0)
         .sort((a, b) => Math.abs(a.x - v.x) - Math.abs(b.x - v.x))[0];
@@ -3132,6 +3294,7 @@ function updateVillagers(w: WorldState, dt: number): void {
         if (moveToward(v, stockedShop.x, 48, dt)) {
           if (stockedShop.stock > 0) {
             stockedShop.stock -= 1;
+            markActionClassCompleted(w, `shop_${stockedShop.kind}`);
             if (stockedShop.kind === 'bow') {
               v.role = 'archer';
               v.hp = 24;
@@ -3161,7 +3324,7 @@ function updateVillagers(w: WorldState, dt: number): void {
         continue;
       }
 
-      if (!isEveningOrNight && trySweepCoinsToHall(w, v, dt)) continue;
+      if (trySweepCoinsToBanker(w, v, dt, isEveningOrNight)) continue;
 
       const homeAnchor = v.orderDir !== 0 ? CENTER_X + v.side * 75 : CENTER_X;
       if (Math.abs(v.x - homeAnchor) > 70) {
@@ -3466,8 +3629,8 @@ function updateVillagers(w: WorldState, dt: number): void {
 
       v.targetId = null;
 
-      // Fallback 2: Sweep map for loose coins and deposit at central Hall!
-      if (!isEveningOrNight && trySweepCoinsToHall(w, v, dt)) continue;
+      // Finish depositing any carried coins from previous saves (loose ground coins are now collected by unemployed peasants!)
+      if (deliverCarriedCoinsToBanker(w, v, dt)) continue;
 
       v.targetId = null;
       v.state = isEveningOrNight ? 'fleeing' : 'idle';

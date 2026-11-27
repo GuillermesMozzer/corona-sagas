@@ -1759,16 +1759,6 @@ export class PixelRenderer {
       ctx.fillStyle = '#f7d265';
       ctx.fillRect(sx + 5 + (i % 2) * 3, GROUND_Y - 12 - Math.floor(i / 2) * 2, 2, 2);
     }
-
-    // Balance & rate badge
-    const ratePct = getBankerDailyRatePct(w.hall.level);
-    ctx.fillStyle = 'rgba(8, 14, 24, 0.8)';
-    ctx.fillRect(sx - 18, GROUND_Y - 33, 36, 8);
-    ctx.fillStyle = '#ffe58a';
-    ctx.font = 'bold 5.5px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(`${w.banker.balance}g·${ratePct}%`, sx, GROUND_Y - 27);
-    ctx.textAlign = 'left';
   }
 
   private drawForge(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
@@ -3370,31 +3360,37 @@ export class PixelRenderer {
 
   private drawFlyingCoins(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     for (const fc of w.flyingCoins) {
+      if (fc.progress < 0) continue;
       const p = Math.min(1, fc.progress);
       const ease = 1 - Math.pow(1 - p, 2);
       const wx = lerp(fc.startX, fc.targetX, ease);
-      const wy = lerp(fc.startY, fc.targetY, ease) - Math.sin(p * Math.PI) * 26;
+      const arcH = 26 + Math.min(18, Math.abs(fc.targetX - fc.startX) * 0.22);
+      const wy = lerp(fc.startY, fc.targetY, ease) - Math.sin(p * Math.PI) * arcH;
       const sx = Math.round(wx - camX);
       const sy = Math.round(wy + this.worldOffsetY);
+      const spinThin = Math.sin(p * Math.PI * 5) > 0.72;
 
       if (fc.currency === 'diamond') {
-        ctx.fillStyle = 'rgba(126, 245, 255, 0.45)';
-        ctx.fillRect(sx - 2, sy + 2, 4, 4);
+        ctx.fillStyle = 'rgba(8, 12, 18, 0.72)';
+        ctx.fillRect(sx - 3, sy - 4, 6, 8);
         ctx.fillStyle = '#2da8c4';
         ctx.fillRect(sx - 3, sy - 3, 6, 6);
         ctx.fillStyle = '#7ef5ff';
         ctx.fillRect(sx - 2, sy - 2, 4, 4);
-        ctx.fillStyle = '#e8feff';
+        ctx.fillStyle = '#ffffff';
         ctx.fillRect(sx - 1, sy - 2, 2, 2);
       } else {
-        ctx.fillStyle = 'rgba(255, 232, 130, 0.35)';
-        ctx.fillRect(sx - 2, sy + 2, 4, 4);
+        const halfW = spinThin ? 2 : 3;
+        const fullW = spinThin ? 4 : 6;
+        ctx.fillStyle = 'rgba(8, 12, 18, 0.72)';
+        ctx.fillRect(sx - halfW - 1, sy - 3, fullW + 2, 6);
+        ctx.fillRect(sx - halfW, sy - 4, fullW, 8);
         ctx.fillStyle = '#b87f14';
-        ctx.fillRect(sx - 3, sy - 3, 6, 6);
+        ctx.fillRect(sx - halfW, sy - 3, fullW, 6);
         ctx.fillStyle = '#ffe066';
-        ctx.fillRect(sx - 2, sy - 2, 4, 4);
+        ctx.fillRect(sx - halfW + 1, sy - 2, Math.max(2, fullW - 2), 4);
         ctx.fillStyle = '#fff9d6';
-        ctx.fillRect(sx - 1, sy - 2, 2, 2);
+        ctx.fillRect(sx - halfW + 1, sy - 2, 2, 2);
       }
     }
   }
@@ -3583,140 +3579,200 @@ export class PixelRenderer {
     }
   }
 
+  private drawWithdrawCoinIcon(
+    ctx: CanvasRenderingContext2D,
+    centerX: number,
+    topY: number,
+    enabled: boolean
+  ): void {
+    ctx.save();
+    if (!enabled) ctx.globalAlpha = 0.36;
+    const coinX = Math.round(centerX - 3.5);
+    const coinY = Math.round(topY - 1);
+    this.drawMinimalCoinIcon(ctx, coinX, coinY);
+
+    // Crisp downward pixel arrow directly below the coin (sacar moedas)
+    const ax = Math.round(centerX);
+    const ay = coinY + 8;
+    ctx.fillStyle = 'rgba(8, 12, 18, 0.8)';
+    ctx.fillRect(ax - 3, ay - 1, 7, 2);
+    ctx.fillRect(ax - 2, ay + 1, 5, 2);
+    ctx.fillRect(ax - 1, ay + 3, 3, 1);
+
+    ctx.fillStyle = enabled ? '#7cf78c' : '#9fb2c4';
+    ctx.fillRect(ax - 2, ay, 5, 1);
+    ctx.fillRect(ax - 1, ay + 1, 3, 1);
+    ctx.fillRect(ax, ay + 2, 1, 1);
+    ctx.restore();
+  }
+
   private drawFloatingPrompt(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     const pr = w.activePrompt;
     if (!pr) return;
     const sx = Math.round(pr.x - camX);
-    const bob = Math.round(Math.sin(w.elapsed * 5) * 1.5);
+    const bob = Math.round(Math.sin(w.elapsed * 5) * 1.2);
     const sy = Math.round(pr.y + this.worldOffsetY + bob);
 
     const isDiamond = pr.currency === 'diamond';
     const isBanker = pr.targetType === 'banker';
     const isBlocked = Boolean(pr.blockedReason);
-    const hasMats = Boolean(pr.woodCost || pr.stoneCost || pr.ironCost);
-    const isLargeCost = pr.cost > 9;
+    const showCta =
+      Boolean(pr.label) &&
+      (isBlocked || !pr.actionClass || !w.completedActionClasses?.[pr.actionClass]);
+
+    // Fixed coin slot row anchored at sy - 8 so flying coins land dead-center inside each slot!
+    const coinRowY = sy - 8;
+
+    // 1. BLOCKED PROMPT (transparent text only, no dark box!)
+    if (isBlocked && pr.blockedReason) {
+      const cx = Math.max(54, Math.min(this.viewW - 54, sx));
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffab91';
+      ctx.font = 'bold 6.5px monospace';
+      ctx.fillText(pr.label, cx, coinRowY - 2);
+      ctx.fillStyle = '#ffe0b2';
+      ctx.font = 'bold 5.8px monospace';
+      ctx.fillText(pr.blockedReason, cx, coinRowY + 7);
+      ctx.textAlign = 'left';
+      return;
+    }
+
+    // 2. BANKER PROMPT (ONLY shown when passing near Banker — zero dark boxes!)
+    //    Row 1: [Coin icon] [Total Gold]  [+X% in green]
+    //    Row 2: [Deposit Coin Slot]   [Withdraw Coin + Down Arrow Button]
+    if (isBanker) {
+      const centerX = Math.max(38, Math.min(this.viewW - 38, sx));
+      const balance = pr.bankBalance ?? w.banker.balance;
+      const ratePct = pr.bankRatePct ?? getBankerDailyRatePct(w.hall.level);
+      const balTxt = `${balance}`;
+      const pctTxt = `+${ratePct}%`;
+
+      ctx.font = 'bold 8px monospace';
+      const balW = Math.ceil(ctx.measureText(balTxt).width);
+      ctx.font = 'bold 7.5px monospace';
+      const pctW = Math.ceil(ctx.measureText(pctTxt).width);
+      const infoTotalW = 8 + balW + 7 + pctW;
+      const infoStartX = Math.round(centerX - infoTotalW / 2);
+      const infoY = coinRowY - 6;
+
+      // Coin icon + total coins in the bank
+      this.drawMinimalCoinIcon(ctx, infoStartX, infoY - 6);
+      ctx.textAlign = 'left';
+      ctx.font = 'bold 8px monospace';
+      ctx.fillStyle = '#ffe58a';
+      ctx.fillText(balTxt, infoStartX + 9, infoY);
+
+      // Green yield percentage right beside it
+      ctx.font = 'bold 7.5px monospace';
+      ctx.fillStyle = '#6fe87b';
+      ctx.fillText(pctTxt, infoStartX + 9 + balW + 6, infoY);
+
+      // Left control: Deposit Slot (1 coin per click, jumping from monarch into this slot!)
+      const depCenterX = centerX - 10;
+      const depSlotX = Math.round(depCenterX - 3.5);
+      ctx.fillStyle = 'rgba(8, 12, 18, 0.72)';
+      ctx.fillRect(depSlotX - 1, coinRowY - 1, 9, 9);
+      ctx.fillStyle = pr.pending > 0 ? 'rgba(255, 224, 102, 0.35)' : 'rgba(247, 210, 101, 0.16)';
+      ctx.fillRect(depSlotX, coinRowY, 7, 7);
+      ctx.strokeStyle = pr.pending > 0 ? '#fff5bd' : '#f7d265';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(depSlotX + 0.5, coinRowY + 0.5, 6, 6);
+      this.addHit('prompt_coin_slot', depCenterX - 9, coinRowY - 6, 18, 22);
+
+      // Right control: Withdraw Button (coin icon + downward arrow -> coins jump out to monarch!)
+      const wdCenterX = centerX + 10;
+      this.drawWithdrawCoinIcon(ctx, wdCenterX, coinRowY, balance > 0);
+      this.addHit('prompt_bank_withdraw', wdCenterX - 9, coinRowY - 6, 18, 22);
+
+      ctx.textAlign = 'left';
+      return;
+    }
+
+    // 3. STANDARD COMMAND PROMPTS (NO dark background boxes!)
+    const isLargeCost = pr.cost > 10;
     const slotStep = 10;
-    const slotsW = isBanker ? 86 : isBlocked ? 110 : isLargeCost ? 78 : pr.cost * slotStep - 2;
+    const slotsW = isLargeCost ? 78 : pr.cost * slotStep - 3;
 
     const matItems: Array<{ kind: 'wood' | 'stone' | 'iron'; need: number; have: number }> = [];
     if (pr.woodCost && pr.woodCost > 0) matItems.push({ kind: 'wood', need: pr.woodCost, have: w.resources.wood });
     if (pr.stoneCost && pr.stoneCost > 0) matItems.push({ kind: 'stone', need: pr.stoneCost, have: w.resources.stone });
     if (pr.ironCost && pr.ironCost > 0) matItems.push({ kind: 'iron', need: pr.ironCost, have: w.resources.iron });
-    const matsW = matItems.length * 30;
+    const matItemW = 24;
+    const matsW = matItems.length * matItemW;
 
-    const textW = Math.max(
-      pr.label.length * 4.7 + 14,
-      isBlocked && pr.blockedReason ? pr.blockedReason.length * 4.0 + 14 : 0
+    const ctaW = showCta ? pr.label.length * 4.5 : 0;
+    const spanW = Math.max(slotsW, matsW, ctaW, 24);
+    const centerX = Math.max(
+      Math.ceil(spanW / 2) + 8,
+      Math.min(this.viewW - Math.ceil(spanW / 2) - 8, sx)
     );
-    const boxW = Math.max(slotsW + 18, matsW + 12, textW);
-    const boxH = isBanker ? (pr.canWithdraw ? 40 : 28) : hasMats ? 36 : 26;
-    const bx = Math.max(8, Math.min(this.viewW - boxW - 8, Math.round(sx - boxW / 2)));
-    const topY = sy - boxH + 5;
 
-    this.addHit('prompt_coin_slot', bx - 6, topY - 4, boxW + 12, isBanker && pr.canWithdraw ? 24 : boxH + 8);
+    // Tappable hit area directly over the floating slots (no dark box)
+    const hitH = 18 + (showCta ? 10 : 0) + (matItems.length > 0 ? 12 : 0);
+    const hitTop = coinRowY - (showCta ? 12 : 5);
+    this.addHit('prompt_coin_slot', Math.round(centerX - spanW / 2) - 8, hitTop, spanW + 16, hitH);
 
-    ctx.fillStyle = 'rgba(8, 14, 24, 0.92)';
-    ctx.fillRect(bx, topY, boxW, boxH);
-    ctx.strokeStyle = isBlocked
-      ? 'rgba(255, 138, 101, 0.9)'
-      : isDiamond
-        ? 'rgba(126, 245, 255, 0.9)'
-        : 'rgba(239, 196, 98, 0.85)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(bx + 0.5, topY + 0.5, boxW - 1, boxH - 1);
-
-    ctx.fillStyle = isBlocked ? '#ffab91' : isDiamond ? '#b5fbff' : '#e6eef7';
-    ctx.font = 'bold 6.5px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(pr.label, bx + boxW / 2, topY + 9);
-
-    if (isBlocked && pr.blockedReason) {
-      ctx.fillStyle = '#ffe0b2';
-      ctx.font = '5.8px monospace';
-      ctx.fillText(pr.blockedReason, bx + boxW / 2, topY + 19);
-      ctx.textAlign = 'left';
-      return;
+    // CTA label ONLY appears before the player has executed this action class once!
+    if (showCta) {
+      ctx.fillStyle = isDiamond ? '#b5fbff' : '#f2f7fc';
+      ctx.font = 'bold 6.5px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(pr.label, centerX, coinRowY - 5);
     }
 
-    if (isBanker) {
-      ctx.fillStyle = '#ffe58a';
-      ctx.font = '6px monospace';
-      ctx.fillText(`Cofre: ${pr.bankBalance ?? 0}g · Depositar [↓/Espaço]`, bx + boxW / 2, topY + 19);
-      if (pr.canWithdraw) {
-        const wBtnW = Math.min(boxW - 14, 78);
-        const wBtnX = Math.round(bx + (boxW - wBtnW) / 2);
-        const wBtnY = topY + 24;
-        ctx.fillStyle = '#1f362b';
-        ctx.fillRect(wBtnX, wBtnY, wBtnW, 12);
-        ctx.strokeStyle = '#82e08a';
-        ctx.strokeRect(wBtnX + 0.5, wBtnY + 0.5, wBtnW - 1, 11);
-        ctx.fillStyle = '#a7f0ad';
-        ctx.font = 'bold 6px monospace';
-        ctx.fillText(`${t('bank_withdraw')} (+5g) [W/↑]`, bx + boxW / 2, wBtnY + 8.5);
-        this.addHit('prompt_bank_withdraw', wBtnX - 4, wBtnY - 2, wBtnW + 8, 16);
-      }
-      ctx.textAlign = 'left';
-      return;
-    }
-
-    const coinRowY = topY + 14;
+    // Floating Coin / Diamond Slots (NO background box behind them — only crisp individual slots!)
     if (isLargeCost) {
       const barW = 46;
-      const barX = Math.round(bx + boxW / 2 - barW / 2 - 12);
-      ctx.fillStyle = '#f7d265';
-      ctx.fillRect(barX - 9, coinRowY - 1, 6, 6);
-      ctx.fillStyle = '#fff5bd';
-      ctx.fillRect(barX - 8, coinRowY, 2, 2);
+      const barX = Math.round(centerX - barW / 2 - 10);
+      this.drawMinimalCoinIcon(ctx, barX - 10, coinRowY);
 
-      ctx.fillStyle = 'rgba(247, 210, 101, 0.18)';
-      ctx.fillRect(barX, coinRowY, barW, 5);
+      ctx.fillStyle = 'rgba(8, 12, 18, 0.72)';
+      ctx.fillRect(barX - 1, coinRowY, barW + 2, 7);
+      ctx.fillStyle = 'rgba(247, 210, 101, 0.2)';
+      ctx.fillRect(barX, coinRowY + 1, barW, 5);
       ctx.fillStyle = '#f7d265';
-      ctx.fillRect(barX, coinRowY, Math.round(barW * Math.min(1, (pr.paid + pr.pending) / pr.cost)), 5);
+      ctx.fillRect(barX, coinRowY + 1, Math.round(barW * Math.min(1, pr.paid / pr.cost)), 5);
 
       ctx.textAlign = 'left';
       ctx.fillStyle = '#ffe58a';
       ctx.font = 'bold 7px monospace';
-      ctx.fillText(`${pr.paid}/${pr.cost}`, barX + barW + 4, coinRowY + 5);
+      ctx.fillText(`${pr.paid}/${pr.cost}`, barX + barW + 4, coinRowY + 6);
     } else {
-      const startX = Math.round(bx + boxW / 2 - slotsW / 2);
+      const startX = Math.round(centerX - slotsW / 2);
       const fullCol = isDiamond ? '#7ef5ff' : '#f7d265';
       const shineCol = isDiamond ? '#ebfeff' : '#fff5bd';
-      const pendingCol = isDiamond ? 'rgba(126, 245, 255, 0.55)' : 'rgba(255, 224, 102, 0.55)';
-      const emptyCol = isDiamond ? 'rgba(126, 245, 255, 0.2)' : 'rgba(247, 210, 101, 0.2)';
+      const emptyCol = isDiamond ? 'rgba(126, 245, 255, 0.16)' : 'rgba(247, 210, 101, 0.16)';
       for (let i = 0; i < pr.cost; i++) {
         const cx = startX + i * slotStep;
+        // Subtle 1px dark pixel contour tightly hugging each slot so it stays readable over bright sky
+        ctx.fillStyle = 'rgba(8, 12, 18, 0.72)';
+        ctx.fillRect(cx - 1, coinRowY - 1, 9, 9);
         if (i < pr.paid) {
           ctx.fillStyle = fullCol;
           ctx.fillRect(cx, coinRowY, 7, 7);
           ctx.fillStyle = shineCol;
           ctx.fillRect(cx + 1, coinRowY + 1, 2, 2);
-        } else if (i < pr.paid + pr.pending) {
-          ctx.fillStyle = pendingCol;
-          ctx.fillRect(cx, coinRowY, 7, 7);
-          ctx.strokeStyle = shineCol;
-          ctx.strokeRect(cx + 0.5, coinRowY + 0.5, 6, 6);
         } else {
           ctx.fillStyle = emptyCol;
           ctx.fillRect(cx, coinRowY, 7, 7);
-          ctx.strokeStyle = fullCol;
+          ctx.strokeStyle = i < pr.paid + pr.pending ? shineCol : fullCol;
+          ctx.lineWidth = 1;
           ctx.strokeRect(cx + 0.5, coinRowY + 0.5, 6, 6);
         }
       }
     }
 
-    // Material requirements row (Wood / Stone / Iron)
+    // Material requirements row (Wood / Stone / Iron icons + required amounts, zero dark box!)
     if (matItems.length > 0) {
-      const itemW = 30;
-      const totalMatW = matItems.length * itemW;
-      let mx = Math.round(bx + (boxW - totalMatW) / 2);
-      const my = topY + 25;
+      let mx = Math.round(centerX - matsW / 2 + 2);
+      const my = coinRowY + 11;
       ctx.textAlign = 'left';
-      ctx.font = 'bold 6px monospace';
+      ctx.font = 'bold 6.5px monospace';
       for (const item of matItems) {
         this.drawMaterialIcon(ctx, item.kind, mx, my);
         ctx.fillStyle = item.have >= item.need ? '#a7f0ad' : '#ff7b7b';
         ctx.fillText(`${item.need}`, mx + 8, my + 5);
-        mx += itemW;
+        mx += matItemW;
       }
     }
     ctx.textAlign = 'left';

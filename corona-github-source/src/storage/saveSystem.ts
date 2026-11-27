@@ -98,6 +98,7 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
   state.nextOrderSeq = state.nextOrderSeq ?? 1;
   state.priorityTask = state.priorityTask ?? null;
   state.discoveredHud = state.discoveredHud ?? {};
+  state.completedActionClasses = state.completedActionClasses ?? {};
   if (state.appearance) {
     state.appearance.gender = state.appearance.gender ?? 'king';
     state.appearance.name = state.appearance.name ?? '';
@@ -254,10 +255,17 @@ export function saveCampaign(w: WorldState, slotOverride?: number): void {
   const slot = Math.max(0, Math.min(MAX_SAVE_SLOTS - 1, Math.floor(slotOverride ?? w.saveSlot ?? 0)));
   w.saveSlot = slot;
   try {
+    const pendingWithdrawCoins = (w.flyingCoins ?? []).filter(
+      (fc) => fc.targetType === 'banker_withdraw'
+    ).length;
     const cleanState: WorldState = {
       ...w,
       mode: 'playing',
       saveSlot: slot,
+      banker:
+        pendingWithdrawCoins > 0
+          ? { ...w.banker, balance: w.banker.balance + pendingWithdrawCoins }
+          : w.banker,
       activeCommand: 'none',
       touchCommandMode: 'none',
       commandFeedback: null,
