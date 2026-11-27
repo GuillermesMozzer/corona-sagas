@@ -273,6 +273,7 @@ export class PixelRenderer {
     this.drawIslandBuffs(ctx, w, camX);
     this.drawTowers(ctx, w, camX);
     this.drawWalls(ctx, w, camX);
+    this.drawOrderedTaskTargetsAndPriorityArrow(ctx, w, camX);
     this.drawWildlife(ctx, w, camX);
     this.drawVillagers(ctx, w, camX);
     this.drawEnemies(ctx, w, camX);
@@ -2691,6 +2692,96 @@ export class PixelRenderer {
         ctx.fillStyle = '#d9cbb8';
         ctx.fillRect(sx + prey.facing * 5, GROUND_Y - 17 - hop, 2, 3);
       }
+    }
+  }
+
+  private drawPriorityDownArrow(ctx: CanvasRenderingContext2D, w: WorldState, cx: number, tipY: number): void {
+    const bob = Math.round(Math.sin(w.elapsed * 7) * 2);
+    const x = Math.round(cx);
+    const y = Math.round(tipY + bob);
+
+    // Subtle warm golden glow behind the downward arrow
+    ctx.fillStyle = 'rgba(255, 214, 89, 0.28)';
+    ctx.fillRect(x - 6, y - 13, 13, 14);
+
+    // Dark pixel outline for strong readability over any sky/tree/snow
+    ctx.fillStyle = '#1b1104';
+    ctx.fillRect(x - 3, y - 12, 7, 6);
+    ctx.fillRect(x - 6, y - 7, 13, 2);
+    ctx.fillRect(x - 5, y - 5, 11, 2);
+    ctx.fillRect(x - 3, y - 3, 7, 2);
+    ctx.fillRect(x - 1, y - 1, 3, 2);
+
+    // Bright metallic gold arrow pointing straight down
+    ctx.fillStyle = '#ffcf40';
+    ctx.fillRect(x - 2, y - 11, 5, 5);
+    ctx.fillRect(x - 5, y - 6, 11, 2);
+    ctx.fillRect(x - 3, y - 4, 7, 2);
+    ctx.fillRect(x - 1, y - 2, 3, 2);
+    ctx.fillRect(x, y, 1, 1);
+
+    // Crisp specular highlight
+    ctx.fillStyle = '#fff9cc';
+    ctx.fillRect(x - 1, y - 10, 2, 5);
+    ctx.fillRect(x - 2, y - 5, 4, 1);
+  }
+
+  private drawOrderedTaskTargetsAndPriorityArrow(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    if (w.mode !== 'playing') return;
+
+    const prio = w.priorityTask;
+    const registerTarget = (
+      kind: 'wall' | 'tower' | 'forge' | 'boat' | 'dock' | 'farm' | 'rock' | 'tree',
+      id: number,
+      worldX: number,
+      halfW: number,
+      height: number
+    ) => {
+      const sx = Math.round(worldX - camX);
+      if (sx < -halfW - 12 || sx > this.viewW + halfW + 12) return;
+      const topY = GROUND_Y - height;
+      this.addHit(`task_prio_${kind}_${id}`, sx - halfW, topY + this.worldOffsetY, halfW * 2, height + 4);
+      if (prio && prio.kind === kind && prio.id === id) {
+        this.drawPriorityDownArrow(ctx, w, sx, topY - 4);
+      }
+    };
+
+    for (const tr of w.trees) {
+      if (tr.marked && !tr.chopped) {
+        registerTarget('tree', tr.id, tr.x, 12, Math.max(24, tr.height));
+      }
+    }
+    for (const r of w.rocks) {
+      if (r.marked && !r.mined) {
+        const rh = r.size === 'large' ? 22 : r.size === 'medium' ? 17 : 13;
+        registerTarget('rock', r.id, r.x, 13, rh);
+      }
+    }
+    for (const wall of w.walls) {
+      if (wall.underConstruction) {
+        const wh = Math.max(24, getWallHeight(Math.max(1, wall.targetLevel || wall.level)));
+        registerTarget('wall', wall.id, wall.x, 13, wh);
+      }
+    }
+    for (const tw of w.towers) {
+      if (tw.underConstruction) {
+        const th = Math.max(28, getTowerHeight(Math.max(1, tw.targetLevel || tw.level)));
+        registerTarget('tower', tw.id, tw.x, 14, th);
+      }
+    }
+    for (const farm of w.farms) {
+      if (farm.underConstruction) {
+        registerTarget('farm', farm.id, farm.x, 22, 24);
+      }
+    }
+    if (w.forge && w.forge.underConstruction && !w.forge.built) {
+      registerTarget('forge', 0, w.forge.x, 18, 28);
+    }
+    if (w.boat.underConstruction && !w.boat.built) {
+      registerTarget('boat', 0, w.boat.x, 26, 30);
+    }
+    if (w.dock.underConstruction && !w.dock.built) {
+      registerTarget('dock', 0, w.dock.x, 24, 24);
     }
   }
 

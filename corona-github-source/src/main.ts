@@ -54,11 +54,12 @@ import {
   showBanner,
   skipTutorial,
   stepWorld,
+  togglePriorityTask,
   triggerCoinDrop,
   triggerMountPower,
   withdrawFromBanker,
 } from './systems/simulation';
-import { type CommandMode, type InputState, type WorldState } from './types';
+import { type BuilderTaskKind, type CommandMode, type InputState, type WorldState } from './types';
 import { createInitialWorld, saveDayHalfMinutes } from './world/initWorld';
 import { ISLAND_DEFINITIONS } from './world/islands';
 
@@ -835,6 +836,19 @@ function handleCanvasHit(hitId: string): boolean {
         sound.playCoinDrop();
       }
       return true;
+    }
+    if (hitId.startsWith('task_prio_')) {
+      const rest = hitId.slice('task_prio_'.length);
+      const sep = rest.lastIndexOf('_');
+      if (sep > 0) {
+        const kind = rest.slice(0, sep) as BuilderTaskKind;
+        const id = Number(rest.slice(sep + 1));
+        if (Number.isFinite(id) && togglePriorityTask(world, kind, id)) {
+          ptrMoveSide = 0;
+          ptrSprint = false;
+          return true;
+        }
+      }
     }
     if (hitId === 'tutorial_skip') {
       skipTutorial(world);

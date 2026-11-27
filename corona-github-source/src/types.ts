@@ -146,6 +146,13 @@ export interface Villager {
   orderDir: -1 | 0 | 1;
 }
 
+export type BuilderTaskKind = 'wall' | 'tower' | 'forge' | 'boat' | 'dock' | 'farm' | 'rock' | 'tree';
+
+export interface PriorityTaskRef {
+  kind: BuilderTaskKind;
+  id: number;
+}
+
 export interface Wall {
   id: number;
   x: number;
@@ -161,6 +168,7 @@ export interface Wall {
   targetLevel: number;
   coinsPaid: number;
   hitFlash: number;
+  orderedAt?: number;
 }
 
 export interface ArcherTower {
@@ -178,6 +186,7 @@ export interface ArcherTower {
   targetLevel: number;
   coinsPaid: number;
   hitFlash: number;
+  orderedAt?: number;
 }
 
 export type ToolShopKind = 'bow' | 'hammer' | 'sword' | 'seed';
@@ -203,6 +212,7 @@ export interface FarmPlot {
   cropProgress: number;
   storedFood: number;
   storedCoins: number;
+  orderedAt?: number;
 }
 
 export interface Hall {
@@ -230,6 +240,7 @@ export interface ForgeState {
   smeltProgress: number;
   smeltCoinsPaid: number;
   smeltQueue: number;
+  orderedAt?: number;
 }
 
 export interface IslandBuffAltar {
@@ -252,6 +263,7 @@ export interface BoatState {
   crewWarriors: number;
   crewProducers: number;
   crewBuilders: number;
+  orderedAt?: number;
 }
 
 export interface DockState {
@@ -261,6 +273,7 @@ export interface DockState {
   coinsPaid: number; // 0..30 to construct port on new islands
   underConstruction: boolean;
   buildProgress: number;
+  orderedAt?: number;
 }
 
 export interface IslandProgress {
@@ -360,6 +373,7 @@ export interface Tree {
   chopProgress: number;
   swayOffset: number;
   hitShake: number;
+  orderedAt?: number;
 }
 
 export interface Rock {
@@ -371,6 +385,7 @@ export interface Rock {
   mined: boolean;
   mineProgress: number;
   hitShake: number;
+  orderedAt?: number;
 }
 
 export interface Chest {
@@ -586,6 +601,8 @@ export interface WorldState {
   tutorial: TutorialState | null;
   selectedVillagerId?: number | null;
   hasOrderedVillager?: boolean;
+  nextOrderSeq?: number;
+  priorityTask?: PriorityTaskRef | null;
   worldMapContext: 'inspect' | 'sail';
   viewWidth: number;
   viewHeight: number;

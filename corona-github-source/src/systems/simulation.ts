@@ -12,6 +12,7 @@ import {
   MAX_KINGDOM_LEVEL,
   WORLD_WIDTH,
   type ArcherTower,
+  type BuilderTaskKind,
   type Coin,
   type CommandMode,
   type Enemy,
@@ -1337,6 +1338,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
       w.forge.coinsPaid = 0;
       w.forge.underConstruction = true;
       w.forge.buildProgress = 0;
+      w.forge.orderedAt = stampOrderSeq(w);
       sound.playHammer();
       showBanner(w, 'FORJA EM CONSTRUÇÃO!', 'Construtores erguendo a Forja de Ferro!', '#ff9b52');
     }
@@ -1448,6 +1450,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         farm.coinsPaid = 0;
         farm.underConstruction = true;
         farm.buildProgress = 0;
+        farm.orderedAt = stampOrderSeq(w);
         sound.playHammer();
       }
     }
@@ -1479,6 +1482,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         tower.coinsPaid = 0;
         tower.underConstruction = true;
         tower.buildProgress = 0;
+        tower.orderedAt = stampOrderSeq(w);
         tower.targetLevel = tower.destroyed ? Math.max(1, tower.previousLevel) : tower.level + 1;
         sound.playHammer();
         const hasBuilders = w.villagers.some((v) => v.role === 'builder');
@@ -1507,6 +1511,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         }
         consumeMaterials(w, boatCost);
         w.boat.underConstruction = true;
+        w.boat.orderedAt = stampOrderSeq(w);
         sound.playHammer();
         showBanner(w, 'CASCO DO DRAKKAR PAGO!', 'Seus construtores estão finalizando o barco!', '#efc462');
       }
@@ -1531,6 +1536,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         }
         consumeMaterials(w, dockCost);
         w.dock.underConstruction = true;
+        w.dock.orderedAt = stampOrderSeq(w);
         sound.playHammer();
         showBanner(w, 'PORTO PAGO!', 'Seus construtores estão erguendo o cais!', '#efc462');
       }
@@ -1729,6 +1735,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         wall.coinsPaid = 0;
         wall.underConstruction = true;
         wall.buildProgress = 0;
+        wall.orderedAt = stampOrderSeq(w);
         wall.targetLevel = wall.destroyed ? Math.max(1, wall.previousLevel) : wall.level + 1;
         sound.playHammer();
         const hasBuilders = w.villagers.some((v) => v.role === 'builder');
@@ -1744,6 +1751,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
     const tree = w.trees.find((tr) => tr.id === fc.targetId);
     if (tree && !tree.chopped && !tree.marked) {
       tree.marked = true;
+      tree.orderedAt = stampOrderSeq(w);
       sound.playHammer();
       spawnBurst(w, tree.x, GROUND_Y - 18, 6, '#e5c16b', 'spark', 22);
     }
@@ -1754,6 +1762,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
     const rock = w.rocks.find((r) => r.id === fc.targetId);
     if (rock && !rock.mined && !rock.marked) {
       rock.marked = true;
+      rock.orderedAt = stampOrderSeq(w);
       sound.playHammer();
       spawnBurst(w, rock.x, GROUND_Y - 12, 6, '#cfdbe6', 'stone', 24);
     }
@@ -1972,6 +1981,70 @@ export function orderSpecificVillager(w: WorldState, villagerId: number, targetS
     side: targetSide,
     text: `${roleLabels[v.role]} ${t('unit_sent')} ${dirText}`,
     timer: 1.6,
+  };
+  return true;
+}
+
+function stampOrderSeq(w: WorldState): number {
+  w.nextOrderSeq = (w.nextOrderSeq ?? 0) + 1;
+  return w.nextOrderSeq;
+}
+
+function findOrderedTaskX(w: WorldState, kind: BuilderTaskKind, id: number): number | null {
+  if (kind === 'wall') {
+    const item = w.walls.find((x) => x.id === id && x.underConstruction);
+    return item ? item.x : null;
+  }
+  if (kind === 'tower') {
+    const item = w.towers.find((x) => x.id === id && x.underConstruction);
+    return item ? item.x : null;
+  }
+  if (kind === 'forge') {
+    return w.forge && w.forge.underConstruction && !w.forge.built ? w.forge.x : null;
+  }
+  if (kind === 'boat') {
+    return w.boat.underConstruction && !w.boat.built ? w.boat.x : null;
+  }
+  if (kind === 'dock') {
+    return w.dock.underConstruction && !w.dock.built ? w.dock.x : null;
+  }
+  if (kind === 'farm') {
+    const item = w.farms.find((x) => x.id === id && x.underConstruction);
+    return item ? item.x : null;
+  }
+  if (kind === 'rock') {
+    const item = w.rocks.find((x) => x.id === id && x.marked && !x.mined);
+    return item ? item.x : null;
+  }
+  if (kind === 'tree') {
+    const item = w.trees.find((x) => x.id === id && x.marked && !x.chopped);
+    return item ? item.x : null;
+  }
+  return null;
+}
+
+/**
+ * Toggles manual builder priority on an already-ordered tree, rock, or construction.
+ */
+export function togglePriorityTask(w: WorldState, kind: BuilderTaskKind, id: number): boolean {
+  const tx = findOrderedTaskX(w, kind, id);
+  if (tx === null) return false;
+
+  if (w.priorityTask && w.priorityTask.kind === kind && w.priorityTask.id === id) {
+    w.priorityTask = null;
+    sound.playCoinDrop();
+    return true;
+  }
+
+  w.priorityTask = { kind, id };
+  w.selectedVillagerId = null;
+  sound.playOrder(tx < CENTER_X ? -1 : 1);
+  spawnBurst(w, tx, GROUND_Y - 22, 10, '#ffe066', 'spark', 36);
+  w.commandFeedback = {
+    mode: 'build',
+    side: tx < CENTER_X ? -1 : 1,
+    text: '▼ PRIORIDADE DEFINIDA!',
+    timer: 1.5,
   };
   return true;
 }
@@ -2787,9 +2860,184 @@ function trySweepCoinsToHall(w: WorldState, v: Villager, dt: number): boolean {
   return false;
 }
 
+interface ActiveBuilderTask {
+  kind: BuilderTaskKind;
+  id: number;
+  x: number;
+  side: -1 | 1;
+  orderedAt: number;
+}
+
+function clearPriorityIfMatches(w: WorldState, kind: BuilderTaskKind, id: number): void {
+  if (w.priorityTask && w.priorityTask.kind === kind && w.priorityTask.id === id) {
+    w.priorityTask = null;
+  }
+}
+
+/**
+ * Assigns every available builder to an active ordered task:
+ * - If the player manually prioritized a task (clicked it -> downward arrow ▼), builders on that side
+ *   (and idle builders from the other side) focus on it first.
+ * - Otherwise, tasks on each side are ordered strictly in FIFO contraction order (`orderedAt` ascending),
+ *   and multiple builders on the same side automatically split across those tasks in order!
+ */
+function buildBuilderTaskAssignments(
+  w: WorldState,
+  isEveningOrNight: boolean
+): Map<number, ActiveBuilderTask> {
+  const tasks: ActiveBuilderTask[] = [];
+
+  for (const wall of w.walls) {
+    if (wall.underConstruction && (!isEveningOrNight || Math.abs(wall.x - CENTER_X) < 340)) {
+      tasks.push({
+        kind: 'wall',
+        id: wall.id,
+        x: wall.x,
+        side: wall.x < CENTER_X ? -1 : 1,
+        orderedAt: wall.orderedAt ?? wall.id,
+      });
+    }
+  }
+  for (const tw of w.towers) {
+    if (tw.underConstruction && (!isEveningOrNight || Math.abs(tw.x - CENTER_X) < 340)) {
+      tasks.push({
+        kind: 'tower',
+        id: tw.id,
+        x: tw.x,
+        side: tw.x < CENTER_X ? -1 : 1,
+        orderedAt: tw.orderedAt ?? tw.id,
+      });
+    }
+  }
+  if (w.forge && w.forge.underConstruction && !w.forge.built) {
+    tasks.push({
+      kind: 'forge',
+      id: 0,
+      x: w.forge.x,
+      side: w.forge.x < CENTER_X ? -1 : 1,
+      orderedAt: w.forge.orderedAt ?? 0,
+    });
+  }
+  if (w.boat.underConstruction && !w.boat.built && !isEveningOrNight) {
+    tasks.push({
+      kind: 'boat',
+      id: 0,
+      x: w.boat.x,
+      side: w.boat.x < CENTER_X ? -1 : 1,
+      orderedAt: w.boat.orderedAt ?? 0,
+    });
+  }
+  if (w.dock.underConstruction && !w.dock.built && !isEveningOrNight) {
+    tasks.push({
+      kind: 'dock',
+      id: 0,
+      x: w.dock.x,
+      side: w.dock.x < CENTER_X ? -1 : 1,
+      orderedAt: w.dock.orderedAt ?? 0,
+    });
+  }
+  for (const farm of w.farms) {
+    if (farm.underConstruction) {
+      tasks.push({
+        kind: 'farm',
+        id: farm.id,
+        x: farm.x,
+        side: farm.x < CENTER_X ? -1 : 1,
+        orderedAt: farm.orderedAt ?? farm.id,
+      });
+    }
+  }
+  if (!isEveningOrNight) {
+    for (const r of w.rocks) {
+      if (r.marked && !r.mined) {
+        tasks.push({
+          kind: 'rock',
+          id: r.id,
+          x: r.x,
+          side: r.x < CENTER_X ? -1 : 1,
+          orderedAt: r.orderedAt ?? r.id,
+        });
+      }
+    }
+    for (const tr of w.trees) {
+      if (tr.marked && !tr.chopped) {
+        tasks.push({
+          kind: 'tree',
+          id: tr.id,
+          x: tr.x,
+          side: tr.x < CENTER_X ? -1 : 1,
+          orderedAt: tr.orderedAt ?? tr.id,
+        });
+      }
+    }
+  }
+
+  // Clear stale priority if that task has already finished (or check if still active anywhere even at night)
+  if (w.priorityTask && findOrderedTaskX(w, w.priorityTask.kind, w.priorityTask.id) === null) {
+    w.priorityTask = null;
+  }
+
+  const prioTask = w.priorityTask
+    ? tasks.find((tk) => tk.kind === w.priorityTask!.kind && tk.id === w.priorityTask!.id) ?? null
+    : null;
+
+  const byOrder = (a: ActiveBuilderTask, b: ActiveBuilderTask) => a.orderedAt - b.orderedAt || a.id - b.id;
+  const leftTasks = tasks.filter((tk) => tk.side === -1).sort(byOrder);
+  const rightTasks = tasks.filter((tk) => tk.side === 1).sort(byOrder);
+
+  const activeBuilders = w.villagers
+    .filter((v) => v.role === 'builder' && v.state !== 'embarked' && v.state !== 'boarding')
+    .sort((a, b) => a.id - b.id);
+
+  const leftBuilders = activeBuilders.filter((v) => v.side === -1);
+  const rightBuilders = activeBuilders.filter((v) => v.side === 1);
+
+  const assignments = new Map<number, ActiveBuilderTask>();
+
+  const assignSide = (
+    builders: Villager[],
+    side: -1 | 1,
+    ownTasks: ActiveBuilderTask[],
+    otherTasks: ActiveBuilderTask[]
+  ) => {
+    if (builders.length === 0) return;
+
+    // 1. If the manually prioritized task is on this side, all builders on this side execute it first!
+    if (prioTask && prioTask.side === side) {
+      for (const b of builders) assignments.set(b.id, prioTask);
+      return;
+    }
+
+    // 2. Otherwise, split builders across this side's tasks strictly in FIFO contraction order!
+    if (ownTasks.length > 0) {
+      for (let i = 0; i < builders.length; i++) {
+        assignments.set(builders[i].id, ownTasks[i % ownTasks.length]);
+      }
+      return;
+    }
+
+    // 3. No tasks on this side: idle builders help the other side's priority task or FIFO tasks!
+    if (prioTask) {
+      for (const b of builders) assignments.set(b.id, prioTask);
+      return;
+    }
+    if (otherTasks.length > 0) {
+      for (let i = 0; i < builders.length; i++) {
+        assignments.set(builders[i].id, otherTasks[i % otherTasks.length]);
+      }
+    }
+  };
+
+  assignSide(leftBuilders, -1, leftTasks, rightTasks);
+  assignSide(rightBuilders, 1, rightTasks, leftTasks);
+
+  return assignments;
+}
+
 function updateVillagers(w: WorldState, dt: number): void {
   const monarch = w.monarchs[0];
   const isEveningOrNight = w.timeOfDay >= 0.46 && w.timeOfDay < 0.98;
+  const builderAssignments = buildBuilderTaskAssignments(w, isEveningOrNight);
 
   for (const v of w.villagers) {
     v.animTime += dt * (Math.abs(v.vx) > 5 ? 9 : 2.5);
@@ -2928,79 +3176,81 @@ function updateVillagers(w: WorldState, dt: number): void {
       continue;
     }
 
-    // --- BUILDER (walls, towers, forge, boat, dock, farms, proportional multi-builder rocks/trees, then sweeps coins!) ---
+    // --- BUILDER (FIFO order + automatic side splitting + manual priority override, then repairs & sweeps coins!) ---
     if (v.role === 'builder') {
       const sideScore = (wx: number) => ((wx < CENTER_X ? -1 : 1) === v.side ? 0 : 1200);
       const odinMult = w.activeGod === 'odin' ? 1.5 : 1.0;
       const buildBuffMult = isConstructionBuffActive(w) ? 1.35 : 1.0;
       const workMult = odinMult * buildBuffMult;
 
-      // Priority 1: Walls under construction or ruined
-      const buildWall = w.walls
-        .filter((wall) => wall.underConstruction)
-        .sort((a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x)))[0];
+      const assigned = builderAssignments.get(v.id);
 
-      if (buildWall && (!isEveningOrNight || Math.abs(buildWall.x - CENTER_X) < 340)) {
-        v.state = 'working';
-        const standX = buildWall.x - buildWall.side * (12 + (v.id % 3) * 3);
-        if (moveToward(v, standX, 52, dt)) {
-          v.facing = buildWall.side;
-          buildWall.buildProgress += dt * 0.34 * workMult;
-          if (v.actionTimer <= 0) {
-            v.actionTimer = 0.42;
-            sound.playHammer();
-            spawnBurst(w, buildWall.x, GROUND_Y - 16, 4, '#c7935b', 'wood', 28);
+      if (assigned?.kind === 'wall') {
+        const buildWall = w.walls.find((wall) => wall.id === assigned.id && wall.underConstruction);
+        if (buildWall) {
+          v.state = 'working';
+          v.targetId = buildWall.id;
+          const standX = buildWall.x - buildWall.side * (12 + (v.id % 3) * 3);
+          if (moveToward(v, standX, 52, dt)) {
+            v.facing = buildWall.side;
+            buildWall.buildProgress += dt * 0.34 * workMult;
+            if (v.actionTimer <= 0) {
+              v.actionTimer = 0.42;
+              sound.playHammer();
+              spawnBurst(w, buildWall.x, GROUND_Y - 16, 4, '#c7935b', 'wood', 28);
+            }
+            if (buildWall.buildProgress >= 1) {
+              buildWall.underConstruction = false;
+              buildWall.destroyed = false;
+              buildWall.buildProgress = 0;
+              buildWall.level = Math.max(1, buildWall.targetLevel);
+              buildWall.previousLevel = buildWall.level;
+              buildWall.maxHp = getWallMaxHp(buildWall.level, w.activeGod === 'odin');
+              buildWall.hp = buildWall.maxHp;
+              w.stats.wallsBuilt += 1;
+              clearPriorityIfMatches(w, 'wall', buildWall.id);
+              sound.playBuildComplete();
+              spawnBurst(w, buildWall.x, GROUND_Y - 22, 14, '#f0c66c', 'spark', 45);
+            }
           }
-          if (buildWall.buildProgress >= 1) {
-            buildWall.underConstruction = false;
-            buildWall.destroyed = false;
-            buildWall.buildProgress = 0;
-            buildWall.level = Math.max(1, buildWall.targetLevel);
-            buildWall.previousLevel = buildWall.level;
-            buildWall.maxHp = getWallMaxHp(buildWall.level, w.activeGod === 'odin');
-            buildWall.hp = buildWall.maxHp;
-            w.stats.wallsBuilt += 1;
-            sound.playBuildComplete();
-            spawnBurst(w, buildWall.x, GROUND_Y - 22, 14, '#f0c66c', 'spark', 45);
-          }
+          continue;
         }
-        continue;
       }
 
-      // Priority 1b: Archer Towers under construction
-      const buildTower = w.towers
-        .filter((tw) => tw.underConstruction)
-        .sort((a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x)))[0];
-
-      if (buildTower && (!isEveningOrNight || Math.abs(buildTower.x - CENTER_X) < 340)) {
-        v.state = 'working';
-        const standX = buildTower.x - buildTower.side * (12 + (v.id % 3) * 3);
-        if (moveToward(v, standX, 52, dt)) {
-          v.facing = buildTower.side;
-          buildTower.buildProgress += dt * 0.3 * workMult;
-          if (v.actionTimer <= 0) {
-            v.actionTimer = 0.42;
-            sound.playHammer();
-            spawnBurst(w, buildTower.x, GROUND_Y - 18, 4, '#c7935b', 'wood', 28);
+      if (assigned?.kind === 'tower') {
+        const buildTower = w.towers.find((tw) => tw.id === assigned.id && tw.underConstruction);
+        if (buildTower) {
+          v.state = 'working';
+          v.targetId = buildTower.id;
+          const standX = buildTower.x - buildTower.side * (12 + (v.id % 3) * 3);
+          if (moveToward(v, standX, 52, dt)) {
+            v.facing = buildTower.side;
+            buildTower.buildProgress += dt * 0.3 * workMult;
+            if (v.actionTimer <= 0) {
+              v.actionTimer = 0.42;
+              sound.playHammer();
+              spawnBurst(w, buildTower.x, GROUND_Y - 18, 4, '#c7935b', 'wood', 28);
+            }
+            if (buildTower.buildProgress >= 1) {
+              buildTower.underConstruction = false;
+              buildTower.destroyed = false;
+              buildTower.buildProgress = 0;
+              buildTower.level = Math.max(1, buildTower.targetLevel);
+              buildTower.previousLevel = buildTower.level;
+              buildTower.maxHp = getTowerMaxHp(buildTower.level, w.activeGod === 'odin');
+              buildTower.hp = buildTower.maxHp;
+              clearPriorityIfMatches(w, 'tower', buildTower.id);
+              sound.playBuildComplete();
+              spawnBurst(w, buildTower.x, GROUND_Y - 26, 14, '#f0c66c', 'spark', 45);
+            }
           }
-          if (buildTower.buildProgress >= 1) {
-            buildTower.underConstruction = false;
-            buildTower.destroyed = false;
-            buildTower.buildProgress = 0;
-            buildTower.level = Math.max(1, buildTower.targetLevel);
-            buildTower.previousLevel = buildTower.level;
-            buildTower.maxHp = getTowerMaxHp(buildTower.level, w.activeGod === 'odin');
-            buildTower.hp = buildTower.maxHp;
-            sound.playBuildComplete();
-            spawnBurst(w, buildTower.x, GROUND_Y - 26, 14, '#f0c66c', 'spark', 45);
-          }
+          continue;
         }
-        continue;
       }
 
-      // Priority 1c: Forge under construction (Island 2+)
-      if (w.forge && w.forge.underConstruction && !w.forge.built) {
+      if (assigned?.kind === 'forge' && w.forge && w.forge.underConstruction && !w.forge.built) {
         v.state = 'working';
+        v.targetId = 0;
         const standX = w.forge.x - 12 + (v.id % 3) * 4;
         if (moveToward(v, standX, 52, dt)) {
           v.facing = w.forge.x >= v.x ? 1 : -1;
@@ -3014,6 +3264,7 @@ function updateVillagers(w: WorldState, dt: number): void {
             w.forge.buildProgress = 1;
             w.forge.underConstruction = false;
             w.forge.built = true;
+            clearPriorityIfMatches(w, 'forge', 0);
             sound.playBuildComplete();
             spawnBurst(w, w.forge.x, GROUND_Y - 20, 16, '#ff9b52', 'ember', 50);
             showBanner(
@@ -3028,10 +3279,10 @@ function updateVillagers(w: WorldState, dt: number): void {
         continue;
       }
 
-      // Priority 2: Boat Construction OR Dock Construction
-      if (w.boat.underConstruction && !w.boat.built && !isEveningOrNight) {
+      if (assigned?.kind === 'boat' && w.boat.underConstruction && !w.boat.built) {
         v.state = 'working';
-        if (moveToward(v, w.boat.x - 16, 52, dt)) {
+        v.targetId = 0;
+        if (moveToward(v, w.boat.x - 16 + (v.id % 3) * 3, 52, dt)) {
           v.facing = 1;
           w.boat.buildProgress += dt * 0.2 * workMult;
           if (v.actionTimer <= 0) {
@@ -3043,6 +3294,7 @@ function updateVillagers(w: WorldState, dt: number): void {
             w.boat.buildProgress = 1;
             w.boat.underConstruction = false;
             w.boat.built = true;
+            clearPriorityIfMatches(w, 'boat', 0);
             sound.playBuildComplete();
             spawnBurst(w, w.boat.x, GROUND_Y - 24, 18, '#ffe066', 'spark', 55);
             showBanner(w, 'DRAKKAR PRONTO!', 'Toque o Sino (1 moeda) e pague 10 moedas para zarpar!', '#ffe066');
@@ -3053,9 +3305,10 @@ function updateVillagers(w: WorldState, dt: number): void {
         continue;
       }
 
-      if (w.dock.underConstruction && !w.dock.built && !isEveningOrNight) {
+      if (assigned?.kind === 'dock' && w.dock.underConstruction && !w.dock.built) {
         v.state = 'working';
-        if (moveToward(v, w.dock.x - 14, 52, dt)) {
+        v.targetId = 0;
+        if (moveToward(v, w.dock.x - 14 + (v.id % 3) * 3, 52, dt)) {
           v.facing = 1;
           w.dock.buildProgress += dt * 0.22 * workMult;
           if (v.actionTimer <= 0) {
@@ -3067,6 +3320,7 @@ function updateVillagers(w: WorldState, dt: number): void {
             w.dock.buildProgress = 1;
             w.dock.underConstruction = false;
             w.dock.built = true;
+            clearPriorityIfMatches(w, 'dock', 0);
             sound.playBuildComplete();
             spawnBurst(w, w.dock.x, GROUND_Y - 18, 16, '#ffe066', 'spark', 50);
             showBanner(w, 'PORTO CONSTRUÍDO!', 'Agora você pode navegar entre ilhas colonizadas ou novas!', '#ffe066');
@@ -3077,32 +3331,103 @@ function updateVillagers(w: WorldState, dt: number): void {
         continue;
       }
 
-      // Priority 3: Farms under construction
-      const buildFarm = w.farms
-        .filter((f) => f.underConstruction)
-        .sort((a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x)))[0];
-      if (buildFarm) {
-        v.state = 'working';
-        if (moveToward(v, buildFarm.x - buildFarm.side * 10, 50, dt)) {
-          v.facing = buildFarm.side;
-          buildFarm.buildProgress += dt * 0.36 * workMult;
-          if (v.actionTimer <= 0) {
-            v.actionTimer = 0.45;
-            sound.playHammer();
-            spawnBurst(w, buildFarm.x, GROUND_Y - 10, 4, '#c7935b', 'wood', 24);
+      if (assigned?.kind === 'farm') {
+        const buildFarm = w.farms.find((f) => f.id === assigned.id && f.underConstruction);
+        if (buildFarm) {
+          v.state = 'working';
+          v.targetId = buildFarm.id;
+          if (moveToward(v, buildFarm.x - buildFarm.side * (10 + (v.id % 3) * 3), 50, dt)) {
+            v.facing = buildFarm.side;
+            buildFarm.buildProgress += dt * 0.36 * workMult;
+            if (v.actionTimer <= 0) {
+              v.actionTimer = 0.45;
+              sound.playHammer();
+              spawnBurst(w, buildFarm.x, GROUND_Y - 10, 4, '#c7935b', 'wood', 24);
+            }
+            if (buildFarm.buildProgress >= 1) {
+              buildFarm.underConstruction = false;
+              buildFarm.buildProgress = 0;
+              buildFarm.level += 1;
+              clearPriorityIfMatches(w, 'farm', buildFarm.id);
+              sound.playBuildComplete();
+              spawnBurst(w, buildFarm.x, GROUND_Y - 16, 12, '#82e08a', 'spark', 40);
+            }
           }
-          if (buildFarm.buildProgress >= 1) {
-            buildFarm.underConstruction = false;
-            buildFarm.buildProgress = 0;
-            buildFarm.level += 1;
-            sound.playBuildComplete();
-            spawnBurst(w, buildFarm.x, GROUND_Y - 16, 12, '#82e08a', 'spark', 40);
-          }
+          continue;
         }
-        continue;
       }
 
-      // Priority 4: Repair damaged walls & towers
+      if (assigned?.kind === 'rock') {
+        const markedRock = w.rocks.find((r) => r.id === assigned.id && r.marked && !r.mined);
+        if (markedRock) {
+          v.state = 'working';
+          v.targetId = markedRock.id;
+          const spreadOffset = ((v.id % 3) - 1) * 4;
+          const standX = markedRock.x + (markedRock.x < CENTER_X ? 12 : -12) + spreadOffset;
+          if (moveToward(v, standX, 48, dt)) {
+            v.facing = markedRock.x < v.x ? -1 : 1;
+            const spec = getRockSpec(markedRock.size ?? sizeFromVariant(markedRock.variant));
+            markedRock.mineProgress += (dt / spec.time) * workMult;
+            if (v.actionTimer <= 0) {
+              v.actionTimer = 0.52;
+              markedRock.hitShake = 0.16;
+              sound.playHammer();
+              spawnBurst(w, markedRock.x, GROUND_Y - 8, 4, '#a6b5c4', 'stone', 32);
+            }
+            if (markedRock.mineProgress >= 1) {
+              markedRock.mined = true;
+              markedRock.marked = false;
+              markedRock.mineProgress = 0;
+              w.resources.stone += spec.stone;
+              clearPriorityIfMatches(w, 'rock', markedRock.id);
+              sound.playBuildComplete();
+              spawnBurst(w, markedRock.x, GROUND_Y - 10, 14, '#bcc9d6', 'stone', 50);
+              for (let c = 0; c < spec.coins; c++) {
+                const vx = ((c - (spec.coins - 1) / 2) * 18) + (Math.random() - 0.5) * 10;
+                spawnCoin(w, markedRock.x, GROUND_Y - 10, vx, -64 - Math.random() * 18, false, 0.25);
+              }
+            }
+          }
+          continue;
+        }
+      }
+
+      if (assigned?.kind === 'tree') {
+        const markedTree = w.trees.find((tr) => tr.id === assigned.id && tr.marked && !tr.chopped);
+        if (markedTree) {
+          v.state = 'working';
+          v.targetId = markedTree.id;
+          const spreadOffset = ((v.id % 3) - 1) * 4;
+          const standX = markedTree.x + (markedTree.x < CENTER_X ? 11 : -11) + spreadOffset;
+          if (moveToward(v, standX, 48, dt)) {
+            v.facing = markedTree.x < v.x ? -1 : 1;
+            const spec = getTreeSpec(markedTree.size ?? sizeFromVariant(markedTree.variant));
+            markedTree.chopProgress += (dt / spec.time) * workMult;
+            if (v.actionTimer <= 0) {
+              v.actionTimer = 0.52;
+              markedTree.hitShake = 0.16;
+              sound.playHammer();
+              spawnBurst(w, markedTree.x, GROUND_Y - 12, 4, '#b8834b', 'wood', 30);
+            }
+            if (markedTree.chopProgress >= 1) {
+              markedTree.chopped = true;
+              markedTree.marked = false;
+              markedTree.chopProgress = 0;
+              w.resources.wood += spec.wood;
+              clearPriorityIfMatches(w, 'tree', markedTree.id);
+              sound.playBuildComplete();
+              spawnBurst(w, markedTree.x, GROUND_Y - 22, 14, '#69946b', 'leaf', 48);
+              for (let c = 0; c < spec.coins; c++) {
+                const vx = ((c - (spec.coins - 1) / 2) * 16) + (Math.random() - 0.5) * 10;
+                spawnCoin(w, markedTree.x, GROUND_Y - 14, vx, -62 - Math.random() * 18, false, 0.25);
+              }
+            }
+          }
+          continue;
+        }
+      }
+
+      // Fallback 1: Repair damaged walls & towers when no ordered tasks are pending
       const damagedWall = w.walls
         .filter((wall) => wall.level > 0 && !wall.destroyed && wall.hp < wall.maxHp)
         .sort((a, b) => sideScore(a.x) + (a.hp / a.maxHp) * 100 - (sideScore(b.x) + (b.hp / b.maxHp) * 100))[0];
@@ -3139,91 +3464,10 @@ function updateVillagers(w: WorldState, dt: number): void {
         continue;
       }
 
-      // Priority 5: Break marked rocks & chop marked trees (daytime, automatic multi-builder proportional speedup!)
-      if (!isEveningOrNight) {
-        // Count how many builders are already targeting each rock/tree so idle builders spread first, then pile on proportionally!
-        const markedRocks = w.rocks.filter((r) => r.marked && !r.mined);
-        const markedTrees = w.trees.filter((tr) => tr.marked && !tr.chopped);
+      v.targetId = null;
 
-        const markedRock = markedRocks.sort(
-          (a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x))
-        )[0];
-        const markedTree = markedTrees.sort(
-          (a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x))
-        )[0];
-
-        const treeDist = markedTree ? sideScore(markedTree.x) + Math.abs(markedTree.x - v.x) : Infinity;
-        const rockDist = markedRock ? sideScore(markedRock.x) + Math.abs(markedRock.x - v.x) : Infinity;
-
-        if (markedRock && rockDist <= treeDist) {
-          v.state = 'working';
-          v.targetId = markedRock.id;
-          const spreadOffset = ((v.id % 3) - 1) * 4;
-          const standX = markedRock.x + (markedRock.x < CENTER_X ? 12 : -12) + spreadOffset;
-          if (moveToward(v, standX, 48, dt)) {
-            v.facing = markedRock.x < v.x ? -1 : 1;
-            const spec = getRockSpec(markedRock.size ?? sizeFromVariant(markedRock.variant));
-            // Exact proportional rate: 1 builder takes spec.time seconds; N builders take spec.time / N seconds!
-            markedRock.mineProgress += (dt / spec.time) * workMult;
-            if (v.actionTimer <= 0) {
-              v.actionTimer = 0.52;
-              markedRock.hitShake = 0.16;
-              sound.playHammer();
-              spawnBurst(w, markedRock.x, GROUND_Y - 8, 4, '#a6b5c4', 'stone', 32);
-            }
-            if (markedRock.mineProgress >= 1) {
-              markedRock.mined = true;
-              markedRock.marked = false;
-              markedRock.mineProgress = 0;
-              w.resources.stone += spec.stone;
-              sound.playBuildComplete();
-              spawnBurst(w, markedRock.x, GROUND_Y - 10, 14, '#bcc9d6', 'stone', 50);
-              for (let c = 0; c < spec.coins; c++) {
-                const vx = ((c - (spec.coins - 1) / 2) * 18) + (Math.random() - 0.5) * 10;
-                spawnCoin(w, markedRock.x, GROUND_Y - 10, vx, -64 - Math.random() * 18, false, 0.25);
-              }
-            }
-          }
-          continue;
-        }
-
-        if (markedTree) {
-          v.state = 'working';
-          v.targetId = markedTree.id;
-          const spreadOffset = ((v.id % 3) - 1) * 4;
-          const standX = markedTree.x + (markedTree.x < CENTER_X ? 11 : -11) + spreadOffset;
-          if (moveToward(v, standX, 48, dt)) {
-            v.facing = markedTree.x < v.x ? -1 : 1;
-            const spec = getTreeSpec(markedTree.size ?? sizeFromVariant(markedTree.variant));
-            // Exact proportional rate: 1 builder takes spec.time seconds; N builders take spec.time / N seconds!
-            markedTree.chopProgress += (dt / spec.time) * workMult;
-            if (v.actionTimer <= 0) {
-              v.actionTimer = 0.52;
-              markedTree.hitShake = 0.16;
-              sound.playHammer();
-              spawnBurst(w, markedTree.x, GROUND_Y - 12, 4, '#b8834b', 'wood', 30);
-            }
-            if (markedTree.chopProgress >= 1) {
-              markedTree.chopped = true;
-              markedTree.marked = false;
-              markedTree.chopProgress = 0;
-              w.resources.wood += spec.wood;
-              sound.playBuildComplete();
-              spawnBurst(w, markedTree.x, GROUND_Y - 22, 14, '#69946b', 'leaf', 48);
-              for (let c = 0; c < spec.coins; c++) {
-                const vx = ((c - (spec.coins - 1) / 2) * 16) + (Math.random() - 0.5) * 10;
-                spawnCoin(w, markedTree.x, GROUND_Y - 14, vx, -62 - Math.random() * 18, false, 0.25);
-              }
-            }
-          }
-          continue;
-        }
-
-        v.targetId = null;
-
-        // Priority 6 (AFTER finishing tasks): Sweep map for loose coins and deposit at central Hall!
-        if (trySweepCoinsToHall(w, v, dt)) continue;
-      }
+      // Fallback 2: Sweep map for loose coins and deposit at central Hall!
+      if (!isEveningOrNight && trySweepCoinsToHall(w, v, dt)) continue;
 
       v.targetId = null;
       v.state = isEveningOrNight ? 'fleeing' : 'idle';
