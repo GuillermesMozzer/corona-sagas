@@ -340,12 +340,25 @@ function resetCoopState(keepLocalMic = false): void {
   notify();
 }
 
+function sanitizeAppearance(app?: Partial<CharacterAppearance> | null): CharacterAppearance {
+  return {
+    gender: app?.gender === 'queen' ? 'queen' : 'king',
+    name: typeof app?.name === 'string' ? app.name : '',
+    outfitIndex: typeof app?.outfitIndex === 'number' && Number.isFinite(app.outfitIndex) ? app.outfitIndex : 0,
+    hairIndex: typeof app?.hairIndex === 'number' && Number.isFinite(app.hairIndex) ? app.hairIndex : 0,
+    horseIndex: typeof app?.horseIndex === 'number' && Number.isFinite(app.horseIndex) ? app.horseIndex : 0,
+    crownIndex: typeof app?.crownIndex === 'number' && Number.isFinite(app.crownIndex) ? app.crownIndex : 0,
+  };
+}
+
 function makeSlimSnapshot(w: WorldState): string {
-  // Keep snapshot compact & fast for Firestore (< 100 KB) by trimming transient visual particles
+  // Keep snapshot compact & fast for Firestore (< 100 KB) by stripping nested other-island snapshots & snow particles
   const slim: WorldState = {
     ...w,
+    mode: 'playing',
     activePrompt: null,
-    particles: w.particles.filter((p) => p.kind !== 'snow').slice(-40),
+    islands: w.islands.map((isl) => ({ ...isl, snapshot: undefined })),
+    particles: w.particles.filter((p) => p.kind !== 'snow').slice(-32),
   };
   return JSON.stringify(slim);
 }
@@ -528,11 +541,16 @@ export async function hostOpenCoopRoom(world: WorldState): Promise<{ ok: boolean
   resetCoopState(true);
   const code = generateRoomCode();
 
+  const safeAppearance = sanitizeAppearance(world.appearance);
+  const safeName = user.displayName || safeAppearance.name || 'Monarca';
+  const safeEmail = user.email || '';
+  const safePhoto = user.photoURL ?? null;
+
   // Tag host monarch with host identity
   if (world.monarchs[0]) {
     world.monarchs[0].playerUid = user.uid;
-    world.monarchs[0].playerName = world.appearance.name?.trim() || user.displayName;
-    world.monarchs[0].appearance = { ...world.appearance };
+    world.monarchs[0].playerName = safeAppearance.name.trim() || safeName;
+    world.monarchs[0].appearance = safeAppearance;
   }
   world.localPlayerUid = user.uid;
 
@@ -540,9 +558,9 @@ export async function hostOpenCoopRoom(world: WorldState): Promise<{ ok: boolean
     await setDoc(doc(db, 'coop_rooms', code), {
       code,
       hostUid: user.uid,
-      hostEmail: user.email,
-      hostName: user.displayName,
-      hostPhoto: user.photoURL,
+      hostEmail: safeEmail,
+      hostName: safeName,
+      hostPhoto: safePhoto,
       active: true,
       maxPlayers: MAX_COOP_PLAYERS,
       kickedUids: [],
@@ -553,12 +571,12 @@ export async function hostOpenCoopRoom(world: WorldState): Promise<{ ok: boolean
 
     await setDoc(doc(db, 'coop_rooms', code, 'members', user.uid), {
       uid: user.uid,
-      email: user.email,
-      displayName: user.displayName,
-      photoURL: user.photoURL,
+      email: safeEmail,
+      displayName: safeName,
+      photoURL: safePhoto,
       role: 'host',
-      appearance: { ...world.appearance },
-      micOn: coopState.micOn,
+      appearance: safeAppearance,
+      micOn: Boolean(coopState.micOn),
       joinedAtMs: Date.now(),
     });
 
@@ -566,7 +584,7 @@ export async function hostOpenCoopRoom(world: WorldState): Promise<{ ok: boolean
     coopState.role = 'host';
     coopState.roomCode = code;
     coopState.hostUid = user.uid;
-    coopState.hostName = user.displayName;
+    coopState.hostName = safeName;
 
     subscribeCommonRoomChannels(code, user.uid);
 
@@ -591,8 +609,15 @@ export async function hostOpenCoopRoom(world: WorldState): Promise<{ ok: boolean
     return { ok: true, code };
   } catch (err) {
     console.warn('[Corona Co-op] Failed to open room:', err);
-    resetCoopState();
-    return { ok: false, error: 'Não foi possível criar a sala Co-op. Verifique sua conexão.' };
+    resetCoopState(true);
+    const errCode = (err as { code?: string })?.code ?? '';
+    const detail =
+      errCode === 'permission-denied'
+        ? 'Permissão negada no Firestore (publique as Regras do Firestore).'
+        : errCode
+          ? `Erro ao criar sala (${errCode}).`
+          : 'Não foi possível criar a sala Co-op. Verifique sua conexão.';
+    return { ok: false, error: detail };
   }
 }
 
@@ -671,19 +696,21 @@ export async function joinCoopRoomAsGuest(
     const roomData = roomSnap.data() as Record<string, unknown>;
     if (roomData.active !== true) return { ok: false, error: 'Sala encerrada pelo Host.' };
 
+    const safeApp = sanitizeAppearance(appearance);
+    const safeName = user.displayName || safeApp.name || 'Monarca';
     const memberAppearance: CharacterAppearance = {
-      ...appearance,
-      name: appearance.name?.trim() || user.displayName,
+      ...safeApp,
+      name: safeApp.name.trim() || safeName,
     };
 
     await setDoc(doc(db, 'coop_rooms', code, 'members', user.uid), {
       uid: user.uid,
-      email: user.email,
-      displayName: user.displayName,
-      photoURL: user.photoURL,
+      email: user.email || '',
+      displayName: safeName,
+      photoURL: user.photoURL ?? null,
       role: 'guest',
       appearance: memberAppearance,
-      micOn: coopState.micOn,
+      micOn: Boolean(coopState.micOn),
       joinedAtMs: Date.now(),
     });
 

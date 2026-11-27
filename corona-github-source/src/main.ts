@@ -1659,8 +1659,21 @@ btnZoomIn?.addEventListener('click', () => {
 });
 
 // Co-op Online Menu Controls (Host open/close, Guest leave, Copy Code)
+const coopMenuStatus = document.getElementById('coop-menu-status') as HTMLDivElement | null;
+function setCoopMenuStatus(msg: string | null): void {
+  if (!coopMenuStatus) return;
+  if (!msg) {
+    coopMenuStatus.style.display = 'none';
+    coopMenuStatus.textContent = '';
+  } else {
+    coopMenuStatus.style.display = 'block';
+    coopMenuStatus.textContent = msg;
+  }
+}
+
 btnCoopHostToggle?.addEventListener('click', async () => {
   sound.unlock();
+  setCoopMenuStatus(null);
   if (coopState.active && coopState.role === 'host') {
     await hostCloseCoopRoom(world);
     sound.playCoinDrop();
@@ -1670,13 +1683,21 @@ btnCoopHostToggle?.addEventListener('click', async () => {
     return;
   }
   if (btnCoopHostToggle) btnCoopHostToggle.disabled = true;
+  if (valCoopHost) valCoopHost.textContent = '...';
   const res = await hostOpenCoopRoom(world);
   if (btnCoopHostToggle) btnCoopHostToggle.disabled = false;
   if (!res.ok || !res.code) {
     sound.playHit();
-    showBanner(world, 'CO-OP INDISPONÍVEL', res.error ?? 'Conecte sua conta Google.', '#ff8a65');
+    const errMsg = res.error ?? 'Conecte sua conta Google para abrir o Co-op.';
+    setCoopMenuStatus(errMsg);
+    showBanner(world, 'CO-OP INDISPONÍVEL', errMsg, '#ff8a65');
     updateMenuUI();
     return;
+  }
+  // Immediately resume live world so Host broadcasts live state to guests while viewing the code!
+  if (world.mode === 'paused' && pausedByMenu) {
+    world.mode = 'playing';
+    pausedByMenu = false;
   }
   sound.playHorn(false);
   showBanner(world, `CO-OP ABERTO · CÓDIGO ${res.code}`, 'Compartilhe o código (máx 4 jogadores)!', '#6fe87b');
