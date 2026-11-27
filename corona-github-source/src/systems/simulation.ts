@@ -2583,54 +2583,9 @@ function updateForgeAndRegrowth(w: WorldState, dt: number): void {
     }
   }
 
-  // 2. Gradual Rock sprouting (starts Day 3, 1 by 1 slowly!)
-  if (w.rockRegrowQueue > 0) {
-    w.rockRegrowTimer -= dt;
-    if (w.rockRegrowTimer <= 0) {
-      w.rockRegrowTimer = 22 + Math.random() * 14;
-      const minedRocks = w.rocks.filter((r) => r.mined);
-      if (minedRocks.length > 0) {
-        const pick = minedRocks[Math.floor(Math.random() * minedRocks.length)];
-        const variant = Math.floor(Math.random() * 3) as 0 | 1 | 2;
-        pick.variant = variant;
-        pick.size = sizeFromVariant(variant);
-        pick.mined = false;
-        pick.marked = false;
-        pick.mineProgress = 0;
-        pick.hitShake = 0.2;
-        w.rockRegrowQueue -= 1;
-        spawnBurst(w, pick.x, GROUND_Y - 8, 8, '#bcc9d6', 'stone', 32);
-      } else {
-        w.rockRegrowQueue = 0;
-      }
-    }
-  }
-
-  // 3. Gradual Tree sprouting (every 5 days, little by little!)
-  if (w.treeRegrowQueue > 0) {
-    w.treeRegrowTimer -= dt;
-    if (w.treeRegrowTimer <= 0) {
-      w.treeRegrowTimer = 18 + Math.random() * 14;
-      const choppedTrees = w.trees.filter((tr) => tr.chopped);
-      if (choppedTrees.length > 0) {
-        const pick = choppedTrees[Math.floor(Math.random() * choppedTrees.length)];
-        const roll = Math.random();
-        const variant: 0 | 1 | 2 = roll < 0.5 ? 0 : roll < 0.85 ? 1 : 2;
-        const size = sizeFromVariant(variant);
-        pick.variant = variant;
-        pick.size = size;
-        pick.height = heightForTreeSize(size, Math.random());
-        pick.chopped = false;
-        pick.marked = false;
-        pick.chopProgress = 0;
-        pick.hitShake = 0.2;
-        w.treeRegrowQueue -= 1;
-        spawnBurst(w, pick.x, GROUND_Y - 14, 8, '#69946b', 'leaf', 30);
-      } else {
-        w.treeRegrowQueue = 0;
-      }
-    }
-  }
+  // 2. Rock & Tree spawning are now driven by idle Swordsmen (excavating rocks) and idle Builders (planting trees)!
+  w.rockRegrowQueue = 0;
+  w.treeRegrowQueue = 0;
 }
 
 function pickProgressiveEnemyKind(w: WorldState, indexInQueue: number): EnemyKind {
@@ -2763,25 +2718,9 @@ function updateDayNightAndWaves(w: WorldState, dt: number): void {
       farm.storedFood = Math.min(storageCap, farm.storedFood + farmersHere * farm.level);
     }
 
-    // 4. GRADUAL RESOURCE REGROWTH:
-    // Rocks begin sprouting from Day 3 onward, little by little (1-2 per day)
-    if (w.day >= 3) {
-      const minedCount = w.rocks.filter((r) => r.mined).length;
-      if (minedCount > 0) {
-        const toAdd = minedCount >= 5 ? 2 : 1;
-        w.rockRegrowQueue = Math.min(minedCount, w.rockRegrowQueue + toAdd);
-        if (w.rockRegrowTimer <= 0) w.rockRegrowTimer = 10 + Math.random() * 10;
-      }
-    }
-    // Trees sprout every 5 days, little by little (2-3 every 5 days)
-    if (w.day % 5 === 0) {
-      const choppedCount = w.trees.filter((tr) => tr.chopped).length;
-      if (choppedCount > 0) {
-        const toAdd = Math.min(3, choppedCount);
-        w.treeRegrowQueue = Math.min(choppedCount, w.treeRegrowQueue + toAdd);
-        if (w.treeRegrowTimer <= 0) w.treeRegrowTimer = 12 + Math.random() * 10;
-      }
-    }
+    // 4. Resource renewal is driven by idle workers (Builders plant trees, Swordsmen excavate rocks, Trees spawn wildlife)
+    w.rockRegrowQueue = 0;
+    w.treeRegrowQueue = 0;
 
     for (const enemy of w.enemies) enemy.retreating = true;
 
@@ -3226,9 +3165,10 @@ function updateVillagers(w: WorldState, dt: number): void {
       continue;
     }
 
-    // Hand carried coins to Monarch if crossing paths (peasants deliver ground coins straight to the Banker!)
+    // Hand carried coins to Monarch if crossing paths (anyone returning swept coins delivers straight to the Banker!)
     if (
       v.role !== 'peasant' &&
+      v.state !== 'returning_coins' &&
       v.carriedCoins > 0 &&
       monarch &&
       Math.abs(v.x - monarch.x) < 26 &&
@@ -3629,8 +3569,56 @@ function updateVillagers(w: WorldState, dt: number): void {
 
       v.targetId = null;
 
-      // Finish depositing any carried coins from previous saves (loose ground coins are now collected by unemployed peasants!)
-      if (deliverCarriedCoinsToBanker(w, v, dt)) continue;
+      // Deliver any coins already carried to the Banker first
+      if (v.carriedCoins > 0 && deliverCarriedCoinsToBanker(w, v, dt)) continue;
+
+      // IDLE BUILDER TASK: Plant new trees at chopped tree spots (trees depend on builders to spawn!)
+      if (!isEveningOrNight) {
+        const plantSpot = w.trees
+          .filter(
+            (tr) =>
+              tr.chopped &&
+              !tr.marked &&
+              !w.farms.some((f) => f.level > 0 && Math.abs(f.x - tr.x) < 26) &&
+              !w.walls.some((wl) => wl.level > 0 && Math.abs(wl.x - tr.x) < 18) &&
+              !w.towers.some((tw) => tw.level > 0 && Math.abs(tw.x - tr.x) < 18) &&
+              !w.villagers.some((o) => o.id !== v.id && o.role === 'builder' && o.targetId === tr.id)
+          )
+          .sort((a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x)))[0];
+
+        if (plantSpot) {
+          v.state = 'working';
+          v.targetId = plantSpot.id;
+          const standX = plantSpot.x + (v.x < plantSpot.x ? -8 : 8);
+          if (moveToward(v, standX, 46, dt)) {
+            v.facing = plantSpot.x >= v.x ? 1 : -1;
+            plantSpot.chopProgress += dt * 0.2 * workMult;
+            if (v.actionTimer <= 0) {
+              v.actionTimer = 0.55;
+              spawnBurst(w, plantSpot.x, GROUND_Y - 6, 4, '#6fa86f', 'leaf', 22);
+            }
+            if (plantSpot.chopProgress >= 1) {
+              const roll = Math.random();
+              const variant: 0 | 1 | 2 = roll < 0.5 ? 0 : roll < 0.85 ? 1 : 2;
+              const size = sizeFromVariant(variant);
+              plantSpot.variant = variant;
+              plantSpot.size = size;
+              plantSpot.height = heightForTreeSize(size, Math.random());
+              plantSpot.chopped = false;
+              plantSpot.marked = false;
+              plantSpot.chopProgress = 0;
+              plantSpot.hitShake = 0.22;
+              v.targetId = null;
+              sound.playBuildComplete();
+              spawnBurst(w, plantSpot.x, GROUND_Y - 14, 10, '#78c272', 'leaf', 36);
+            }
+          }
+          continue;
+        }
+      }
+
+      // FALLBACK when nothing left to build/plant: collect dropped coins and deliver to the Banker!
+      if (trySweepCoinsToBanker(w, v, dt, isEveningOrNight)) continue;
 
       v.targetId = null;
       v.state = isEveningOrNight ? 'fleeing' : 'idle';
@@ -3647,7 +3635,7 @@ function updateVillagers(w: WorldState, dt: number): void {
       continue;
     }
 
-    // --- WARRIOR ---
+    // --- WARRIOR (defends kingdom; when idle in daytime, excavates new rocks, then sweeps coins to Banker!) ---
     if (v.role === 'warrior') {
       if (!isEveningOrNight && v.hp < v.maxHp) {
         v.hp = Math.min(v.maxHp, v.hp + dt * 4);
@@ -3669,6 +3657,7 @@ function updateVillagers(w: WorldState, dt: number): void {
       }
 
       if (targetEnemy) {
+        v.targetId = null;
         v.state = 'defending';
         if (bestDist > 13) {
           moveToward(v, targetEnemy.x, 54, dt);
@@ -3687,13 +3676,62 @@ function updateVillagers(w: WorldState, dt: number): void {
         continue;
       }
 
+      // IDLE DAYTIME SWORDSMAN TASKS (only when no enemies & not evening/night!)
+      if (!isEveningOrNight && w.enemies.length === 0) {
+        if (v.carriedCoins > 0 && deliverCarriedCoinsToBanker(w, v, dt)) continue;
+
+        const sideScore = (wx: number) => ((wx < CENTER_X ? -1 : 1) === v.side ? 0 : 1200);
+        const digSpot = w.rocks
+          .filter(
+            (r) =>
+              r.mined &&
+              !r.marked &&
+              !w.villagers.some((o) => o.id !== v.id && o.role === 'warrior' && o.targetId === r.id)
+          )
+          .sort((a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x)))[0];
+
+        if (digSpot) {
+          v.state = 'working';
+          v.targetId = digSpot.id;
+          const standX = digSpot.x + (v.x < digSpot.x ? -9 : 9);
+          if (moveToward(v, standX, 48, dt)) {
+            v.facing = digSpot.x >= v.x ? 1 : -1;
+            digSpot.mineProgress += dt * 0.18;
+            if (v.actionTimer <= 0) {
+              v.actionTimer = 0.58;
+              sound.playHammer();
+              spawnBurst(w, digSpot.x, GROUND_Y - 6, 4, '#b8c8d8', 'stone', 24);
+            }
+            if (digSpot.mineProgress >= 1) {
+              const variant = Math.floor(Math.random() * 3) as 0 | 1 | 2;
+              digSpot.variant = variant;
+              digSpot.size = sizeFromVariant(variant);
+              digSpot.mined = false;
+              digSpot.marked = false;
+              digSpot.mineProgress = 0;
+              digSpot.hitShake = 0.22;
+              v.targetId = null;
+              sound.playBuildComplete();
+              spawnBurst(w, digSpot.x, GROUND_Y - 10, 10, '#cfdbe6', 'stone', 38);
+            }
+          }
+          continue;
+        }
+
+        v.targetId = null;
+
+        // FALLBACK when no mined rocks left to excavate: collect dropped coins and bring to Banker!
+        if (trySweepCoinsToBanker(w, v, dt, isEveningOrNight)) continue;
+      }
+
+      v.targetId = null;
       v.state = 'defending';
       moveToward(v, guardX, 54, dt);
       if (Math.abs(v.x - guardX) < 4) v.facing = v.side;
       continue;
     }
 
-    // --- ARCHER (hunts, garrisons Archer Towers for range/dmg boost, shoots ground & aerial Hel Crows!) ---
+    // --- ARCHER (hunts wildlife, garrisons Towers, shoots ground & aerial enemies; sweeps coins to Banker when idle!) ---
     if (v.role === 'archer') {
       const defWall = getOuterDefensiveWall(w, v.side);
 
@@ -3763,40 +3801,41 @@ function updateVillagers(w: WorldState, dt: number): void {
         continue;
       }
 
-      const looseCoin = w.coins.find((c) => c.grounded && !c.fromMonarch && Math.abs(c.x - v.x) < 55);
-      if (looseCoin && v.carriedCoins < 4) {
-        if (moveToward(v, looseCoin.x, 46, dt)) {
-          const idx = w.coins.indexOf(looseCoin);
-          if (idx >= 0) w.coins.splice(idx, 1);
-          v.carriedCoins += 1;
-          sound.playCoinPickup();
-        }
+      // Finish returning swept coins to Banker if already carrying
+      if (v.state === 'returning_coins' && v.carriedCoins > 0 && deliverCarriedCoinsToBanker(w, v, dt)) {
         continue;
       }
 
+      // IDLE DAYTIME ARCHER TASK: Hunt & kill animals (animals spawn from trees!)
       let targetPrey = null;
-      let preyDist = 165;
+      let preyScore = 440;
       for (const prey of w.wildlife) {
+        const sameSide = (prey.x < CENTER_X ? -1 : 1) === v.side;
         const d = Math.abs(prey.x - v.x);
-        if (d < preyDist) {
-          preyDist = d;
+        const score = d + (sameSide ? 0 : 180);
+        if (score < preyScore) {
+          preyScore = score;
           targetPrey = prey;
         }
       }
       if (targetPrey) {
+        const preyDist = Math.abs(targetPrey.x - v.x);
         v.state = 'hunting';
-        if (preyDist > 92) {
-          moveToward(v, targetPrey.x, 42, dt);
+        if (preyDist > 96) {
+          moveToward(v, targetPrey.x, 46, dt);
         } else {
           v.vx = 0;
           v.facing = targetPrey.x >= v.x ? 1 : -1;
           if (v.actionTimer <= 0) {
-            v.actionTimer = 1.05;
+            v.actionTimer = 1.0;
             fireArrow(w, v.x, GROUND_Y - 14, targetPrey.x + targetPrey.vx * 0.18, GROUND_Y - 5, 10);
           }
         }
         continue;
       }
+
+      // FALLBACK when no animals to hunt: collect dropped coins and bring to the Banker!
+      if (trySweepCoinsToBanker(w, v, dt, isEveningOrNight)) continue;
 
       v.state = 'hunting';
       const patrolAnchor = defWall ? defWall.x + v.side * 55 : CENTER_X + v.side * 160;
@@ -3808,7 +3847,7 @@ function updateVillagers(w: WorldState, dt: number): void {
       continue;
     }
 
-    // --- PRODUCER (Farmers: capacity scales 2+level up to 12, storage cap scales level*12 up to 120!) ---
+    // --- PRODUCER (Farmers: work built farms; when idle without farm, collect coins for Banker or fish!) ---
     if (v.role === 'producer') {
       if (isEveningOrNight) {
         v.state = 'fleeing';
@@ -3826,6 +3865,10 @@ function updateVillagers(w: WorldState, dt: number): void {
         );
         myFarm = preferred ?? fallback ?? null;
         v.assignedFarmId = myFarm ? myFarm.id : null;
+      }
+
+      if (!myFarm) {
+        if (trySweepCoinsToBanker(w, v, dt, isEveningOrNight)) continue;
       }
 
       const workX = myFarm ? myFarm.x + ((v.id % 5) - 2) * 8 : CENTER_X + v.side * 190;
@@ -4262,24 +4305,25 @@ function updateCoins(w: WorldState, dt: number): void {
 }
 
 function updateWildlife(w: WorldState, dt: number): void {
-  if (!w.isNight && w.wildlife.length < 7 && Math.random() < dt * 0.45) {
-    const side = Math.random() > 0.5 ? 1 : -1;
-    const spawnX = CENTER_X + side * (170 + Math.random() * 440);
-    const blockedByForest = w.trees.some((tr) => !tr.chopped && Math.abs(tr.x - spawnX) < 28);
-    if (!blockedByForest) {
-      const isDeer = Math.abs(spawnX - CENTER_X) > 290 && Math.random() < 0.35;
-      w.wildlife.push({
-        id: uid(w),
-        kind: isDeer ? 'deer' : 'rabbit',
-        x: spawnX,
-        y: GROUND_Y,
-        vx: 0,
-        facing: Math.random() > 0.5 ? 1 : -1,
-        hp: isDeer ? 16 : 8,
-        aiTimer: 1 + Math.random() * 2,
-        animTime: 0,
-      });
-    }
+  // New animals depend on standing trees to spawn!
+  const standingTrees = w.trees.filter((tr) => !tr.chopped);
+  const maxWildlife = standingTrees.length > 0 ? Math.min(8, Math.max(1, Math.ceil(standingTrees.length / 2))) : 0;
+  if (!w.isNight && standingTrees.length > 0 && w.wildlife.length < maxWildlife && Math.random() < dt * 0.45) {
+    const homeTree = standingTrees[Math.floor(Math.random() * standingTrees.length)];
+    const spawnX = Math.max(320, Math.min(WORLD_WIDTH - 320, homeTree.x + (Math.random() - 0.5) * 30));
+    const isDeer = (homeTree.size === 'large' || Math.abs(spawnX - CENTER_X) > 290) && Math.random() < 0.38;
+    w.wildlife.push({
+      id: uid(w),
+      kind: isDeer ? 'deer' : 'rabbit',
+      x: spawnX,
+      y: GROUND_Y,
+      vx: 0,
+      facing: Math.random() > 0.5 ? 1 : -1,
+      hp: isDeer ? 16 : 8,
+      aiTimer: 1 + Math.random() * 2,
+      animTime: 0,
+    });
+    spawnBurst(w, spawnX, GROUND_Y - 8, 4, '#79a86b', 'leaf', 18);
   }
 
   for (const prey of w.wildlife) {

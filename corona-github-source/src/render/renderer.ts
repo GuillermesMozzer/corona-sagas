@@ -1389,9 +1389,22 @@ export class PixelRenderer {
     const snow = lerpRGB({ r: 212, g: 228, b: 238 }, { r: 72, g: 98, b: 118 }, nightFactor);
 
     for (const tr of w.trees) {
-      if (tr.chopped) continue;
       const sx = Math.round(tr.x - camX);
       if (sx < -36 || sx > this.viewW + 36) continue;
+
+      if (tr.chopped) {
+        // Growing sapling while an idle Builder plants a new tree!
+        if (tr.chopProgress > 0) {
+          const sproutH = Math.max(3, Math.round(tr.chopProgress * 12));
+          ctx.fillStyle = '#4d3625';
+          ctx.fillRect(sx - 1, GROUND_Y - sproutH, 2, sproutH);
+          ctx.fillStyle = '#6cc46a';
+          ctx.fillRect(sx - 3, GROUND_Y - sproutH - 2, 6, 3);
+          ctx.fillStyle = '#a0ea96';
+          ctx.fillRect(sx - 1, GROUND_Y - sproutH - 3, 2, 2);
+        }
+        continue;
+      }
 
       const shake = tr.hitShake > 0 ? Math.round(Math.sin(w.elapsed * 60) * 2) : 0;
       const sway = Math.round(Math.sin(w.elapsed * 1.1 + tr.swayOffset) * 1);
@@ -1457,9 +1470,21 @@ export class PixelRenderer {
     const snow = lerpRGB({ r: 215, g: 230, b: 240 }, { r: 75, g: 98, b: 118 }, nightFactor);
 
     for (const r of w.rocks) {
-      if (r.mined) continue;
       const sx = Math.round(r.x - camX);
       if (sx < -28 || sx > this.viewW + 28) continue;
+
+      if (r.mined) {
+        // Rising stone outcrop while an idle Swordsman excavates a new rock!
+        if (r.mineProgress > 0) {
+          const riseH = Math.max(2, Math.round(r.mineProgress * 9));
+          const riseW = Math.max(6, Math.round(6 + r.mineProgress * 8));
+          ctx.fillStyle = rgbStr(stoneDark);
+          ctx.fillRect(sx - Math.floor(riseW / 2), GROUND_Y - riseH, riseW, riseH);
+          ctx.fillStyle = rgbStr(stoneMid);
+          ctx.fillRect(sx - Math.floor(riseW / 2) + 1, GROUND_Y - riseH, Math.max(2, riseW - 2), Math.max(1, riseH - 1));
+        }
+        continue;
+      }
 
       const shake = r.hitShake > 0 ? Math.round(Math.sin(w.elapsed * 60) * 2) : 0;
       const bx = sx + shake;
