@@ -1,6 +1,6 @@
 import { sound } from '../audio/sound';
 import { getLanguage, t } from '../i18n/translations';
-import { saveCampaign } from '../storage/saveSystem';
+import { markTutorialCompleted, saveCampaign } from '../storage/saveSystem';
 import {
   BELL_COST,
   BOAT_BUILD_COST,
@@ -2871,6 +2871,182 @@ function updateFireTrailsAndLightning(w: WorldState, dt: number): void {
   }
 }
 
+export function getTutorialTargetX(w: WorldState): number {
+  const tut = w.tutorial;
+  if (!tut) return CENTER_X;
+  if (tut.step === 'light_fire') return w.hall.x;
+  if (tut.step === 'recruit_wanderers') {
+    // Point to the nearest vagrant camp that still has wanderers (closest is CENTER_X - 425)
+    const campWithWanderer = w.camps
+      .filter((c) => w.villagers.some((v) => v.role === 'wanderer' && Math.abs(v.x - c.x) < 95))
+      .sort((a, b) => Math.abs(a.x - CENTER_X) - Math.abs(b.x - CENTER_X))[0];
+    return campWithWanderer ? campWithWanderer.x : (w.camps[0]?.x ?? CENTER_X - 425);
+  }
+  if (tut.step === 'buy_hammer') {
+    return w.shops.find((s) => s.kind === 'hammer')?.x ?? CENTER_X + 80;
+  }
+  if (tut.step === 'build_right_wall') {
+    return w.walls.find((wall) => wall.side === 1 && wall.tier === 'inner')?.x ?? CENTER_X + 270;
+  }
+  if (tut.step === 'build_left_wall') {
+    return w.walls.find((wall) => wall.side === -1 && wall.tier === 'inner')?.x ?? CENTER_X - 270;
+  }
+  if (tut.step === 'buy_bow') {
+    return w.shops.find((s) => s.kind === 'bow')?.x ?? CENTER_X - 80;
+  }
+  return w.boat.x;
+}
+
+export function skipTutorial(w: WorldState): void {
+  if (!w.tutorial) return;
+  w.tutorial.active = false;
+  markTutorialCompleted();
+  saveCampaign(w);
+}
+
+function updateTutorial(w: WorldState, dt: number): void {
+  const tut = w.tutorial;
+  if (!tut || !tut.active) return;
+
+  const m = w.monarchs[0];
+  if (!m) return;
+
+  // Tutorial rule: NO enemies on the map during the first-playthrough tutorial!
+  if (w.enemies.length > 0) w.enemies = [];
+  if (w.timeOfDay > 0.34) w.timeOfDay = 0.34;
+  w.isNight = false;
+
+  const hammerShop = w.shops.find((s) => s.kind === 'hammer');
+  const bowShop = w.shops.find((s) => s.kind === 'bow');
+  const rightWall = w.walls.find((wall) => wall.side === 1 && wall.tier === 'inner');
+  const leftWall = w.walls.find((wall) => wall.side === -1 && wall.tier === 'inner');
+
+  // Step progression checks
+  if (tut.step === 'light_fire' && w.hall.level >= 1) {
+    tut.step = 'recruit_wanderers';
+    tut.fadeCycle = 0;
+    sound.playCoinPickup();
+    spawnBurst(w, tut.spiritX, tut.spiritY, 12, '#7ef5ff', 'spark', 45);
+  } else if (tut.step === 'recruit_wanderers' && w.stats.villagersRecruited >= 2) {
+    tut.step = 'buy_hammer';
+    tut.fadeCycle = 0;
+    sound.playCoinPickup();
+    spawnBurst(w, tut.spiritX, tut.spiritY, 12, '#7ef5ff', 'spark', 45);
+  } else if (
+    tut.step === 'buy_hammer' &&
+    ((hammerShop && hammerShop.stock >= 1) || w.villagers.some((v) => v.role === 'builder'))
+  ) {
+    tut.step = 'build_right_wall';
+    tut.fadeCycle = 0;
+    sound.playCoinPickup();
+    spawnBurst(w, tut.spiritX, tut.spiritY, 12, '#7ef5ff', 'spark', 45);
+  } else if (
+    tut.step === 'build_right_wall' &&
+    rightWall &&
+    (rightWall.level >= 1 || rightWall.underConstruction)
+  ) {
+    tut.step = 'build_left_wall';
+    tut.fadeCycle = 0;
+    sound.playCoinPickup();
+    spawnBurst(w, tut.spiritX, tut.spiritY, 12, '#7ef5ff', 'spark', 45);
+  } else if (
+    tut.step === 'build_left_wall' &&
+    leftWall &&
+    (leftWall.level >= 1 || leftWall.underConstruction)
+  ) {
+    tut.step = 'buy_bow';
+    tut.fadeCycle = 0;
+    sound.playCoinPickup();
+    spawnBurst(w, tut.spiritX, tut.spiritY, 14, '#7ef5ff', 'spark', 50);
+    // Guarantee player can forge the Bow after spending all 10 starting coins on steps 1..5!
+    if (!tut.bowTributeGiven && m.coins < 2 && bowShop) {
+      tut.bowTributeGiven = true;
+      for (let i = 0; i < 2; i++) {
+        spawnCoin(w, bowShop.x + (i === 0 ? -8 : 8), GROUND_Y - 12, (i === 0 ? -16 : 16), -62, false, 0.2);
+      }
+    }
+  } else if (
+    tut.step === 'buy_bow' &&
+    ((bowShop && bowShop.stock >= 1) || w.villagers.some((v) => v.role === 'archer'))
+  ) {
+    tut.step = 'farewell';
+    tut.farewellTimer = 7.0;
+    tut.fadeCycle = 0;
+    sound.playHorn(false);
+    spawnBurst(w, tut.spiritX, tut.spiritY, 18, '#7ef5ff', 'spark', 60);
+  } else if (tut.step === 'farewell') {
+    tut.farewellTimer -= dt;
+    if (tut.farewellTimer <= 0) {
+      spawnBurst(w, tut.spiritX, tut.spiritY, 22, '#7ef5ff', 'spark', 68);
+      tut.active = false;
+      markTutorialCompleted();
+      saveCampaign(w);
+      return;
+    }
+  }
+
+  // Spirit floating position & ethereal vanish/reappear ahead of the horse!
+  const targetX = getTutorialTargetX(w);
+  const dxToTarget = targetX - m.x;
+  const dirToTarget: 1 | -1 = dxToTarget >= 0 ? 1 : -1;
+  const nearTarget = tut.step !== 'farewell' && Math.abs(dxToTarget) < 58;
+
+  if (tut.step === 'farewell') {
+    const desiredX = m.x + m.facing * 42;
+    const desiredY = GROUND_Y - 46 + Math.sin(w.elapsed * 3.2) * 4;
+    tut.spiritX += (desiredX - tut.spiritX) * Math.min(1, dt * 4.5);
+    tut.spiritY += (desiredY - tut.spiritY) * Math.min(1, dt * 5);
+    tut.spiritFacing = 1; // Pointing east toward the Drakkar & distant islands!
+    tut.spiritAlpha = Math.min(0.92, tut.farewellTimer < 1.2 ? tut.farewellTimer / 1.2 : 0.92);
+  } else if (nearTarget) {
+    // Hover directly above the campfire / camp / tent / palisade!
+    const desiredX = targetX;
+    const desiredY = GROUND_Y - 48 + Math.sin(w.elapsed * 3.4) * 3.5;
+    tut.spiritX += (desiredX - tut.spiritX) * Math.min(1, dt * 5.2);
+    tut.spiritY += (desiredY - tut.spiritY) * Math.min(1, dt * 5.2);
+    tut.spiritFacing = dirToTarget;
+    tut.spiritAlpha += (0.94 - tut.spiritAlpha) * Math.min(1, dt * 5);
+    tut.fadeCycle = 0;
+  } else {
+    // Sometimes vanishes briefly, and always reappears a few frames ahead of the horse pointing where to go!
+    const prevCycle = tut.fadeCycle;
+    tut.fadeCycle = (tut.fadeCycle + dt) % 8.4;
+    const leadDir: 1 | -1 = Math.abs(m.vx) > 8 ? m.facing : dirToTarget;
+    const desiredX = m.x + leadDir * 44;
+    const desiredY = GROUND_Y - 38 + Math.sin(w.elapsed * 3.8) * 4;
+
+    // Reappear right ahead of the horse when emerging from mist
+    if (prevCycle < 7.5 && tut.fadeCycle >= 7.5) {
+      tut.spiritX = desiredX;
+      tut.spiritY = desiredY;
+      spawnBurst(w, tut.spiritX, tut.spiritY, 8, '#7ef5ff', 'spark', 28);
+    }
+
+    const vanished = tut.fadeCycle >= 6.2 && tut.fadeCycle < 7.5;
+    const targetAlpha = vanished ? 0 : 0.88;
+    tut.spiritAlpha += (targetAlpha - tut.spiritAlpha) * Math.min(1, dt * 4.5);
+    tut.spiritX += (desiredX - tut.spiritX) * Math.min(1, dt * 4.8);
+    tut.spiritY += (desiredY - tut.spiritY) * Math.min(1, dt * 5.0);
+    tut.spiritFacing = dirToTarget; // Finger ALWAYS points toward the target direction!
+  }
+
+  // Gentle drifting cyan spirit wisps
+  if (tut.spiritAlpha > 0.35 && Math.random() < dt * 7) {
+    spawnParticle(w, {
+      x: tut.spiritX + (Math.random() - 0.5) * 10,
+      y: tut.spiritY + 4 + (Math.random() - 0.5) * 8,
+      vx: (Math.random() - 0.5) * 8,
+      vy: -8 - Math.random() * 10,
+      size: 1,
+      color: Math.random() > 0.4 ? '#7ef5ff' : '#d4fbff',
+      alpha: tut.spiritAlpha * 0.8,
+      life: 0.55,
+      maxLife: 0.55,
+      kind: 'spark',
+    });
+  }
+}
+
 export function stepWorld(w: WorldState, input: InputState, dt: number): void {
   w.elapsed += dt;
   w.screenShake = Math.max(0, w.screenShake - dt);
@@ -2908,6 +3084,7 @@ export function stepWorld(w: WorldState, input: InputState, dt: number): void {
   updateFlyingCoins(w, dt);
   updateFireTrailsAndLightning(w, dt);
   updateDayNightAndWaves(w, dt);
+  updateTutorial(w, dt);
   updateVillagers(w, dt);
   updateEnemies(w, dt);
   updateArrows(w, dt);

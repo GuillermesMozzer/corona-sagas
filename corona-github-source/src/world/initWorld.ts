@@ -1,4 +1,5 @@
 import { defaultAppearance, defaultCrest } from '../customization/presets';
+import { isTutorialCompleted } from '../storage/saveSystem';
 import {
   CENTER_X,
   GROUND_Y,
@@ -21,6 +22,7 @@ import {
   type RunePuzzle,
   type ToolShop,
   type Tree,
+  type TutorialState,
   type VagrantCamp,
   type Villager,
   type Wall,
@@ -404,15 +406,33 @@ export function generateIslandSnapshot(
 export function createInitialWorld(
   mode: WorldState['mode'] = 'login',
   appearance: CharacterAppearance = defaultAppearance(),
-  crest: CrestConfig = defaultCrest()
+  crest: CrestConfig = defaultCrest(),
+  saveSlot = 0
 ): WorldState {
   let nextId = 1;
   const uid = () => nextId++;
 
+  const enableTutorial = mode !== 'login' && !isTutorialCompleted();
+  const startX = enableTutorial ? CENTER_X - 150 : CENTER_X;
+
+  const tutorial: TutorialState | null = enableTutorial
+    ? {
+        active: true,
+        step: 'light_fire',
+        spiritX: startX + 46,
+        spiritY: GROUND_Y - 38,
+        spiritFacing: 1,
+        spiritAlpha: 0.9,
+        fadeCycle: 0,
+        farewellTimer: 0,
+        bowTributeGiven: false,
+      }
+    : null;
+
   // STRICT RULE: Game ALWAYS starts with at most 10 coins!
   const monarch: Monarch = {
     id: uid(),
-    x: CENTER_X,
+    x: startX,
     y: GROUND_Y,
     vx: 0,
     facing: 1,
@@ -430,7 +450,7 @@ export function createInitialWorld(
     roarTimer: 0,
     wolfBiteCooldown: 0,
     hasCrown: true,
-    crownX: CENTER_X,
+    crownX: startX,
     crownY: GROUND_Y - 22,
     crownVx: 0,
     crownVy: 0,
@@ -439,7 +459,7 @@ export function createInitialWorld(
     animTime: 0,
     dropCooldown: 0,
     hurtCooldown: 0,
-    cameraX: CENTER_X - LOGICAL_WIDTH / 2,
+    cameraX: startX - LOGICAL_WIDTH / 2,
   };
 
   const island1 = generateIslandSnapshot(1, uid);
@@ -480,6 +500,8 @@ export function createInitialWorld(
 
   return {
     mode,
+    saveSlot,
+    tutorial,
     worldMapContext: 'inspect',
     viewWidth: LOGICAL_WIDTH,
     viewHeight: 270,

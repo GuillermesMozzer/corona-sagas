@@ -10,7 +10,12 @@ import {
   drawShieldEmblem,
 } from '../customization/presets';
 import { getLanguage, t } from '../i18n/translations';
-import { getSavedCampaignSummary } from '../storage/saveSystem';
+import {
+  MAX_SAVE_SLOTS,
+  countSavedCampaigns,
+  getSavedCampaignSummary,
+  listCampaignSlots,
+} from '../storage/saveSystem';
 import {
   GROUND_Y,
   LOGICAL_HEIGHT,
@@ -23,6 +28,7 @@ import {
   type Villager,
   type WorldState,
 } from '../types';
+import { getTutorialTargetX } from '../systems/simulation';
 import { ISLAND_DEFINITIONS, getIslandDef } from '../world/islands';
 import { GOD_DEFS, MOUNT_DEFS } from '../world/mountsAndGods';
 
@@ -76,6 +82,7 @@ export class PixelRenderer {
   public charSelectFocusRow = 0;
   public crestSelectFocusRow = 0;
   public selectedMapIsland = 1;
+  public pendingDeleteSlot: number | null = null;
 
   // Live responsive logical viewport dimensions (adapts to 100% of any device!)
   private viewW = LOGICAL_WIDTH;
@@ -181,6 +188,10 @@ export class PixelRenderer {
     this.syncViewport(ctx);
     this.hitRegions = [];
 
+    if (w.mode === 'slot_select') {
+      this.drawSlotSelectScreen(ctx, w);
+      return;
+    }
     if (w.mode === 'char_select') {
       this.drawCharSelectScreen(ctx, w);
       return;
@@ -239,6 +250,7 @@ export class PixelRenderer {
     this.drawVillagers(ctx, w, camX);
     this.drawEnemies(ctx, w, camX);
     if (monarch) this.drawMonarch(ctx, w, monarch, camX, 1, Math.round(monarch.x - camX), GROUND_Y);
+    this.drawTutorialSpirit(ctx, w, camX);
     this.drawFireTrailsAndLightning(ctx, w, camX);
     this.drawCoins(ctx, w, camX);
     this.drawArrows(ctx, w, camX);
@@ -265,7 +277,11 @@ export class PixelRenderer {
       this.drawLoginOverlay(ctx, w);
     } else {
       this.drawHud(ctx, w);
-      if (w.banner) this.drawBanner(ctx, w);
+      if (w.mode === 'playing' && w.tutorial?.active) {
+        this.drawTutorialDialogue(ctx, w);
+      } else if (w.banner) {
+        this.drawBanner(ctx, w);
+      }
       if (w.mode === 'paused') this.drawPauseOverlay(ctx);
       if (w.mode === 'gameover') this.drawGameOverOverlay(ctx, w);
     }
@@ -318,9 +334,10 @@ export class PixelRenderer {
     this.addHit('login_new', bx, by1, btnW, btnH);
 
     const by2 = by1 + 34;
-    ctx.fillStyle = saved ? 'rgba(16, 28, 42, 0.92)' : 'rgba(14, 18, 25, 0.65)';
+    const savedCount = countSavedCampaigns();
+    ctx.fillStyle = saved ? 'rgba(16, 28, 42, 0.92)' : 'rgba(14, 20, 30, 0.85)';
     ctx.fillRect(bx, by2, btnW, 34);
-    ctx.strokeStyle = saved ? 'rgba(140, 210, 255, 0.7)' : 'rgba(120, 136, 155, 0.25)';
+    ctx.strokeStyle = saved ? 'rgba(140, 210, 255, 0.78)' : 'rgba(140, 175, 210, 0.42)';
     ctx.strokeRect(bx + 0.5, by2 + 0.5, btnW - 1, 33);
 
     if (saved) {
@@ -328,29 +345,170 @@ export class PixelRenderer {
       ctx.textAlign = 'left';
       ctx.fillStyle = '#d9eeff';
       ctx.font = 'bold 8px monospace';
-      ctx.fillText(t('load_campaign'), bx + 36, by2 + 14);
+      ctx.fillText(`${t('slots_btn')} (${savedCount}/${MAX_SAVE_SLOTS})`, bx + 36, by2 + 14);
       ctx.fillStyle = '#95b2cc';
       ctx.font = '7px monospace';
       ctx.fillText(
-        `${t('day_short')} ${saved.day} · ${saved.villagers} ${t('subjects')} · ${saved.gold} ${t('gold')}`,
+        `Slot ${saved.slot + 1} · ${t('day_short')} ${saved.day} · ${saved.gold}g`,
         bx + 36,
         by2 + 25
       );
-      this.addHit('login_load', bx, by2, btnW, 34);
     } else {
       ctx.textAlign = 'center';
-      ctx.fillStyle = '#6f8194';
+      ctx.fillStyle = '#c4d8eb';
       ctx.font = 'bold 8px monospace';
-      ctx.fillText(t('load_campaign'), cx, by2 + 15);
+      ctx.fillText(`${t('slots_btn')} (0/${MAX_SAVE_SLOTS})`, cx, by2 + 15);
+      ctx.fillStyle = '#7e93a8';
       ctx.font = '7px monospace';
       ctx.fillText(t('no_save'), cx, by2 + 26);
     }
+    this.addHit('login_slots', bx, by2, btnW, 34);
 
     ctx.textAlign = 'center';
     const pulse = 0.6 + 0.4 * Math.sin(w.elapsed * 3);
     ctx.fillStyle = `rgba(205, 224, 242, ${pulse.toFixed(2)})`;
     ctx.font = '7px monospace';
-    ctx.fillText(t('login_hint'), cx, by2 + 54);
+    ctx.fillText(t('login_hint'), cx, by2 + 52);
+
+    // Subtle creator & inspiration credit in small letters at the bottom footer
+    ctx.fillStyle = 'rgba(186, 208, 228, 0.72)';
+    ctx.font = '5.5px monospace';
+    if (this.viewW < 390) {
+      ctx.fillText('Jogo criado e desenvolvido por Guillermes Mozzer,', cx, this.viewH - 14);
+      ctx.fillText('inspirado por Kingdom Two Crowns, franquia da Raw Fury', cx, this.viewH - 6);
+    } else {
+      ctx.fillText(
+        'Jogo criado e desenvolvido por Guillermes Mozzer, inspirado por Kingdom Two Crowns, franquia da Raw Fury',
+        cx,
+        this.viewH - 8
+      );
+    }
+    ctx.textAlign = 'left';
+  }
+
+  // =========================================================================
+  // 8-SLOT CAMPAIGN SAVE MANAGER SCREEN (Responsive Portrait 2x4 / Landscape 4x2)
+  // =========================================================================
+  private drawSlotSelectScreen(ctx: CanvasRenderingContext2D, _w: WorldState): void {
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, this.viewH);
+    bgGrad.addColorStop(0, '#060c16');
+    bgGrad.addColorStop(1, '#091424');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, this.viewW, this.viewH);
+
+    const isPortrait = this.viewW < 380;
+    const cx = Math.round(this.viewW / 2);
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffe58a';
+    ctx.font = isPortrait ? 'bold 9.5px Georgia, serif' : 'bold 12px Georgia, serif';
+    ctx.fillText(t('slots_title'), cx, 22);
+
+    ctx.fillStyle = '#8eb3d1';
+    ctx.font = '6.5px monospace';
+    ctx.fillText(t('slots_hint'), cx, 34);
+
+    const slots = listCampaignSlots();
+    const romans = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+
+    const cols = isPortrait ? 2 : 4;
+    const rows = isPortrait ? 4 : 2;
+    const padX = isPortrait ? 10 : 14;
+    const topY = 44;
+    const bottomReserve = 34;
+    const gap = isPortrait ? 6 : 8;
+    const cardW = Math.floor((this.viewW - padX * 2 - gap * (cols - 1)) / cols);
+    const cardH = Math.min(isPortrait ? 86 : 84, Math.floor((this.viewH - topY - bottomReserve - gap * (rows - 1)) / rows));
+
+    for (let i = 0; i < MAX_SAVE_SLOTS; i++) {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const x = padX + col * (cardW + gap);
+      const y = topY + row * (cardH + gap);
+      const info = slots[i];
+
+      ctx.fillStyle = info ? 'rgba(15, 26, 41, 0.94)' : 'rgba(10, 16, 25, 0.72)';
+      ctx.fillRect(x, y, cardW, cardH);
+      ctx.strokeStyle = info ? 'rgba(239, 196, 98, 0.65)' : 'rgba(130, 160, 190, 0.28)';
+      ctx.strokeRect(x + 0.5, y + 0.5, cardW - 1, cardH - 1);
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = info ? '#ffe58a' : '#7b92a8';
+      ctx.font = 'bold 7px monospace';
+      ctx.fillText(`SLOT ${i + 1}`, x + 6, y + 12);
+
+      if (info) {
+        // Click main card to load & play this campaign!
+        this.addHit(`slot_load_${i}`, x, y, cardW, cardH);
+
+        // Shield emblem + Island + Day + Gold/Diamonds
+        drawShieldEmblem(ctx, info.crest, x + 16, y + 32, 8);
+
+        ctx.fillStyle = '#eef5fc';
+        ctx.font = 'bold 7px monospace';
+        const islRoman = romans[(info.island - 1) % 7] ?? 'I';
+        ctx.fillText(`ILHA ${islRoman} · ${t('day_short')} ${info.day}`, x + 28, y + 28);
+
+        ctx.fillStyle = '#f7d265';
+        ctx.font = '6.5px monospace';
+        const diamTxt = info.diamonds > 0 ? `  ◆${info.diamonds}` : '';
+        ctx.fillText(`${info.gold}g${diamTxt}`, x + 28, y + 39);
+
+        ctx.fillStyle = '#92b0c9';
+        ctx.font = '6px monospace';
+        ctx.fillText(`${info.villagers} ${t('subjects')}`, x + 6, y + cardH - 18);
+
+        // Play pill
+        ctx.fillStyle = 'rgba(46, 36, 12, 0.92)';
+        ctx.fillRect(x + 5, y + cardH - 14, cardW - 10, 10);
+        ctx.fillStyle = '#ffe58a';
+        ctx.font = 'bold 6.5px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`▶ ${t('slot_play')}`, x + cardW / 2, y + cardH - 7);
+        ctx.textAlign = 'left';
+
+        // Delete button (2-step confirm to avoid accidental deletion!)
+        const confirming = this.pendingDeleteSlot === i;
+        const delW = confirming ? 24 : 13;
+        const delX = x + cardW - delW - 4;
+        const delY = y + 3;
+        ctx.fillStyle = confirming ? '#8a1f2d' : 'rgba(60, 24, 32, 0.85)';
+        ctx.fillRect(delX, delY, delW, 11);
+        ctx.strokeStyle = confirming ? '#ff6b78' : 'rgba(255, 107, 120, 0.5)';
+        ctx.strokeRect(delX + 0.5, delY + 0.5, delW - 1, 10);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffd6db';
+        ctx.font = 'bold 6.5px monospace';
+        ctx.fillText(confirming ? 'OK?' : '×', delX + delW / 2, delY + 8);
+        ctx.textAlign = 'left';
+        this.addHit(`slot_del_${i}`, delX - 3, delY - 3, delW + 6, 17);
+      } else {
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#6f859b';
+        ctx.font = '7px monospace';
+        ctx.fillText(t('slot_empty'), x + cardW / 2, y + Math.round(cardH * 0.48));
+        ctx.fillStyle = '#9cc5e6';
+        ctx.font = 'bold 6.5px monospace';
+        ctx.fillText(t('slot_new'), x + cardW / 2, y + Math.round(cardH * 0.72));
+        ctx.textAlign = 'left';
+        this.addHit(`slot_new_${i}`, x, y, cardW, cardH);
+      }
+    }
+
+    // Back button
+    const backW = 104;
+    const backH = 20;
+    const backX = Math.round(cx - backW / 2);
+    const backY = this.viewH - 26;
+    ctx.fillStyle = '#162030';
+    ctx.fillRect(backX, backY, backW, backH);
+    ctx.strokeStyle = 'rgba(239, 196, 98, 0.55)';
+    ctx.strokeRect(backX + 0.5, backY + 0.5, backW - 1, backH - 1);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffe58a';
+    ctx.font = 'bold 7.5px monospace';
+    ctx.fillText(t('slot_back'), cx, backY + 13);
+    this.addHit('slot_back', backX - 4, backY - 4, backW + 8, backH + 8);
     ctx.textAlign = 'left';
   }
 
@@ -2774,6 +2932,160 @@ export class PixelRenderer {
     ctx.fillRect(toMapX(w.hall.x) - 1, mapY - 1, 3, 5);
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(toMapX(monarch.x) - 1, mapY - 1, 2, 6);
+  }
+
+  private drawTutorialSpirit(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    const tut = w.tutorial;
+    if (!tut || !tut.active || tut.spiritAlpha <= 0.03) return;
+
+    const sx = Math.round(tut.spiritX - camX);
+    const sy = Math.round(tut.spiritY);
+    if (sx < -40 || sx > this.viewW + 40) return;
+
+    const f = tut.spiritFacing;
+    const wave = Math.round(Math.sin(w.elapsed * 5.2) * 1.5);
+    const pulse = Math.round(Math.sin(w.elapsed * 6.5) * 2);
+
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, tut.spiritAlpha));
+
+    // Ethereal cyan-blue radial spirit glow
+    const halo = ctx.createRadialGradient(sx, sy - 6, 2, sx, sy - 6, 20);
+    halo.addColorStop(0, 'rgba(110, 238, 255, 0.48)');
+    halo.addColorStop(1, 'rgba(40, 140, 220, 0)');
+    ctx.fillStyle = halo;
+    ctx.fillRect(sx - 20, sy - 26, 40, 40);
+
+    // Flowing translucent spectral blue robe + wispy floating tail
+    ctx.fillStyle = '#38a8d8';
+    ctx.fillRect(sx - 4, sy - 11, 8, 12);
+    ctx.fillStyle = '#6be8ff';
+    ctx.fillRect(sx - 3, sy - 10, 6, 10);
+    // Wispy bottom tail
+    ctx.fillStyle = 'rgba(107, 232, 255, 0.72)';
+    ctx.fillRect(sx - 3 + wave, sy + 1, 2, 4);
+    ctx.fillRect(sx, sy + 1, 2, 6);
+    ctx.fillRect(sx + 2 - wave, sy + 1, 2, 3);
+
+    // Spectral head + glowing eyes + mini ethereal crown
+    ctx.fillStyle = '#b8f8ff';
+    ctx.fillRect(sx - 3, sy - 16, 6, 5);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(sx + (f > 0 ? 1 : -2), sy - 14, 2, 1);
+    // Floating spirit crown
+    ctx.fillStyle = '#8ef5ff';
+    ctx.fillRect(sx - 3, sy - 19, 6, 2);
+    ctx.fillRect(sx - 3, sy - 21, 1, 2);
+    ctx.fillRect(sx, sy - 22, 1, 3);
+    ctx.fillRect(sx + 2, sy - 21, 1, 2);
+
+    // Extended pointing arm + glowing index finger pointing where the horse must go!
+    const armX = f > 0 ? sx + 4 : sx - 11;
+    ctx.fillStyle = '#6be8ff';
+    ctx.fillRect(armX, sy - 9, 7, 2);
+    // Bright pointing fingertip
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(f > 0 ? sx + 11 : sx - 13, sy - 9, 3, 2);
+
+    // Subtle animated spectral chevron ahead of fingertip when guiding player
+    const m = w.monarchs[0];
+    const targetX = getTutorialTargetX(w);
+    const farFromTarget = m ? Math.abs(targetX - m.x) >= 58 : true;
+    if (farFromTarget || tut.step === 'farewell') {
+      ctx.fillStyle = '#d4fbff';
+      ctx.font = 'bold 8px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(f > 0 ? '»' : '«', sx + f * (18 + pulse), sy - 6);
+      ctx.textAlign = 'left';
+    }
+
+    ctx.restore();
+  }
+
+  private drawTutorialDialogue(ctx: CanvasRenderingContext2D, w: WorldState): void {
+    const tut = w.tutorial;
+    const m = w.monarchs[0];
+    if (!tut || !tut.active || !m) return;
+
+    const targetX = getTutorialTargetX(w);
+    const nearTarget = tut.step !== 'farewell' && Math.abs(targetX - m.x) < 58;
+
+    let text = '';
+    if (tut.step === 'light_fire') text = nearTarget ? t('tut_fire_here') : t('tut_fire_go');
+    else if (tut.step === 'recruit_wanderers') text = nearTarget ? t('tut_camp_here') : t('tut_camp_go');
+    else if (tut.step === 'buy_hammer') text = nearTarget ? t('tut_hammer_here') : t('tut_hammer_go');
+    else if (tut.step === 'build_right_wall') text = nearTarget ? t('tut_wall_r_here') : t('tut_wall_r_go');
+    else if (tut.step === 'build_left_wall') text = nearTarget ? t('tut_wall_l_here') : t('tut_wall_l_go');
+    else if (tut.step === 'buy_bow') text = nearTarget ? t('tut_bow_here') : t('tut_bow_go');
+    else text = t('tut_farewell');
+
+    const isNarrow = this.viewW < 420;
+    const baseY = isNarrow ? 66 : 36;
+    const yOff = w.activeCommand !== 'none' || w.commandFeedback ? baseY + 28 : baseY;
+    const bw = Math.min(352, this.viewW - 14);
+    const bx = Math.round((this.viewW - bw) / 2);
+
+    // Simple 2-line word-wrap for narrow mobile screens
+    const maxChars = Math.max(30, Math.floor((bw - 46) / 4.2));
+    const words = text.split(' ');
+    const lines: string[] = [];
+    let cur = '';
+    for (const word of words) {
+      if ((cur + ' ' + word).trim().length > maxChars && cur.length > 0) {
+        lines.push(cur.trim());
+        cur = word;
+      } else {
+        cur = (cur + ' ' + word).trim();
+      }
+    }
+    if (cur) lines.push(cur);
+
+    const showControls = tut.step === 'light_fire' || tut.step === 'recruit_wanderers';
+    const boxH = 14 + lines.length * 9 + (showControls ? 10 : 2);
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(7, 16, 29, 0.88)';
+    ctx.fillRect(bx, yOff, bw, boxH);
+    ctx.strokeStyle = 'rgba(110, 238, 255, 0.78)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx + 0.5, yOff + 0.5, bw - 1, boxH - 1);
+
+    // Mini glowing blue spirit icon on left
+    ctx.fillStyle = '#6be8ff';
+    ctx.fillRect(bx + 7, yOff + 7, 5, 7);
+    ctx.fillStyle = '#e0feff';
+    ctx.fillRect(bx + 8, yOff + 5, 3, 3);
+
+    // Dialogue text lines
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#d8f9ff';
+    ctx.font = 'bold 6.8px monospace';
+    lines.forEach((line, idx) => {
+      ctx.fillText(line, bx + 17, yOff + 11 + idx * 9);
+    });
+
+    if (showControls) {
+      ctx.fillStyle = '#8ec0d8';
+      ctx.font = '6px monospace';
+      ctx.fillText(t('tut_controls'), bx + 17, yOff + 11 + lines.length * 9 + 1);
+    }
+
+    // Subtle Skip button on top-right of tutorial box
+    const skipW = 28;
+    const skipX = bx + bw - skipW - 4;
+    const skipY = yOff + 4;
+    ctx.fillStyle = 'rgba(20, 36, 56, 0.85)';
+    ctx.fillRect(skipX, skipY, skipW, 11);
+    ctx.strokeStyle = 'rgba(126, 245, 255, 0.45)';
+    ctx.strokeRect(skipX + 0.5, skipY + 0.5, skipW - 1, 10);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#9fe8ff';
+    ctx.font = 'bold 5.5px monospace';
+    ctx.fillText(t('tut_skip'), skipX + skipW / 2, skipY + 7.5);
+    this.addHit('tutorial_skip', skipX - 4, skipY - 4, skipW + 8, 19);
+
+    ctx.restore();
+    ctx.textAlign = 'left';
   }
 
   private drawBanner(ctx: CanvasRenderingContext2D, w: WorldState): void {

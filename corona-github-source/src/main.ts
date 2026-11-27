@@ -13,13 +13,21 @@ import {
 } from './customization/presets';
 import { LANGUAGE_LABELS, cycleLanguage, getLanguage, t } from './i18n/translations';
 import { PixelRenderer } from './render/renderer';
-import { loadCampaign, saveCampaign } from './storage/saveSystem';
+import {
+  deleteCampaignSlot,
+  exportAllSavesJson,
+  findFirstEmptySlot,
+  importAllSavesJson,
+  loadCampaign,
+  saveCampaign,
+} from './storage/saveSystem';
 import {
   confirmCharacterSelection,
   confirmCrestAndStartCampaign,
   issueUnitCommand,
   sailToIsland,
   showBanner,
+  skipTutorial,
   stepWorld,
   triggerCoinDrop,
   triggerMountPower,
@@ -37,6 +45,7 @@ const menuPanel = document.getElementById('menu-panel') as HTMLDivElement | null
 const menuBackdrop = document.getElementById('menu-backdrop') as HTMLDivElement | null;
 const menuTitle = document.getElementById('menu-title') as HTMLDivElement | null;
 const btnResume = document.getElementById('menu-resume') as HTMLButtonElement | null;
+const btnSave = document.getElementById('menu-save') as HTMLButtonElement | null;
 const btnHome = document.getElementById('menu-home') as HTMLButtonElement | null;
 const btnMap = document.getElementById('menu-map') as HTMLButtonElement | null;
 const btnDayLen = document.getElementById('menu-daylen') as HTMLButtonElement | null;
@@ -44,8 +53,13 @@ const btnLang = document.getElementById('menu-lang') as HTMLButtonElement | null
 const btnMusic = document.getElementById('menu-music') as HTMLButtonElement | null;
 const btnSfx = document.getElementById('menu-sfx') as HTMLButtonElement | null;
 const btnFullscreen = document.getElementById('menu-fullscreen') as HTMLButtonElement | null;
+const btnExport = document.getElementById('menu-export') as HTMLButtonElement | null;
+const btnImport = document.getElementById('menu-import') as HTMLButtonElement | null;
+const importFileInput = document.getElementById('import-file-input') as HTMLInputElement | null;
 
 const lblResume = document.getElementById('lbl-resume');
+const lblSave = document.getElementById('lbl-save');
+const valSave = document.getElementById('val-save');
 const lblHome = document.getElementById('lbl-home');
 const lblMap = document.getElementById('lbl-map');
 const valMap = document.getElementById('val-map');
@@ -59,6 +73,8 @@ const lblSfx = document.getElementById('lbl-sfx');
 const valSfx = document.getElementById('val-sfx');
 const lblFullscreen = document.getElementById('lbl-fullscreen');
 const valFullscreen = document.getElementById('val-fullscreen');
+const lblExport = document.getElementById('lbl-export');
+const lblImport = document.getElementById('lbl-import');
 const lblEscHint = document.getElementById('lbl-esc-hint');
 
 const renderer = new PixelRenderer();
@@ -165,6 +181,8 @@ function updateMenuUI(): void {
 
   if (menuTitle) menuTitle.textContent = t('menu_title');
   if (lblResume) lblResume.textContent = t('menu_resume');
+  if (lblSave) lblSave.textContent = t('menu_save');
+  if (valSave) valSave.textContent = `Slot ${(world.saveSlot ?? 0) + 1}`;
   if (lblHome) lblHome.textContent = t('menu_main');
   if (lblMap) lblMap.textContent = t('menu_map');
   if (valMap) {
@@ -190,10 +208,13 @@ function updateMenuUI(): void {
     valFullscreen.textContent = fs ? t('menu_on') : t('menu_off');
     valFullscreen.classList.toggle('on', fs);
   }
+  if (lblExport) lblExport.textContent = t('menu_export');
+  if (lblImport) lblImport.textContent = t('menu_import');
   if (lblEscHint) lblEscHint.textContent = t('menu_esc_hint');
 
   const inCampaign = world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map';
   if (btnResume) btnResume.style.display = inCampaign ? 'flex' : 'none';
+  if (btnSave) btnSave.style.display = inCampaign ? 'flex' : 'none';
   if (btnMap) btnMap.style.display = inCampaign ? 'flex' : 'none';
 }
 
@@ -238,12 +259,28 @@ function clearMovementInputs(): void {
   input.cmdV = false;
 }
 
-function startNewCampaignFlow(): void {
+function openSlotManager(): void {
   sound.unlock();
   clearMovementInputs();
+  renderer.pendingDeleteSlot = null;
+  world.mode = 'slot_select';
+  sound.playCoinDrop();
+  updateMenuUI();
+}
+
+function startNewCampaignFlow(targetSlot?: number): void {
+  sound.unlock();
+  clearMovementInputs();
+  const slot = typeof targetSlot === 'number' ? targetSlot : findFirstEmptySlot();
+  if (slot < 0) {
+    // All 8 slots are occupied — let the player pick or delete one in the 8-slot manager!
+    openSlotManager();
+    return;
+  }
   renderer.charSelectFocusRow = 0;
   renderer.crestSelectFocusRow = 0;
-  world = createInitialWorld('char_select', defaultAppearance(), defaultCrest());
+  renderer.pendingDeleteSlot = null;
+  world = createInitialWorld('char_select', defaultAppearance(), defaultCrest(), slot);
   world.selectTimer = 20;
   fitCanvas();
   sound.playCoinPickup();
@@ -251,26 +288,33 @@ function startNewCampaignFlow(): void {
   canvas.focus();
 }
 
-function loadSavedCampaignFlow(): void {
+function loadSavedCampaignFlow(slotIndex?: number): void {
   sound.unlock();
   clearMovementInputs();
-  const loaded = loadCampaign();
+  const loaded = loadCampaign(slotIndex);
   if (!loaded) return;
+  renderer.pendingDeleteSlot = null;
   world = loaded;
   fitCanvas();
   sound.playHorn(false);
-  showBanner(world, `${t('load_campaign')} — ${t('day_short')} ${world.day}`, t('subtitle'), world.crest.secondaryColor);
+  showBanner(
+    world,
+    `SLOT ${world.saveSlot + 1} — ${t('day_short')} ${world.day}`,
+    t('subtitle'),
+    world.crest.secondaryColor
+  );
   updateMenuUI();
   canvas.focus();
 }
 
 function goToLogin(): void {
-  if (world.mode === 'playing' || world.mode === 'paused') {
+  if (world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map') {
     saveCampaign(world);
   }
   pausedByMenu = false;
   setMenuOpen(false);
   clearMovementInputs();
+  renderer.pendingDeleteSlot = null;
   world = createInitialWorld('login');
   fitCanvas();
   updateMenuUI();
@@ -328,6 +372,10 @@ function handleCanvasHit(hitId: string): boolean {
     startNewCampaignFlow();
     return true;
   }
+  if (hitId === 'login_slots') {
+    openSlotManager();
+    return true;
+  }
   if (hitId === 'login_load') {
     loadSavedCampaignFlow();
     return true;
@@ -335,6 +383,38 @@ function handleCanvasHit(hitId: string): boolean {
   if (hitId === 'pause_menu' || hitId === 'gameover_menu') {
     goToLogin();
     return true;
+  }
+
+  if (world.mode === 'slot_select') {
+    if (hitId === 'slot_back') {
+      renderer.pendingDeleteSlot = null;
+      world.mode = 'login';
+      sound.playCoinDrop();
+      updateMenuUI();
+      return true;
+    }
+    if (hitId.startsWith('slot_del_')) {
+      const idx = Number(hitId.replace('slot_del_', ''));
+      if (renderer.pendingDeleteSlot === idx) {
+        deleteCampaignSlot(idx);
+        renderer.pendingDeleteSlot = null;
+        sound.playHit();
+      } else {
+        renderer.pendingDeleteSlot = idx;
+        sound.playCoinDrop();
+      }
+      return true;
+    }
+    if (hitId.startsWith('slot_load_')) {
+      const idx = Number(hitId.replace('slot_load_', ''));
+      loadSavedCampaignFlow(idx);
+      return true;
+    }
+    if (hitId.startsWith('slot_new_')) {
+      const idx = Number(hitId.replace('slot_new_', ''));
+      startNewCampaignFlow(idx);
+      return true;
+    }
   }
 
   if (world.mode === 'playing') {
@@ -365,6 +445,11 @@ function handleCanvasHit(hitId: string): boolean {
     }
     if (hitId === 'hud_mount_power') {
       triggerMountPower(world);
+      return true;
+    }
+    if (hitId === 'tutorial_skip') {
+      skipTutorial(world);
+      sound.playCoinDrop();
       return true;
     }
   }
@@ -562,6 +647,14 @@ btnResume?.addEventListener('click', () => {
   updateMenuUI();
 });
 
+btnSave?.addEventListener('click', () => {
+  saveCampaign(world);
+  sound.playBuildComplete();
+  setMenuOpen(false);
+  showBanner(world, `CAMPANHA SALVA (SLOT ${world.saveSlot + 1})`, 'Progresso salvo no navegador!', '#82e08a');
+  updateMenuUI();
+});
+
 btnHome?.addEventListener('click', () => {
   goToLogin();
 });
@@ -604,6 +697,61 @@ btnFullscreen?.addEventListener('click', () => {
   void toggleFullscreen();
 });
 
+btnExport?.addEventListener('click', () => {
+  if (world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map') {
+    saveCampaign(world);
+  }
+  const json = exportAllSavesJson();
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'corona-saves-backup.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  sound.playBuildComplete();
+  setMenuOpen(false);
+  if (world.mode === 'playing') {
+    showBanner(world, 'BACKUP EXPORTADO!', 'Arquivo corona-saves-backup.json salvo!', '#7ef5ff');
+  }
+});
+
+btnImport?.addEventListener('click', () => {
+  importFileInput?.click();
+});
+
+importFileInput?.addEventListener('change', () => {
+  const file = importFileInput.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const imported = importAllSavesJson(String(reader.result ?? ''));
+    importFileInput.value = '';
+    setMenuOpen(false);
+    if (imported > 0) {
+      sound.playHorn(false);
+      openSlotManager();
+    } else {
+      sound.playHit();
+    }
+  };
+  reader.readAsText(file);
+});
+
+// Auto-save whenever the user closes the tab, refreshes, or minimizes on mobile!
+function autoSaveActiveCampaign(): void {
+  if (world.crest.locked && (world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map')) {
+    saveCampaign(world);
+  }
+}
+window.addEventListener('pagehide', autoSaveActiveCampaign);
+window.addEventListener('beforeunload', autoSaveActiveCampaign);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') autoSaveActiveCampaign();
+});
+
 document.addEventListener('fullscreenchange', () => {
   updateMenuUI();
   setTimeout(fitCanvas, 50);
@@ -636,6 +784,12 @@ window.addEventListener('keydown', (e) => {
     }
     if (menuOpen) {
       setMenuOpen(false);
+      return;
+    }
+    if (world.mode === 'slot_select') {
+      renderer.pendingDeleteSlot = null;
+      world.mode = 'login';
+      updateMenuUI();
       return;
     }
     if (world.mode === 'world_map') {

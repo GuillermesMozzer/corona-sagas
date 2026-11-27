@@ -6,6 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>Corona — Sagas do Norte</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' shape-rendering='crispEdges'%3E%3Crect width='32' height='32' rx='6' fill='%2307101c'/%3E%3Crect x='4' y='19' width='24' height='6' fill='%23f7c948'/%3E%3Crect x='4' y='11' width='5' height='8' fill='%23f7c948'/%3E%3Crect x='14' y='7' width='4' height='12' fill='%23f7c948'/%3E%3Crect x='23' y='11' width='5' height='8' fill='%23f7c948'/%3E%3Crect x='6' y='21' width='20' height='2' fill='%23fff5bd'/%3E%3C/svg%3E" />
   <style>
     * {
       box-sizing: border-box;
@@ -98,6 +99,8 @@
       right: max(8px, env(safe-area-inset-right));
       width: 264px;
       max-width: calc(100vw - 16px);
+      max-height: calc(100dvh - 64px);
+      overflow-y: auto;
       background: rgba(9, 15, 25, 0.96);
       border: 1px solid rgba(239, 196, 98, 0.55);
       border-radius: 8px;
@@ -182,12 +185,16 @@
       <button id="menu-resume" class="menu-item primary" style="display:none;">
         <span id="lbl-resume">Continuar Jogo</span>
       </button>
+      <button id="menu-save" class="menu-item" style="display:none;">
+        <span id="lbl-save">Salvar Agora</span>
+        <span id="val-save" class="menu-badge on">Slot 1</span>
+      </button>
       <button id="menu-home" class="menu-item">
         <span id="lbl-home">Voltar ao Menu Principal</span>
       </button>
       <button id="menu-map" class="menu-item" style="display:none;">
         <span id="lbl-map">Mapa das Ilhas</span>
-        <span id="val-map" class="menu-badge on">Ilha I</span>
+        <span id="val-map" class="menu-badge on">I/VII</span>
       </button>
       <button id="menu-daylen" class="menu-item">
         <span id="lbl-daylen">Dia / Noite</span>
@@ -209,6 +216,15 @@
         <span id="lbl-fullscreen">Tela Cheia</span>
         <span id="val-fullscreen" class="menu-badge">OFF</span>
       </button>
+      <button id="menu-export" class="menu-item">
+        <span id="lbl-export">Exportar Backup</span>
+        <span class="menu-badge">.JSON</span>
+      </button>
+      <button id="menu-import" class="menu-item">
+        <span id="lbl-import">Importar Backup</span>
+        <span class="menu-badge">.JSON</span>
+      </button>
+      <input id="import-file-input" type="file" accept=".json,application/json" style="display:none;" />
       <div id="lbl-esc-hint" class="menu-hint">ESC ou toque aqui para sair da Tela Cheia</div>
     </div>
   </div>

@@ -13,6 +13,7 @@ export const MAX_CREW_PER_CLASS = 4;
 
 export type GameMode =
   | 'login'
+  | 'slot_select'
   | 'char_select'
   | 'crest_select'
   | 'playing'
@@ -472,8 +473,31 @@ export interface TouchIndicator {
   timer: number;
 }
 
+export type TutorialStep =
+  | 'light_fire'
+  | 'recruit_wanderers'
+  | 'buy_hammer'
+  | 'build_right_wall'
+  | 'build_left_wall'
+  | 'buy_bow'
+  | 'farewell';
+
+export interface TutorialState {
+  active: boolean;
+  step: TutorialStep;
+  spiritX: number;
+  spiritY: number;
+  spiritFacing: 1 | -1;
+  spiritAlpha: number;
+  fadeCycle: number;
+  farewellTimer: number;
+  bowTributeGiven: boolean;
+}
+
 export interface WorldState {
   mode: GameMode;
+  saveSlot: number;
+  tutorial: TutorialState | null;
   worldMapContext: 'inspect' | 'sail';
   viewWidth: number;
   viewHeight: number;
