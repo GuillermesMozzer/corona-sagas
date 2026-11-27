@@ -19,6 +19,7 @@ import {
   getDocs,
   getFirestore,
   increment,
+  initializeFirestore,
   limit,
   orderBy,
   query,
@@ -389,7 +390,11 @@ export function initGoogleAuthCloud(): void {
   try {
     app = initializeApp(FIREBASE_CONFIG);
     auth = getAuth(app);
-    db = getFirestore(app);
+    try {
+      db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
+    } catch {
+      db = getFirestore(app);
+    }
     if (FIREBASE_CONFIG.measurementId) {
       void isAnalyticsSupported()
         .then((ok) => {

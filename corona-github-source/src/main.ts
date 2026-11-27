@@ -1660,7 +1660,7 @@ btnZoomIn?.addEventListener('click', () => {
 
 // Co-op Online Menu Controls (Host open/close, Guest leave, Copy Code)
 const coopMenuStatus = document.getElementById('coop-menu-status') as HTMLDivElement | null;
-function setCoopMenuStatus(msg: string | null): void {
+function setCoopMenuStatus(msg: string | null, isError = true): void {
   if (!coopMenuStatus) return;
   if (!msg) {
     coopMenuStatus.style.display = 'none';
@@ -1668,6 +1668,9 @@ function setCoopMenuStatus(msg: string | null): void {
   } else {
     coopMenuStatus.style.display = 'block';
     coopMenuStatus.textContent = msg;
+    coopMenuStatus.style.borderColor = isError ? '#e06774' : '#efc462';
+    coopMenuStatus.style.background = isError ? '#36131b' : '#26200c';
+    coopMenuStatus.style.color = isError ? '#ffd5da' : '#ffe58a';
   }
 }
 
@@ -1683,17 +1686,18 @@ btnCoopHostToggle?.addEventListener('click', async () => {
     return;
   }
   if (btnCoopHostToggle) btnCoopHostToggle.disabled = true;
-  if (valCoopHost) valCoopHost.textContent = '...';
-  const res = await hostOpenCoopRoom(world);
+  setCoopMenuStatus('Gerando código Co-op...', false);
+  const res = await hostOpenCoopRoom(world, (stepMsg) => setCoopMenuStatus(stepMsg, false));
   if (btnCoopHostToggle) btnCoopHostToggle.disabled = false;
   if (!res.ok || !res.code) {
     sound.playHit();
     const errMsg = res.error ?? 'Conecte sua conta Google para abrir o Co-op.';
-    setCoopMenuStatus(errMsg);
+    setCoopMenuStatus(errMsg, true);
     showBanner(world, 'CO-OP INDISPONÍVEL', errMsg, '#ff8a65');
     updateMenuUI();
     return;
   }
+  setCoopMenuStatus(null);
   // Immediately resume live world so Host broadcasts live state to guests while viewing the code!
   if (world.mode === 'paused' && pausedByMenu) {
     world.mode = 'playing';

@@ -197,6 +197,24 @@ export function normalizeRoomCode(raw: string): string {
   return raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, ms);
+    promise.then(
+      (val) => {
+        window.clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 /**
  * Checks whether the currently signed-in Google account is banned from the Co-op community.
  */
@@ -205,7 +223,11 @@ export async function checkMyCommunityBan(): Promise<{ banned: boolean; reason?:
   const user = authCloudState.user;
   if (!db || !user) return { banned: false };
   try {
-    const snap = await getDoc(doc(db, 'community_bans', user.uid));
+    const snap = await withTimeout(
+      getDoc(doc(db, 'community_bans', user.uid)),
+      2500,
+      'timeout-ban-check'
+    );
     if (!snap.exists()) return { banned: false };
     const data = snap.data() as Record<string, unknown>;
     if (data.banned === true) {
@@ -215,7 +237,7 @@ export async function checkMyCommunityBan(): Promise<{ banned: boolean; reason?:
       };
     }
   } catch {
-    // Allow check to fail gracefully if offline
+    // Allow check to fail gracefully if offline or timed out
   }
   return { banned: false };
 }
@@ -521,12 +543,19 @@ function subscribeCommonRoomChannels(code: string, myUid: string): void {
 /**
  * HOST ONLY: Opens the player's current campaign to online Co-op (up to 4 players) and generates a room code.
  */
-export async function hostOpenCoopRoom(world: WorldState): Promise<{ ok: boolean; code?: string; error?: string }> {
+export async function hostOpenCoopRoom(
+  world: WorldState,
+  onProgress?: (msg: string) => void
+): Promise<{ ok: boolean; code?: string; error?: string }> {
   const user = authCloudState.user;
   const db = getFirestoreDb();
-  if (!user || !db) {
+  if (!user) {
     return { ok: false, error: 'Conecte sua conta Google para abrir o Co-op online.' };
   }
+  if (!db) {
+    return { ok: false, error: 'Banco Firestore não inicializado. Recarregue a página.' };
+  }
+  onProgress?.('Verificando conta...');
   const ban = await checkMyCommunityBan();
   if (ban.banned) {
     return {
@@ -540,6 +569,7 @@ export async function hostOpenCoopRoom(world: WorldState): Promise<{ ok: boolean
 
   resetCoopState(true);
   const code = generateRoomCode();
+  onProgress?.(`Criando sala ${code}...`);
 
   const safeAppearance = sanitizeAppearance(world.appearance);
   const safeName = user.displayName || safeAppearance.name || 'Monarca';
@@ -554,31 +584,47 @@ export async function hostOpenCoopRoom(world: WorldState): Promise<{ ok: boolean
   }
   world.localPlayerUid = user.uid;
 
+  let snapshotJson = '{}';
   try {
-    await setDoc(doc(db, 'coop_rooms', code), {
-      code,
-      hostUid: user.uid,
-      hostEmail: safeEmail,
-      hostName: safeName,
-      hostPhoto: safePhoto,
-      active: true,
-      maxPlayers: MAX_COOP_PLAYERS,
-      kickedUids: [],
-      worldSnapshotJson: makeSlimSnapshot(world),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+    snapshotJson = makeSlimSnapshot(world);
+  } catch (snapErr) {
+    console.warn('[Corona Co-op] Snapshot stringify fallback:', snapErr);
+    snapshotJson = '{}';
+  }
 
-    await setDoc(doc(db, 'coop_rooms', code, 'members', user.uid), {
-      uid: user.uid,
-      email: safeEmail,
-      displayName: safeName,
-      photoURL: safePhoto,
-      role: 'host',
-      appearance: safeAppearance,
-      micOn: Boolean(coopState.micOn),
-      joinedAtMs: Date.now(),
-    });
+  try {
+    await withTimeout(
+      setDoc(doc(db, 'coop_rooms', code), {
+        code,
+        hostUid: user.uid,
+        hostEmail: safeEmail,
+        hostName: safeName,
+        hostPhoto: safePhoto,
+        active: true,
+        maxPlayers: MAX_COOP_PLAYERS,
+        kickedUids: [],
+        worldSnapshotJson: snapshotJson,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+      9000,
+      'timeout-create-room'
+    );
+
+    await withTimeout(
+      setDoc(doc(db, 'coop_rooms', code, 'members', user.uid), {
+        uid: user.uid,
+        email: safeEmail,
+        displayName: safeName,
+        photoURL: safePhoto,
+        role: 'host',
+        appearance: safeAppearance,
+        micOn: Boolean(coopState.micOn),
+        joinedAtMs: Date.now(),
+      }),
+      9000,
+      'timeout-create-member'
+    );
 
     coopState.active = true;
     coopState.role = 'host';
@@ -611,12 +657,15 @@ export async function hostOpenCoopRoom(world: WorldState): Promise<{ ok: boolean
     console.warn('[Corona Co-op] Failed to open room:', err);
     resetCoopState(true);
     const errCode = (err as { code?: string })?.code ?? '';
+    const errMsg = (err as { message?: string })?.message ?? '';
     const detail =
       errCode === 'permission-denied'
         ? 'Permissão negada no Firestore (publique as Regras do Firestore).'
-        : errCode
-          ? `Erro ao criar sala (${errCode}).`
-          : 'Não foi possível criar a sala Co-op. Verifique sua conexão.';
+        : errMsg.startsWith('timeout-')
+          ? 'Tempo esgotado no Firestore. Verifique sua internet ou Regras do Firestore.'
+          : errCode
+            ? `Erro Firebase (${errCode}): ${errMsg.slice(0, 80)}`
+            : `Erro ao criar sala: ${errMsg.slice(0, 90) || 'verifique sua conexão.'}`;
     return { ok: false, error: detail };
   }
 }
