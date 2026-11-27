@@ -409,7 +409,40 @@ export class PixelRenderer {
     const pulse = 0.6 + 0.4 * Math.sin(w.elapsed * 3);
     ctx.fillStyle = `rgba(205, 224, 242, ${pulse.toFixed(2)})`;
     ctx.font = '7px monospace';
-    ctx.fillText(t('login_hint'), cx, by3 + 35);
+    ctx.fillText(t('login_hint'), cx, by3 + 33);
+
+    // Google Technology Disclaimer Badge with Pixel-Art Google "G" Logo
+    const gText = t('google_tech_disclaimer');
+    const isNarrow = this.viewW < 260;
+    ctx.font = isNarrow ? 'bold 5.5px monospace' : 'bold 6.5px monospace';
+    const gTextW = Math.ceil(ctx.measureText(gText).width);
+    const badgeH = 16;
+    const badgeW = Math.min(this.viewW - 14, gTextW + 24);
+    const badgeX = Math.round(cx - badgeW / 2);
+    const badgeY = this.viewW < 390 ? this.viewH - 38 : this.viewH - 32;
+
+    ctx.fillStyle = 'rgba(9, 16, 28, 0.86)';
+    ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+    ctx.strokeStyle = 'rgba(205, 226, 245, 0.28)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(badgeX + 0.5, badgeY + 0.5, badgeW - 1, badgeH - 1);
+
+    // Subtle 4-color Google accent hairline on top edge of badge
+    const segW = Math.floor((badgeW - 2) / 4);
+    ctx.fillStyle = '#4285F4';
+    ctx.fillRect(badgeX + 1, badgeY + 1, segW, 1);
+    ctx.fillStyle = '#EA4335';
+    ctx.fillRect(badgeX + 1 + segW, badgeY + 1, segW, 1);
+    ctx.fillStyle = '#FBBC05';
+    ctx.fillRect(badgeX + 1 + segW * 2, badgeY + 1, segW, 1);
+    ctx.fillStyle = '#34A853';
+    ctx.fillRect(badgeX + 1 + segW * 3, badgeY + 1, badgeW - 2 - segW * 3, 1);
+
+    this.drawPixelGoogleLogo(ctx, badgeX + 4, badgeY + 3);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#e6f1fc';
+    ctx.fillText(gText, badgeX + 18, badgeY + 11, badgeW - 22);
+    ctx.textAlign = 'center';
 
     // Subtle creator & inspiration credit in small letters at the bottom footer
     ctx.fillStyle = 'rgba(186, 208, 228, 0.72)';
@@ -425,6 +458,39 @@ export class PixelRenderer {
       );
     }
     ctx.textAlign = 'left';
+  }
+
+  private drawPixelGoogleLogo(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+    const rx = Math.round(x);
+    const ry = Math.round(y);
+    // Crisp 11x11 rounded white pixel backing
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(rx + 1, ry, 9, 11);
+    ctx.fillRect(rx, ry + 1, 11, 9);
+
+    // 7x7 iconic 4-color pixel-art Google "G" centered at (rx + 2, ry + 2)
+    // Red (#EA4335) — top arc
+    ctx.fillStyle = '#EA4335';
+    ctx.fillRect(rx + 3, ry + 2, 4, 1);
+    ctx.fillRect(rx + 2, ry + 3, 2, 1);
+    ctx.fillRect(rx + 7, ry + 3, 1, 1);
+
+    // Yellow (#FBBC05) — left arc
+    ctx.fillStyle = '#FBBC05';
+    ctx.fillRect(rx + 2, ry + 4, 2, 2);
+
+    // Green (#34A853) — bottom-left & bottom arc
+    ctx.fillStyle = '#34A853';
+    ctx.fillRect(rx + 2, ry + 6, 2, 1);
+    ctx.fillRect(rx + 3, ry + 7, 2, 1);
+    ctx.fillRect(rx + 4, ry + 8, 3, 1);
+
+    // Blue (#4285F4) — right crossbar & lower-right arc
+    ctx.fillStyle = '#4285F4';
+    ctx.fillRect(rx + 5, ry + 5, 4, 1);
+    ctx.fillRect(rx + 8, ry + 6, 1, 1);
+    ctx.fillRect(rx + 7, ry + 7, 2, 1);
+    ctx.fillRect(rx + 7, ry + 8, 1, 1);
   }
 
   private drawPixelStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, s = 1, glow = false): void {

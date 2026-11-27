@@ -194,6 +194,7 @@ const DICT: Record<Language, Record<string, string>> = {
     fb_reward_banner_sub: 'Obrigado por avaliar Corona — Sagas do Norte!',
     fb_saved_for_next: '+3 ◆ garantidos na sua campanha!',
     fb_not_configured: 'Link do Google Forms ainda não configurado',
+    google_tech_disclaimer: 'Jogo 100% desenvolvido com tecnologia da Google',
   },
   en: {
     subtitle: 'NORTHERN SAGAS',
@@ -348,6 +349,7 @@ const DICT: Record<Language, Record<string, string>> = {
     fb_reward_banner_sub: 'Thank you for rating Corona — Northern Sagas!',
     fb_saved_for_next: '+3 ◆ saved for your campaign!',
     fb_not_configured: 'Google Form link not configured yet',
+    google_tech_disclaimer: 'Game 100% built with Google technology',
   },
   es: {
     subtitle: 'SAGAS DEL NORTE',
@@ -502,6 +504,7 @@ const DICT: Record<Language, Record<string, string>> = {
     fb_reward_banner_sub: '¡Gracias por calificar Corona — Sagas del Norte!',
     fb_saved_for_next: '¡+3 ◆ guardados para tu campaña!',
     fb_not_configured: 'Enlace de Google Forms aún no configurado',
+    google_tech_disclaimer: 'Juego 100% desarrollado con tecnología de Google',
   },
 };
 
