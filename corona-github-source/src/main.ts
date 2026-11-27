@@ -46,6 +46,30 @@ import {
   type PlayerMetricRow,
 } from './cloud/googleAuthCloud';
 import {
+  MAX_COOP_PLAYERS,
+  adminUnbanCommunityPlayer,
+  coopState,
+  fetchCommunityBans,
+  guestSyncCoopFrame,
+  hostCloseCoopRoom,
+  hostKickCoopPlayer,
+  hostOpenCoopRoom,
+  hostSyncCoopWorld,
+  joinCoopRoomAsGuest,
+  leaveCoopAsGuest,
+  reportAndBanCoopPlayer,
+  sendCoopChatMessage,
+  setCoopChatOpen,
+  setGuestForceExitHandler,
+  subscribeCoop,
+  toggleCoopMicrophone,
+  validateCoopJoinCode,
+  type CommunityBanRecord,
+  type CoopMember,
+} from './cloud/coopSystem';
+import { type CommunityReportReason } from './config/reportForm';
+import {
+  computeActivePrompt,
   confirmCharacterSelection,
   confirmCrestAndStartCampaign,
   issueUnitCommand,
@@ -164,6 +188,17 @@ const btnDayLen = document.getElementById('menu-daylen') as HTMLButtonElement | 
 const btnLang = document.getElementById('menu-lang') as HTMLButtonElement | null;
 const btnMusic = document.getElementById('menu-music') as HTMLButtonElement | null;
 const btnSfx = document.getElementById('menu-sfx') as HTMLButtonElement | null;
+const btnMusicVolDown = document.getElementById('btn-music-vol-down') as HTMLButtonElement | null;
+const btnMusicVolUp = document.getElementById('btn-music-vol-up') as HTMLButtonElement | null;
+const musicVolBars = document.getElementById('music-vol-bars') as HTMLDivElement | null;
+const valMusicVol = document.getElementById('val-music-vol');
+const btnSfxVolDown = document.getElementById('btn-sfx-vol-down') as HTMLButtonElement | null;
+const btnSfxVolUp = document.getElementById('btn-sfx-vol-up') as HTMLButtonElement | null;
+const sfxVolBars = document.getElementById('sfx-vol-bars') as HTMLDivElement | null;
+const valSfxVol = document.getElementById('val-sfx-vol');
+const btnZoomOut = document.getElementById('btn-zoom-out') as HTMLButtonElement | null;
+const btnZoomIn = document.getElementById('btn-zoom-in') as HTMLButtonElement | null;
+const valZoom = document.getElementById('val-zoom');
 const btnFullscreen = document.getElementById('menu-fullscreen') as HTMLButtonElement | null;
 const btnAdmin = document.getElementById('menu-admin') as HTMLButtonElement | null;
 const btnExport = document.getElementById('menu-export') as HTMLButtonElement | null;
@@ -171,6 +206,42 @@ const btnImport = document.getElementById('menu-import') as HTMLButtonElement | 
 const btnSignout = document.getElementById('menu-signout') as HTMLButtonElement | null;
 const importFileInput = document.getElementById('import-file-input') as HTMLInputElement | null;
 const charNameInput = document.getElementById('char-name-input') as HTMLInputElement | null;
+
+// Co-op Menu, Quick Rail (Chat + Mic), Chat Drawer, Join & Report Modal DOM elements
+const menuCoopSectionLbl = document.getElementById('menu-coop-section-lbl');
+const btnCoopHostToggle = document.getElementById('menu-coop-host-toggle') as HTMLButtonElement | null;
+const lblCoopHost = document.getElementById('lbl-coop-host');
+const valCoopHost = document.getElementById('val-coop-host');
+const btnCoopGuestLeave = document.getElementById('menu-coop-guest-leave') as HTMLButtonElement | null;
+const coopMenuBox = document.getElementById('coop-menu-box') as HTMLDivElement | null;
+const coopRoomCodeVal = document.getElementById('coop-room-code-val');
+const btnCoopCopyCode = document.getElementById('btn-coop-copy-code') as HTMLButtonElement | null;
+const coopMembersList = document.getElementById('coop-members-list') as HTMLDivElement | null;
+
+const coopQuickRail = document.getElementById('coop-quick-rail') as HTMLDivElement | null;
+const btnCoopChat = document.getElementById('btn-coop-chat') as HTMLButtonElement | null;
+const btnCoopMic = document.getElementById('btn-coop-mic') as HTMLButtonElement | null;
+const chatUnreadDot = document.getElementById('chat-unread-dot');
+const coopChatPanel = document.getElementById('coop-chat-panel') as HTMLDivElement | null;
+const coopChatTitle = document.getElementById('coop-chat-title');
+const coopChatClose = document.getElementById('coop-chat-close') as HTMLButtonElement | null;
+const coopChatMessages = document.getElementById('coop-chat-messages') as HTMLDivElement | null;
+const coopChatForm = document.getElementById('coop-chat-form') as HTMLFormElement | null;
+const coopChatInput = document.getElementById('coop-chat-input') as HTMLInputElement | null;
+
+const coopJoinModal = document.getElementById('coop-join-modal') as HTMLDivElement | null;
+const coopJoinCodeInput = document.getElementById('coop-join-code-input') as HTMLInputElement | null;
+const coopJoinStatus = document.getElementById('coop-join-status');
+const btnCoopJoinCancel = document.getElementById('btn-coop-join-cancel') as HTMLButtonElement | null;
+const btnCoopJoinGo = document.getElementById('btn-coop-join-go') as HTMLButtonElement | null;
+
+const coopReportModal = document.getElementById('coop-report-modal') as HTMLDivElement | null;
+const coopReportTargetInfo = document.getElementById('coop-report-target-info');
+const coopReportReasons = document.getElementById('coop-report-reasons');
+const coopReportDetails = document.getElementById('coop-report-details') as HTMLTextAreaElement | null;
+const coopReportStatus = document.getElementById('coop-report-status');
+const btnCoopReportCancel = document.getElementById('btn-coop-report-cancel') as HTMLButtonElement | null;
+const btnCoopReportConfirm = document.getElementById('btn-coop-report-confirm') as HTMLButtonElement | null;
 
 // Google First-Login Gate & User Badge DOM elements
 const googleLoginGate = document.getElementById('google-login-gate') as HTMLDivElement | null;
@@ -184,12 +255,17 @@ const googleUserAvatar = document.getElementById('google-user-avatar') as HTMLIm
 const googleUserName = document.getElementById('google-user-name');
 const googleUserSync = document.getElementById('google-user-sync');
 
-// Admin Players Dashboard DOM elements
+// Admin Players & Moderation Dashboard DOM elements
 const adminModal = document.getElementById('admin-modal') as HTMLDivElement | null;
+const adminTabPlayers = document.getElementById('admin-tab-players') as HTMLButtonElement | null;
+const adminTabBans = document.getElementById('admin-tab-bans') as HTMLButtonElement | null;
 const adminRefresh = document.getElementById('admin-refresh') as HTMLButtonElement | null;
 const adminClose = document.getElementById('admin-close') as HTMLButtonElement | null;
 const adminKpis = document.getElementById('admin-kpis');
+const adminTableWrap = document.getElementById('admin-table-wrap') as HTMLDivElement | null;
 const adminTbody = document.getElementById('admin-tbody');
+const adminBansWrap = document.getElementById('admin-bans-wrap') as HTMLDivElement | null;
+const adminBansTbody = document.getElementById('admin-bans-tbody');
 
 const lblResume = document.getElementById('lbl-resume');
 const lblSave = document.getElementById('lbl-save');
@@ -202,9 +278,7 @@ const valDayLen = document.getElementById('val-daylen');
 const lblLang = document.getElementById('lbl-lang');
 const valLang = document.getElementById('val-lang');
 const lblMusic = document.getElementById('lbl-music');
-const valMusic = document.getElementById('val-music');
 const lblSfx = document.getElementById('lbl-sfx');
-const valSfx = document.getElementById('val-sfx');
 const lblFullscreen = document.getElementById('lbl-fullscreen');
 const valFullscreen = document.getElementById('val-fullscreen');
 const lblAdmin = document.getElementById('lbl-admin');
@@ -218,7 +292,50 @@ const renderer = new PixelRenderer();
 let world: WorldState = createInitialWorld('login');
 let menuOpen = false;
 let adminOpen = false;
+let adminActiveTab: 'players' | 'bans' = 'players';
 let pausedByMenu = false;
+
+// Co-op modal & join flow state
+let joinModalOpen = false;
+let pendingCoopJoinCode: string | null = null;
+let reportModalOpen = false;
+let reportTargetMember: CoopMember | null = null;
+let selectedReportReason: CommunityReportReason = 'Assédio sexual';
+
+// Smooth Camera Zoom In / Zoom Out (persisted in localStorage)
+const ZOOM_KEY = 'corona_zoom_v1';
+const ZOOM_STEPS = [0.75, 0.85, 1.0, 1.15, 1.3, 1.45];
+let targetZoom = 1.0;
+try {
+  const savedZ = Number(window.localStorage.getItem(ZOOM_KEY) ?? '1');
+  if (Number.isFinite(savedZ) && savedZ >= 0.7 && savedZ <= 1.5) {
+    targetZoom = savedZ;
+  }
+} catch {
+  // Ignore storage errors
+}
+let currentZoom = targetZoom;
+
+function adjustCameraZoom(deltaStep: -1 | 1): void {
+  let closestIdx = 0;
+  let bestDiff = 99;
+  ZOOM_STEPS.forEach((z, idx) => {
+    const diff = Math.abs(z - targetZoom);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      closestIdx = idx;
+    }
+  });
+  const nextIdx = Math.max(0, Math.min(ZOOM_STEPS.length - 1, closestIdx + deltaStep));
+  targetZoom = ZOOM_STEPS[nextIdx];
+  try {
+    window.localStorage.setItem(ZOOM_KEY, String(targetZoom));
+  } catch {
+    // Ignore
+  }
+  sound.playCoinDrop();
+  updateMenuUI();
+}
 
 const input: InputState = {
   left: false,
@@ -252,27 +369,28 @@ const DOUBLE_TAP_MS = 340;
 
 /**
  * Dynamically matches the internal pixel-art buffer to 100% of the device's usable width & height
- * (portrait phone, landscape phone, tablet, laptop, or full-screen monitor) with zero stretching or black bars.
+ * and smoothly applies user Zoom In / Zoom Out while keeping pixels crisp and square.
  */
 function fitCanvas(): void {
   const rect = canvas.getBoundingClientRect();
   const vw = Math.max(160, Math.round(rect.width || window.innerWidth));
   const vh = Math.max(160, Math.round(rect.height || window.innerHeight));
   const aspect = vw / vh;
+  const zoom = world.mode === 'playing' || world.mode === 'paused' ? currentZoom : 1.0;
 
   let logicalW: number;
   let logicalH: number;
 
   if (aspect >= 1.15) {
     // Landscape (laptop, desktop, ultrawide, phone landscape, tablet landscape)
-    logicalH = 270;
-    logicalW = Math.max(310, Math.min(720, Math.round(logicalH * aspect)));
+    logicalH = Math.max(180, Math.min(390, Math.round(270 / zoom)));
+    logicalW = Math.max(240, Math.min(920, Math.round(logicalH * aspect)));
   } else {
     // Portrait or square (phone portrait, narrow window)
-    logicalW = Math.max(252, Math.min(340, Math.round(vw / Math.max(1.25, vw / 270))));
-    logicalH = Math.max(270, Math.min(540, Math.round(logicalW / Math.max(0.42, aspect))));
-    // Keep exact viewport aspect ratio so pixels remain 100% square
-    logicalW = Math.max(230, Math.round(logicalH * aspect));
+    const baseW = Math.max(252, Math.min(340, Math.round(vw / Math.max(1.25, vw / 270))));
+    const baseH = Math.max(270, Math.min(540, Math.round(baseW / Math.max(0.42, aspect))));
+    logicalH = Math.max(190, Math.min(640, Math.round(baseH / zoom)));
+    logicalW = Math.max(190, Math.round(logicalH * aspect));
   }
 
   const dpr = Math.min(2.5, Math.max(1, window.devicePixelRatio || 1));
@@ -386,17 +504,98 @@ function renderAdminTable(rows: PlayerMetricRow[]): void {
     .join('');
 }
 
+function renderAdminBansTable(bans: CommunityBanRecord[]): void {
+  if (!adminBansTbody) return;
+  if (bans.length === 0) {
+    adminBansTbody.innerHTML =
+      '<tr><td colspan="5" style="text-align:center;color:#8aa4bc;">Nenhuma denúncia registrada na comunidade.</td></tr>';
+    return;
+  }
+  adminBansTbody.innerHTML = bans
+    .map((b) => {
+      const dateStr = b.createdAtMs ? new Date(b.createdAtMs).toLocaleString('pt-BR') : '—';
+      const mailtoHref = `mailto:${encodeURIComponent(b.email)},${encodeURIComponent(b.reporterEmail)}?subject=${encodeURIComponent(`Corona Sagas — Análise de Denúncia (${b.reason})`)}`;
+      return `
+        <tr>
+          <td>
+            <div style="font-weight:700;color:#fff4d1;">${escapeHtml(b.displayName)}</div>
+            <div style="font-size:10px;color:#ffadb6;">${escapeHtml(b.email)}</div>
+          </td>
+          <td>
+            <div style="font-weight:700;color:#cfe7fc;">${escapeHtml(b.reporterName)}</div>
+            <div style="font-size:10px;color:#8aa4bc;">${escapeHtml(b.reporterEmail)}</div>
+          </td>
+          <td style="white-space:normal;min-width:160px;">
+            <div style="font-weight:700;color:#ffe58a;">${escapeHtml(b.reason)}</div>
+            ${b.details ? `<div style="font-size:10px;color:#c2d7eb;">${escapeHtml(b.details)}</div>` : ''}
+            <div style="font-size:9px;color:#7e98b2;">${escapeHtml(dateStr)} · Sala ${escapeHtml(b.roomCode)}</div>
+          </td>
+          <td>
+            <span class="status-pill ${b.banned ? 'status-banned' : 'status-playing'}">
+              ${b.banned ? 'BANIDO' : 'AUTORIZADO'}
+            </span>
+          </td>
+          <td>
+            <div style="display:flex;gap:5px;align-items:center;">
+              <a href="${mailtoHref}" class="admin-btn" style="text-decoration:none;">✉ E-mail</a>
+              ${
+                b.banned
+                  ? `<button type="button" class="admin-btn" data-unban-uid="${escapeHtml(b.uid)}" style="border-color:#6fe87b;background:#153826;color:#a8ffb2;">✓ Autorizar</button>`
+                  : ''
+              }
+            </div>
+          </td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  adminBansTbody.querySelectorAll<HTMLButtonElement>('[data-unban-uid]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const uid = btn.dataset.unbanUid;
+      if (!uid) return;
+      btn.disabled = true;
+      btn.textContent = '...';
+      const ok = await adminUnbanCommunityPlayer(uid);
+      if (ok) {
+        sound.playBuildComplete();
+        await openAdminDashboard();
+      } else {
+        btn.disabled = false;
+        btn.textContent = 'Erro';
+      }
+    });
+  });
+}
+
+function setAdminTab(tab: 'players' | 'bans'): void {
+  adminActiveTab = tab;
+  adminTabPlayers?.classList.toggle('active-tab', tab === 'players');
+  adminTabBans?.classList.toggle('active-tab', tab === 'bans');
+  if (adminTableWrap) adminTableWrap.style.display = tab === 'players' ? 'block' : 'none';
+  if (adminBansWrap) adminBansWrap.style.display = tab === 'bans' ? 'block' : 'none';
+}
+
 async function openAdminDashboard(): Promise<void> {
   if (!authCloudState.user?.isAdmin) return;
   setMenuOpen(false);
   adminOpen = true;
   adminModal?.classList.add('open');
+  setAdminTab(adminActiveTab);
   if (adminTbody) {
     adminTbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#ffe58a;">Carregando jogadores...</td></tr>';
   }
+  if (adminBansTbody) {
+    adminBansTbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#ffe58a;">Carregando denúncias...</td></tr>';
+  }
   try {
-    const rows = await fetchAllPlayersMetrics();
+    const [rows, bans] = await Promise.all([fetchAllPlayersMetrics(), fetchCommunityBans()]);
     renderAdminTable(rows);
+    renderAdminBansTable(bans);
+    const activeBans = bans.filter((b) => b.banned).length;
+    if (adminTabBans) {
+      adminTabBans.textContent = activeBans > 0 ? `Denúncias & Banidos (${activeBans})` : 'Denúncias & Banidos';
+    }
   } catch {
     if (adminTbody) {
       adminTbody.innerHTML =
@@ -408,6 +607,210 @@ async function openAdminDashboard(): Promise<void> {
 function closeAdminDashboard(): void {
   adminOpen = false;
   adminModal?.classList.remove('open');
+}
+
+function renderPixelVolumeBars(
+  container: HTMLDivElement | null,
+  currentVol: number,
+  enabled: boolean,
+  onSelect: (level: number) => void
+): void {
+  if (!container) return;
+  container.innerHTML = '';
+  const effectiveVol = enabled ? currentVol : 0;
+
+  const zeroBtn = document.createElement('button');
+  zeroBtn.type = 'button';
+  zeroBtn.className = `pixel-vol-pip zero-pip${effectiveVol === 0 ? ' active' : ''}`;
+  zeroBtn.textContent = '0';
+  zeroBtn.title = 'Volume 0';
+  zeroBtn.addEventListener('click', () => onSelect(0));
+  container.appendChild(zeroBtn);
+
+  for (let i = 1; i <= 5; i++) {
+    const pip = document.createElement('button');
+    pip.type = 'button';
+    pip.className = `pixel-vol-pip${i <= effectiveVol ? ' filled' : ''}`;
+    pip.title = `Volume ${i}/5`;
+    pip.addEventListener('click', () => onSelect(i));
+    container.appendChild(pip);
+  }
+}
+
+function openReportModal(member: CoopMember): void {
+  reportTargetMember = member;
+  selectedReportReason = 'Assédio sexual';
+  reportModalOpen = true;
+  if (coopReportTargetInfo) {
+    coopReportTargetInfo.innerHTML = `
+      <div><strong>Denunciado:</strong> ${escapeHtml(member.displayName)} (${escapeHtml(member.email)})</div>
+      <div><strong>Denunciante:</strong> ${escapeHtml(authCloudState.user?.email ?? '')}</div>
+    `;
+  }
+  if (coopReportDetails) coopReportDetails.value = '';
+  if (coopReportStatus) coopReportStatus.textContent = '';
+  coopReportReasons?.querySelectorAll<HTMLButtonElement>('.pixel-reason-btn').forEach((b) => {
+    b.classList.toggle('selected', b.dataset.reason === selectedReportReason);
+  });
+  coopReportModal?.classList.add('open');
+}
+
+function closeReportModal(): void {
+  reportModalOpen = false;
+  reportTargetMember = null;
+  coopReportModal?.classList.remove('open');
+}
+
+function openJoinCoopModal(): void {
+  if (!authCloudState.user) {
+    sound.playHit();
+    return;
+  }
+  joinModalOpen = true;
+  if (coopJoinCodeInput) coopJoinCodeInput.value = '';
+  if (coopJoinStatus) coopJoinStatus.textContent = '';
+  coopJoinModal?.classList.add('open');
+  setTimeout(() => coopJoinCodeInput?.focus(), 40);
+}
+
+function closeJoinCoopModal(): void {
+  joinModalOpen = false;
+  coopJoinModal?.classList.remove('open');
+}
+
+function updateCoopUI(): void {
+  const inCampaign = world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map';
+  const isPlaying = world.mode === 'playing';
+  const isHost = coopState.active && coopState.role === 'host';
+  const isGuest = coopState.active && coopState.role === 'guest';
+  const myUid = authCloudState.user?.uid ?? '';
+
+  // Gameplay Quick Rail (Chat bubble + Microphone directly below Menu button)
+  coopQuickRail?.classList.toggle('visible', isPlaying);
+  if (btnCoopChat) {
+    btnCoopChat.classList.toggle('active', coopState.chatOpen);
+  }
+  if (chatUnreadDot) {
+    chatUnreadDot.textContent = String(Math.min(99, coopState.unreadMessages));
+    chatUnreadDot.classList.toggle('visible', coopState.unreadMessages > 0 && !coopState.chatOpen);
+  }
+  if (btnCoopMic) {
+    btnCoopMic.classList.toggle('active', coopState.micOn);
+    btnCoopMic.classList.toggle('muted', !coopState.micOn);
+    btnCoopMic.title = coopState.micOn ? 'Microfone Ligado (clique para mutar)' : 'Abrir Microfone Co-op';
+  }
+
+  // Co-op Text Chat Drawer
+  coopChatPanel?.classList.toggle('open', isPlaying && coopState.active && coopState.chatOpen);
+  if (coopChatTitle) {
+    coopChatTitle.textContent = coopState.roomCode
+      ? `CHAT CO-OP · ${coopState.roomCode} (${coopState.members.length}/${MAX_COOP_PLAYERS})`
+      : 'CHAT CO-OP';
+  }
+  if (coopChatMessages) {
+    const atBottom =
+      coopChatMessages.scrollHeight - coopChatMessages.scrollTop - coopChatMessages.clientHeight < 28;
+    if (coopState.messages.length === 0) {
+      coopChatMessages.innerHTML =
+        '<div class="chat-msg-sys">Sala Co-op pronta! Digite abaixo ou ligue o microfone 🎙 para falar em tempo real.</div>';
+    } else {
+      coopChatMessages.innerHTML = coopState.messages
+        .map(
+          (m) =>
+            `<div class="chat-msg-line"><span class="chat-msg-author">${escapeHtml(m.displayName)}:</span>${escapeHtml(m.text)}</div>`
+        )
+        .join('');
+    }
+    if (atBottom) coopChatMessages.scrollTop = coopChatMessages.scrollHeight;
+  }
+
+  // Co-op Section inside Top-Right Menu
+  if (menuCoopSectionLbl) {
+    menuCoopSectionLbl.style.display = inCampaign ? 'block' : 'none';
+    menuCoopSectionLbl.textContent = coopState.active
+      ? `CO-OP ONLINE (${coopState.members.length}/${MAX_COOP_PLAYERS})`
+      : `CO-OP ONLINE (MÁX ${MAX_COOP_PLAYERS})`;
+  }
+  if (btnCoopHostToggle) {
+    btnCoopHostToggle.style.display = inCampaign && !isGuest ? 'flex' : 'none';
+    btnCoopHostToggle.classList.toggle('danger', isHost);
+    btnCoopHostToggle.classList.toggle('coop-open', !isHost);
+    if (lblCoopHost) lblCoopHost.textContent = isHost ? 'Encerrar Co-op' : 'Abrir Co-op (Gerar Código)';
+    if (valCoopHost) valCoopHost.textContent = isHost ? 'FECHAR' : 'HOST';
+  }
+  if (btnCoopGuestLeave) {
+    btnCoopGuestLeave.style.display = inCampaign && isGuest ? 'flex' : 'none';
+  }
+  coopMenuBox?.classList.toggle('visible', inCampaign && coopState.active);
+  if (coopRoomCodeVal) {
+    coopRoomCodeVal.textContent = coopState.roomCode ?? '------';
+  }
+  if (coopMembersList && coopState.active) {
+    coopMembersList.innerHTML = '';
+    for (const member of coopState.members) {
+      const row = document.createElement('div');
+      row.className = 'coop-member-row';
+
+      const img = document.createElement('img');
+      img.className = 'coop-member-avatar';
+      img.referrerPolicy = 'no-referrer';
+      img.alt = member.displayName;
+      if (member.photoURL) {
+        img.src = member.photoURL;
+      } else {
+        img.style.display = 'none';
+      }
+      row.appendChild(img);
+
+      const info = document.createElement('div');
+      info.className = 'coop-member-info';
+      const nameEl = document.createElement('span');
+      nameEl.className = 'coop-member-name';
+      nameEl.textContent = member.appearance?.name?.trim() || member.displayName;
+      const roleEl = document.createElement('span');
+      roleEl.className = 'coop-member-role';
+      roleEl.textContent = `${member.role === 'host' ? 'HOST' : 'CO-OP'}${member.micOn ? ' · 🎙 ON' : ''}`;
+      info.appendChild(nameEl);
+      info.appendChild(roleEl);
+      row.appendChild(info);
+
+      const acts = document.createElement('div');
+      acts.className = 'coop-member-actions';
+
+      // Report button for any other player in the room
+      if (member.uid !== myUid) {
+        const repBtn = document.createElement('button');
+        repBtn.type = 'button';
+        repBtn.className = 'coop-icon-act report';
+        repBtn.textContent = '⚠';
+        repBtn.title = `Denunciar ${member.displayName}`;
+        repBtn.addEventListener('click', () => {
+          openReportModal(member);
+        });
+        acts.appendChild(repBtn);
+      }
+
+      // Host-only X kick button next to guest photo & name
+      if (isHost && member.uid !== myUid && member.role !== 'host') {
+        const kickBtn = document.createElement('button');
+        kickBtn.type = 'button';
+        kickBtn.className = 'coop-icon-act kick';
+        kickBtn.textContent = '✕';
+        kickBtn.title = `Eliminar ${member.displayName} da campanha`;
+        kickBtn.addEventListener('click', async () => {
+          const kicked = await hostKickCoopPlayer(member.uid, world);
+          if (kicked) {
+            sound.playHit();
+            showBanner(world, 'JOGADOR REMOVIDO', `${member.displayName} foi removido da campanha.`, '#ff8a65');
+          }
+        });
+        acts.appendChild(kickBtn);
+      }
+
+      row.appendChild(acts);
+      coopMembersList.appendChild(row);
+    }
+  }
 }
 
 function updateGoogleAuthUI(): void {
@@ -466,6 +869,9 @@ function updateMenuUI(): void {
   const fs = isFullscreenActive();
   const musicOn = sound.isMusicEnabled();
   const sfxOn = sound.isSfxEnabled();
+  const musicVol = sound.getMusicVolume();
+  const sfxVol = sound.getSfxVolume();
+  const isGuest = coopState.active && coopState.role === 'guest';
 
   if (menuTitle) menuTitle.textContent = t('menu_title');
   if (lblResume) lblResume.textContent = t('menu_resume');
@@ -481,16 +887,34 @@ function updateMenuUI(): void {
   if (valDayLen) valDayLen.textContent = `${world.dayHalfMinutes} min`;
   if (lblLang) lblLang.textContent = t('menu_language');
   if (valLang) valLang.textContent = LANGUAGE_LABELS[getLanguage()];
+
+  // Separate Music Toggle + 0..5 Pixel Volume Bars
   if (lblMusic) lblMusic.textContent = t('menu_music');
-  if (valMusic) {
-    valMusic.textContent = musicOn ? t('menu_on') : t('menu_off');
-    valMusic.classList.toggle('on', musicOn);
+  if (btnMusic) {
+    btnMusic.textContent = musicOn ? t('menu_on') : t('menu_off');
+    btnMusic.classList.toggle('on', musicOn);
   }
+  if (valMusicVol) valMusicVol.textContent = `${musicOn ? musicVol : 0}/5`;
+  renderPixelVolumeBars(musicVolBars, musicVol, musicOn, (lvl) => {
+    sound.setMusicVolume(lvl);
+    updateMenuUI();
+  });
+
+  // Separate SFX Toggle + 0..5 Pixel Volume Bars
   if (lblSfx) lblSfx.textContent = t('menu_sfx');
-  if (valSfx) {
-    valSfx.textContent = sfxOn ? t('menu_on') : t('menu_off');
-    valSfx.classList.toggle('on', sfxOn);
+  if (btnSfx) {
+    btnSfx.textContent = sfxOn ? t('menu_on') : t('menu_off');
+    btnSfx.classList.toggle('on', sfxOn);
   }
+  if (valSfxVol) valSfxVol.textContent = `${sfxOn ? sfxVol : 0}/5`;
+  renderPixelVolumeBars(sfxVolBars, sfxVol, sfxOn, (lvl) => {
+    sound.setSfxVolume(lvl);
+    updateMenuUI();
+  });
+
+  // Zoom level indicator
+  if (valZoom) valZoom.textContent = `${Math.round(targetZoom * 100)}%`;
+
   if (lblFullscreen) lblFullscreen.textContent = fs ? t('menu_exit_fullscreen') : t('menu_fullscreen');
   if (valFullscreen) {
     valFullscreen.textContent = fs ? t('menu_on') : t('menu_off');
@@ -502,8 +926,10 @@ function updateMenuUI(): void {
 
   const inCampaign = world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map';
   if (btnResume) btnResume.style.display = inCampaign ? 'flex' : 'none';
-  if (btnSave) btnSave.style.display = inCampaign ? 'flex' : 'none';
-  if (btnMap) btnMap.style.display = inCampaign ? 'flex' : 'none';
+  if (btnSave) btnSave.style.display = inCampaign && !isGuest ? 'flex' : 'none';
+  if (btnMap) btnMap.style.display = inCampaign && !isGuest ? 'flex' : 'none';
+  if (btnDayLen) btnDayLen.style.display = isGuest ? 'none' : 'flex';
+  updateCoopUI();
   updateGoogleAuthUI();
 }
 
@@ -515,7 +941,8 @@ function setMenuOpen(open: boolean): void {
 
   if (open) {
     clearMovementInputs();
-    if (world.mode === 'playing') {
+    // Do NOT pause live world when Co-op is active so teammates keep playing smoothly!
+    if (world.mode === 'playing' && !coopState.active) {
       saveCampaign(world);
       world.mode = 'paused';
       pausedByMenu = true;
@@ -553,6 +980,7 @@ function clearMovementInputs(): void {
 function openSlotManager(): void {
   sound.unlock();
   clearMovementInputs();
+  pendingCoopJoinCode = null;
   renderer.pendingDeleteSlot = null;
   world.mode = 'slot_select';
   sound.playCoinDrop();
@@ -562,6 +990,7 @@ function openSlotManager(): void {
 function startNewCampaignFlow(targetSlot?: number): void {
   sound.unlock();
   clearMovementInputs();
+  pendingCoopJoinCode = null;
   const slot = typeof targetSlot === 'number' ? targetSlot : findFirstEmptySlot();
   if (slot < 0) {
     // All 8 slots are occupied — let the player pick or delete one in the 8-slot manager!
@@ -579,13 +1008,66 @@ function startNewCampaignFlow(targetSlot?: number): void {
   canvas.focus();
 }
 
+function startCoopCharCustomization(code: string): void {
+  sound.unlock();
+  clearMovementInputs();
+  pendingCoopJoinCode = code;
+  renderer.charSelectFocusRow = 0;
+  renderer.pendingDeleteSlot = null;
+  const app = defaultAppearance();
+  app.name = (authCloudState.user?.displayName ?? '').split(' ')[0].slice(0, 16);
+  world = createInitialWorld('char_select', app, defaultCrest(), 0);
+  world.selectTimer = 90;
+  fitCanvas();
+  sound.playCoinPickup();
+  updateMenuUI();
+  canvas.focus();
+}
+
+async function finishCoopJoinFromCharSelect(): Promise<void> {
+  const code = pendingCoopJoinCode;
+  if (!code) {
+    confirmCharacterSelection(world);
+    return;
+  }
+  charNameInput?.blur();
+  const customAppearance = { ...world.appearance };
+  pendingCoopJoinCode = null;
+  const res = await joinCoopRoomAsGuest(code, customAppearance);
+  if (!res.ok) {
+    sound.playHit();
+    goToLogin();
+    openJoinCoopModal();
+    if (coopJoinStatus) coopJoinStatus.textContent = res.error ?? 'Não foi possível entrar na sala.';
+    return;
+  }
+  if (res.initialWorld) {
+    world = res.initialWorld;
+  } else {
+    world.mode = 'playing';
+  }
+  world.localPlayerUid = authCloudState.user?.uid;
+  fitCanvas();
+  sound.playHorn(false);
+  showBanner(
+    world,
+    `CO-OP CONECTADO · ${code}`,
+    `Você entrou na campanha de ${coopState.hostName}!`,
+    '#6fe87b'
+  );
+  updateMenuUI();
+  canvas.focus();
+}
+
 function loadSavedCampaignFlow(slotIndex?: number): void {
   sound.unlock();
   clearMovementInputs();
+  pendingCoopJoinCode = null;
   const loaded = loadCampaign(slotIndex);
   if (!loaded) return;
   renderer.pendingDeleteSlot = null;
   world = loaded;
+  world.localPlayerUid = authCloudState.user?.uid;
   fitCanvas();
   sound.playHorn(false);
   showBanner(
@@ -599,8 +1081,23 @@ function loadSavedCampaignFlow(slotIndex?: number): void {
   canvas.focus();
 }
 
-function goToLogin(): void {
-  if (world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map') {
+function goToLogin(noticeBanner?: string): void {
+  if (coopState.active) {
+    if (coopState.role === 'host') {
+      void hostCloseCoopRoom(world);
+    } else if (coopState.role === 'guest') {
+      void leaveCoopAsGuest();
+    }
+  }
+  pendingCoopJoinCode = null;
+  closeJoinCoopModal();
+  closeReportModal();
+  setCoopChatOpen(false);
+  if (
+    coopState.role !== 'guest' &&
+    world.crest.locked &&
+    (world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map')
+  ) {
     saveCampaign(world);
     void flushCloudTelemetry(world, 'menu');
   }
@@ -616,6 +1113,9 @@ function goToLogin(): void {
   clearMovementInputs();
   renderer.pendingDeleteSlot = null;
   world = createInitialWorld('login');
+  if (noticeBanner) {
+    showBanner(world, 'CO-OP ENCERRADO', noticeBanner, '#ff8a65');
+  }
   fitCanvas();
   updateMenuUI();
 }
@@ -735,6 +1235,11 @@ function handleCanvasHit(hitId: string): boolean {
     startNewCampaignFlow();
     return true;
   }
+  if (hitId === 'login_coop') {
+    sound.playCoinPickup();
+    openJoinCoopModal();
+    return true;
+  }
   if (hitId === 'login_slots') {
     openSlotManager();
     return true;
@@ -803,7 +1308,11 @@ function handleCanvasHit(hitId: string): boolean {
       return true;
     }
     if (hitId === 'prompt_coin_slot') {
-      triggerCoinDrop(world);
+      if (coopState.active && coopState.role === 'guest') {
+        input.dropJustPressed = true;
+      } else {
+        triggerCoinDrop(world);
+      }
       return true;
     }
     if (hitId === 'prompt_bank_withdraw') {
@@ -811,7 +1320,11 @@ function handleCanvasHit(hitId: string): boolean {
       return true;
     }
     if (hitId === 'hud_mount_power') {
-      triggerMountPower(world);
+      if (coopState.active && coopState.role === 'guest') {
+        input.powerJustPressed = true;
+      } else {
+        triggerMountPower(world);
+      }
       return true;
     }
     if (hitId === 'villager_dir_left' && world.selectedVillagerId) {
@@ -882,7 +1395,7 @@ function handleCanvasHit(hitId: string): boolean {
     }
     if (hitId === 'char_confirm') {
       charNameInput?.blur();
-      confirmCharacterSelection(world);
+      void finishCoopJoinFromCharSelect();
       return true;
     }
   }
@@ -1096,10 +1609,237 @@ btnMusic?.addEventListener('click', () => {
   updateMenuUI();
 });
 
+btnMusicVolDown?.addEventListener('click', () => {
+  sound.setMusicVolume(sound.getMusicVolume() - 1);
+  updateMenuUI();
+});
+
+btnMusicVolUp?.addEventListener('click', () => {
+  sound.setMusicVolume(sound.getMusicVolume() + 1);
+  updateMenuUI();
+});
+
 btnSfx?.addEventListener('click', () => {
   sound.toggleSfx();
-  if (sound.isSfxEnabled()) sound.playCoinDrop();
   updateMenuUI();
+});
+
+btnSfxVolDown?.addEventListener('click', () => {
+  sound.setSfxVolume(sound.getSfxVolume() - 1);
+  updateMenuUI();
+});
+
+btnSfxVolUp?.addEventListener('click', () => {
+  sound.setSfxVolume(sound.getSfxVolume() + 1);
+  updateMenuUI();
+});
+
+btnZoomOut?.addEventListener('click', () => {
+  adjustCameraZoom(-1);
+});
+
+btnZoomIn?.addEventListener('click', () => {
+  adjustCameraZoom(1);
+});
+
+// Co-op Online Menu Controls (Host open/close, Guest leave, Copy Code)
+btnCoopHostToggle?.addEventListener('click', async () => {
+  sound.unlock();
+  if (coopState.active && coopState.role === 'host') {
+    await hostCloseCoopRoom(world);
+    sound.playCoinDrop();
+    saveCampaign(world);
+    showBanner(world, 'CO-OP ENCERRADO', 'Sua campanha voltou ao modo solo. Todo o progresso foi mantido!', '#ffe58a');
+    updateMenuUI();
+    return;
+  }
+  if (btnCoopHostToggle) btnCoopHostToggle.disabled = true;
+  const res = await hostOpenCoopRoom(world);
+  if (btnCoopHostToggle) btnCoopHostToggle.disabled = false;
+  if (!res.ok || !res.code) {
+    sound.playHit();
+    showBanner(world, 'CO-OP INDISPONÍVEL', res.error ?? 'Conecte sua conta Google.', '#ff8a65');
+    updateMenuUI();
+    return;
+  }
+  sound.playHorn(false);
+  showBanner(world, `CO-OP ABERTO · CÓDIGO ${res.code}`, 'Compartilhe o código (máx 4 jogadores)!', '#6fe87b');
+  updateMenuUI();
+});
+
+btnCoopGuestLeave?.addEventListener('click', () => {
+  sound.playCoinDrop();
+  goToLogin('Você saiu da campanha Co-op.');
+});
+
+btnCoopCopyCode?.addEventListener('click', async () => {
+  if (!coopState.roomCode) return;
+  try {
+    await navigator.clipboard?.writeText(coopState.roomCode);
+    if (btnCoopCopyCode) {
+      btnCoopCopyCode.textContent = 'COPIADO!';
+      setTimeout(() => {
+        if (btnCoopCopyCode) btnCoopCopyCode.textContent = 'COPIAR';
+      }, 1500);
+    }
+    sound.playCoinPickup();
+  } catch {
+    sound.playCoinDrop();
+  }
+});
+
+// Gameplay Co-op Quick Rail (Chat Bubble + Microphone below Menu button)
+btnCoopChat?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  sound.unlock();
+  if (!coopState.active) {
+    sound.playCoinDrop();
+    showBanner(world, 'CHAT CO-OP', 'Abra o modo Co-op no Menu (☰) para conversar com até 4 jogadores!', '#ffe58a');
+    setMenuOpen(true);
+    return;
+  }
+  setCoopChatOpen(!coopState.chatOpen);
+  if (coopState.chatOpen) {
+    setTimeout(() => coopChatInput?.focus(), 40);
+  }
+});
+
+coopChatClose?.addEventListener('click', () => {
+  setCoopChatOpen(false);
+  canvas.focus();
+});
+
+coopChatForm?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!coopChatInput) return;
+  const txt = coopChatInput.value.trim();
+  if (!txt) return;
+  coopChatInput.value = '';
+  const ok = await sendCoopChatMessage(txt);
+  if (ok) sound.playCoinDrop();
+});
+
+btnCoopMic?.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  sound.unlock();
+  if (!coopState.active) {
+    sound.playCoinDrop();
+    showBanner(world, 'MICROFONE CO-OP', 'Abra o modo Co-op no Menu (☰) para conversar por voz!', '#ffe58a');
+    setMenuOpen(true);
+    return;
+  }
+  const res = await toggleCoopMicrophone();
+  if (res.ok) {
+    sound.playCoinPickup();
+    showBanner(
+      world,
+      res.micOn ? 'MICROFONE LIGADO 🎙' : 'MICROFONE MUTADO',
+      res.micOn ? 'Sua voz está sendo transmitida para a sala Co-op.' : 'Microfone desligado.',
+      res.micOn ? '#6fe87b' : '#9bb7d0'
+    );
+  } else {
+    sound.playHit();
+    showBanner(world, 'MICROFONE', res.error ?? 'Não foi possível abrir o microfone.', '#ff8a65');
+  }
+});
+
+// Co-op Join by Code Modal listeners
+btnCoopJoinCancel?.addEventListener('click', () => {
+  closeJoinCoopModal();
+  canvas.focus();
+});
+
+coopJoinModal?.addEventListener('click', (e) => {
+  if (e.target === coopJoinModal) closeJoinCoopModal();
+});
+
+async function submitCoopJoinCode(): Promise<void> {
+  if (!coopJoinCodeInput || !btnCoopJoinGo) return;
+  const raw = coopJoinCodeInput.value.trim();
+  btnCoopJoinGo.disabled = true;
+  if (coopJoinStatus) coopJoinStatus.textContent = 'Verificando sala...';
+  const res = await validateCoopJoinCode(raw);
+  btnCoopJoinGo.disabled = false;
+  if (!res.ok || !res.code) {
+    sound.playHit();
+    if (coopJoinStatus) coopJoinStatus.textContent = res.error ?? 'Código inválido.';
+    return;
+  }
+  closeJoinCoopModal();
+  startCoopCharCustomization(res.code);
+}
+
+btnCoopJoinGo?.addEventListener('click', () => {
+  void submitCoopJoinCode();
+});
+
+coopJoinCodeInput?.addEventListener('keydown', (e) => {
+  if (e.code === 'Enter') {
+    e.preventDefault();
+    void submitCoopJoinCode();
+  } else if (e.code === 'Escape') {
+    e.preventDefault();
+    closeJoinCoopModal();
+  }
+});
+
+// Community Report & Ban Modal listeners
+coopReportReasons?.querySelectorAll<HTMLButtonElement>('.pixel-reason-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const r = btn.dataset.reason as CommunityReportReason | undefined;
+    if (!r) return;
+    selectedReportReason = r;
+    coopReportReasons.querySelectorAll<HTMLButtonElement>('.pixel-reason-btn').forEach((other) => {
+      other.classList.toggle('selected', other === btn);
+    });
+    sound.playCoinDrop();
+  });
+});
+
+btnCoopReportCancel?.addEventListener('click', () => {
+  closeReportModal();
+});
+
+coopReportModal?.addEventListener('click', (e) => {
+  if (e.target === coopReportModal) closeReportModal();
+});
+
+btnCoopReportConfirm?.addEventListener('click', async () => {
+  if (!reportTargetMember || !btnCoopReportConfirm) return;
+  btnCoopReportConfirm.disabled = true;
+  if (coopReportStatus) coopReportStatus.textContent = 'Registrando denúncia e banindo jogador...';
+  const res = await reportAndBanCoopPlayer(
+    reportTargetMember,
+    selectedReportReason,
+    coopReportDetails?.value ?? '',
+    world
+  );
+  btnCoopReportConfirm.disabled = false;
+  if (!res.ok) {
+    sound.playHit();
+    if (coopReportStatus) coopReportStatus.textContent = res.error ?? 'Falha ao enviar denúncia.';
+    return;
+  }
+  const reportedName = reportTargetMember.displayName;
+  closeReportModal();
+  sound.playHit();
+  showBanner(
+    world,
+    'DENÚNCIA REGISTRADA & BAN APLICADO',
+    `${reportedName} foi banido da comunidade até análise de guillermes.mozzer@gmail.com.`,
+    '#ff8a65'
+  );
+  updateMenuUI();
+});
+
+// Admin Dashboard Tab Switchers
+adminTabPlayers?.addEventListener('click', () => {
+  setAdminTab('players');
+  sound.playCoinDrop();
+});
+adminTabBans?.addEventListener('click', () => {
+  setAdminTab('bans');
+  sound.playCoinDrop();
 });
 
 btnFullscreen?.addEventListener('click', () => {
@@ -1187,7 +1927,11 @@ btnSignout?.addEventListener('click', () => {
 
 // Auto-save whenever the user closes the tab, refreshes, or minimizes on mobile!
 function autoSaveActiveCampaign(): void {
-  if (world.crest.locked && (world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map')) {
+  if (
+    coopState.role !== 'guest' &&
+    world.crest.locked &&
+    (world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map')
+  ) {
     saveCampaign(world);
   }
   void flushCloudTelemetry(world, 'offline');
@@ -1260,7 +2004,8 @@ function syncCharNameInput(): void {
 // KEYBOARD CONTROLS (with Double-Tap Arrow/A/D Sprint & ESC handling)
 // =========================================================================
 window.addEventListener('keydown', (e) => {
-  if (charNameInput && document.activeElement === charNameInput) {
+  const activeTag = (document.activeElement?.tagName ?? '').toUpperCase();
+  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') {
     return;
   }
   const code = e.code;
@@ -1280,8 +2025,20 @@ window.addEventListener('keydown', (e) => {
     if (isFullscreenActive()) {
       return;
     }
+    if (reportModalOpen) {
+      closeReportModal();
+      return;
+    }
+    if (joinModalOpen) {
+      closeJoinCoopModal();
+      return;
+    }
     if (adminOpen) {
       closeAdminDashboard();
+      return;
+    }
+    if (coopState.chatOpen) {
+      setCoopChatOpen(false);
       return;
     }
     if (feedbackUi.open) {
@@ -1319,7 +2076,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
-  if (menuOpen || feedbackUi.open || adminOpen) return;
+  if (menuOpen || feedbackUi.open || adminOpen || joinModalOpen || reportModalOpen) return;
 
   if (world.mode === 'login') {
     if (!isPlayerAuthorizedToPlay()) return;
@@ -1332,7 +2089,7 @@ window.addEventListener('keydown', (e) => {
     else if (code === 'ArrowDown' || code === 'KeyS') renderer.charSelectFocusRow = cycle(renderer.charSelectFocusRow, 5, 1);
     else if (code === 'ArrowLeft' || code === 'KeyA') adjustCharOption(renderer.charSelectFocusRow, -1);
     else if (code === 'ArrowRight' || code === 'KeyD') adjustCharOption(renderer.charSelectFocusRow, 1);
-    else if (code === 'Space' || code === 'Enter') confirmCharacterSelection(world);
+    else if (code === 'Space' || code === 'Enter') void finishCoopJoinFromCharSelect();
     return;
   }
 
@@ -1429,6 +2186,13 @@ window.addEventListener('orientationchange', () => setTimeout(fitCanvas, 120));
 subscribeAuthCloud(() => {
   updateMenuUI();
 });
+subscribeCoop(() => {
+  updateMenuUI();
+});
+setGuestForceExitHandler((reason) => {
+  sound.playHit();
+  goToLogin(reason);
+});
 initGoogleAuthCloud();
 
 fitCanvas();
@@ -1443,6 +2207,13 @@ function frame(now: number): void {
   lastTime = now;
   accumulator += delta;
 
+  // Smooth animated Camera Zoom In / Zoom Out
+  if (Math.abs(currentZoom - targetZoom) > 0.002) {
+    currentZoom += (targetZoom - currentZoom) * Math.min(1, delta * 9.5);
+    if (Math.abs(currentZoom - targetZoom) <= 0.002) currentZoom = targetZoom;
+    fitCanvas();
+  }
+
   input.left = kbLeft || ptrMoveSide === -1;
   input.right = kbRight || ptrMoveSide === 1;
   input.sprint =
@@ -1454,14 +2225,26 @@ function frame(now: number): void {
   const typingCharName = Boolean(charNameInput && document.activeElement === charNameInput);
 
   while (accumulator >= FIXED_DT) {
-    if ((feedbackUi.open || adminOpen) && world.mode === 'playing') {
+    if ((feedbackUi.open || adminOpen) && world.mode === 'playing' && !coopState.active) {
       world.elapsed += FIXED_DT;
-    } else if (typingCharName && world.mode === 'char_select') {
-      // Pause countdown while player is typing their monarch's name
+    } else if ((typingCharName || pendingCoopJoinCode) && world.mode === 'char_select') {
+      // Keep character preview animated without auto-skipping while customizing name or Co-op hero
       world.elapsed += FIXED_DT;
       if (world.monarchs[0]) world.monarchs[0].animTime += FIXED_DT * 8;
+    } else if (coopState.active && coopState.role === 'guest' && world.mode === 'playing') {
+      // Guest client: sync authoritative Host world & send local inputs
+      world = guestSyncCoopFrame(world, input);
+      const localM = world.monarchs.find((m) => m.playerUid === authCloudState.user?.uid);
+      if (localM) {
+        world.activePrompt = computeActivePrompt(world, localM);
+      }
+      tickCloudTelemetry(FIXED_DT, world);
     } else {
-      stepWorld(world, input, FIXED_DT);
+      const remoteInputs =
+        coopState.active && coopState.role === 'host' && world.mode === 'playing'
+          ? hostSyncCoopWorld(world)
+          : undefined;
+      stepWorld(world, input, FIXED_DT, remoteInputs);
       if (world.mode === 'playing') {
         deliverPendingFeedbackIfPlaying();
         tickCloudTelemetry(FIXED_DT, world);

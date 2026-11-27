@@ -262,6 +262,7 @@ export function saveCampaign(w: WorldState, slotOverride?: number): void {
       ...w,
       mode: 'playing',
       saveSlot: slot,
+      monarchs: w.monarchs.length > 0 ? [w.monarchs[0]] : [],
       banker:
         pendingWithdrawCoins > 0
           ? { ...w.banker, balance: w.banker.balance + pendingWithdrawCoins }

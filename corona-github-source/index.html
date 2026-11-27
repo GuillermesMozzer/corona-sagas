@@ -26,7 +26,7 @@
       height: 100dvh;
       background: #040507;
       color: #e6edf3;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-family: 'Pixelify Sans', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       overflow: hidden;
       overscroll-behavior: none;
       touch-action: none;
@@ -50,46 +50,125 @@
       touch-action: none;
     }
 
-    /* Top-right Menu Button */
+    /* =====================================================================
+       TOP-RIGHT PIXEL-ART ACTION RAIL: Menu (☰), Chat (💬), Mic (🎙)
+       ===================================================================== */
     #btn-menu {
       position: fixed;
       top: max(8px, env(safe-area-inset-top));
       right: max(8px, env(safe-area-inset-right));
       z-index: 30;
       height: 36px;
-      min-width: 38px;
-      padding: 0 11px;
-      background: rgba(10, 17, 28, 0.86);
-      border: 1px solid rgba(239, 196, 98, 0.58);
-      border-radius: 6px;
+      width: 38px;
+      padding: 0;
+      background: #0c1524;
+      border: 2px solid #efc462;
+      border-radius: 0;
       color: #ffe58a;
-      font-family: inherit;
-      font-size: 16px;
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 18px;
+      font-weight: 700;
       line-height: 1;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
       cursor: pointer;
-      backdrop-filter: blur(6px);
-      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
-      transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+      box-shadow: 3px 3px 0 #000000, inset 0 2px 0 rgba(255, 240, 180, 0.18);
+      transition: transform 0.08s steps(2), background 0.1s;
     }
     #btn-menu:hover, #btn-menu:active {
-      background: rgba(24, 38, 58, 0.95);
-      border-color: #ffe066;
+      background: #1a2b44;
+      border-color: #fff0a8;
+    }
+    #btn-menu:active {
+      transform: translate(2px, 2px);
+      box-shadow: 1px 1px 0 #000000;
     }
     #btn-menu.open {
-      background: rgba(46, 36, 12, 0.96);
+      background: #33270d;
       border-color: #ffe066;
     }
 
-    /* Menu Dropdown Backdrop & Panel */
+    /* Gameplay Co-op Quick Rail directly below Menu button */
+    #coop-quick-rail {
+      position: fixed;
+      top: calc(max(8px, env(safe-area-inset-top)) + 44px);
+      right: max(8px, env(safe-area-inset-right));
+      z-index: 26;
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+    }
+    #coop-quick-rail.visible {
+      display: flex;
+    }
+    .rail-pixel-btn {
+      position: relative;
+      width: 38px;
+      height: 34px;
+      padding: 0;
+      background: rgba(12, 21, 36, 0.88);
+      border: 2px solid #6b89a8;
+      border-radius: 0;
+      color: #d8ecff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 3px 3px 0 #000000;
+      transition: transform 0.08s steps(2);
+    }
+    .rail-pixel-btn:hover {
+      background: #1a2d47;
+      border-color: #ffe066;
+    }
+    .rail-pixel-btn:active {
+      transform: translate(2px, 2px);
+      box-shadow: 1px 1px 0 #000000;
+    }
+    .rail-pixel-btn.active {
+      background: #153826;
+      border-color: #6fe87b;
+      color: #a8ffb2;
+    }
+    .rail-pixel-btn.muted {
+      border-color: #6b89a8;
+      color: #9bb4cc;
+    }
+    .rail-pixel-btn svg {
+      width: 18px;
+      height: 18px;
+      shape-rendering: crispEdges;
+    }
+    .rail-unread-dot {
+      position: absolute;
+      top: -4px;
+      left: -4px;
+      min-width: 14px;
+      height: 14px;
+      padding: 0 3px;
+      background: #e5484d;
+      border: 2px solid #09101c;
+      color: #ffffff;
+      font-family: 'Pixelify Sans', monospace;
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 10px;
+      text-align: center;
+      display: none;
+    }
+    .rail-unread-dot.visible {
+      display: block;
+    }
+
+    /* =====================================================================
+       PIXEL-ART MENU PANEL, TOGGLES, VOLUME 0..5, ZOOM & CO-OP CONTROLS
+       ===================================================================== */
     #menu-backdrop {
       position: fixed;
       inset: 0;
-      background: rgba(4, 7, 13, 0.45);
-      z-index: 25;
+      background: rgba(3, 6, 12, 0.56);
+      z-index: 28;
       display: none;
     }
     #menu-backdrop.open { display: block; }
@@ -98,31 +177,43 @@
       position: fixed;
       top: calc(max(8px, env(safe-area-inset-top)) + 44px);
       right: max(8px, env(safe-area-inset-right));
-      width: 264px;
+      width: 286px;
       max-width: calc(100vw - 16px);
-      max-height: calc(100dvh - 64px);
+      max-height: calc(100dvh - 60px);
       overflow-y: auto;
-      background: rgba(9, 15, 25, 0.96);
-      border: 1px solid rgba(239, 196, 98, 0.55);
-      border-radius: 8px;
-      padding: 12px;
-      z-index: 30;
+      background: #0a1322;
+      border: 2px solid #efc462;
+      border-radius: 0;
+      padding: 10px;
+      z-index: 32;
       display: none;
       flex-direction: column;
-      gap: 7px;
-      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.72);
-      backdrop-filter: blur(8px);
+      gap: 6px;
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      box-shadow: 5px 5px 0 #000000, inset 0 0 0 2px #1a2940;
     }
     #menu-panel.open { display: flex; }
 
     #menu-title {
-      font-size: 11px;
+      font-size: 14px;
       font-weight: 700;
       letter-spacing: 0.14em;
-      color: #efc462;
+      color: #ffe58a;
       padding-bottom: 6px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      border-bottom: 2px solid #243752;
       text-transform: uppercase;
+      text-shadow: 2px 2px 0 #000;
+    }
+
+    .menu-section-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: #82b4d9;
+      text-transform: uppercase;
+      margin-top: 4px;
+      padding-top: 4px;
+      border-top: 2px solid #1b2c44;
     }
 
     .menu-item {
@@ -131,47 +222,564 @@
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      padding: 9px 11px;
-      border-radius: 5px;
-      border: 1px solid rgba(190, 215, 240, 0.18);
-      background: rgba(18, 28, 43, 0.85);
-      color: #e4eef7;
-      font-family: inherit;
-      font-size: 12px;
+      padding: 7px 9px;
+      border-radius: 0;
+      border: 2px solid #2c4363;
+      background: #122034;
+      color: #eaf3fc;
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 13px;
+      font-weight: 600;
       cursor: pointer;
       text-align: left;
-      transition: background 0.14s ease, border-color 0.14s ease;
+      box-shadow: 2px 2px 0 #000000;
+      transition: transform 0.06s steps(2), background 0.08s;
     }
-    .menu-item:hover, .menu-item:active {
-      background: rgba(31, 46, 70, 0.96);
-      border-color: rgba(239, 196, 98, 0.65);
+    .menu-item:hover {
+      background: #1d314d;
+      border-color: #efc462;
+    }
+    .menu-item:active {
+      transform: translate(1px, 1px);
+      box-shadow: 1px 1px 0 #000000;
     }
     .menu-item.primary {
-      background: rgba(46, 36, 12, 0.9);
-      border-color: rgba(239, 196, 98, 0.65);
+      background: #30250c;
+      border-color: #efc462;
       color: #ffe58a;
       font-weight: 700;
     }
+    .menu-item.coop-open {
+      background: #133124;
+      border-color: #6fe87b;
+      color: #b4ffbc;
+      font-weight: 700;
+    }
+    .menu-item.danger {
+      background: #3b141c;
+      border-color: #e06774;
+      color: #ffd5da;
+    }
+
     .menu-badge {
-      font-size: 10px;
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 11px;
       font-weight: 700;
       padding: 2px 7px;
-      border-radius: 4px;
-      background: rgba(255, 255, 255, 0.08);
+      border-radius: 0;
+      border: 2px solid #3c5475;
+      background: #0b1424;
       color: #9ec4e0;
       letter-spacing: 0.05em;
       flex-shrink: 0;
     }
     .menu-badge.on {
-      background: rgba(239, 196, 98, 0.22);
-      color: #ffe066;
+      border-color: #efc462;
+      background: #3a2d0f;
+      color: #ffe58a;
     }
+
+    /* Pixel Control Row (Audio Volume 0..5 & Zoom In/Out) */
+    .pixel-control-card {
+      background: #101d30;
+      border: 2px solid #2c4363;
+      padding: 7px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: 2px 2px 0 #000000;
+    }
+    .pixel-control-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .pixel-control-name {
+      font-size: 12px;
+      font-weight: 700;
+      color: #eaf3fc;
+      letter-spacing: 0.03em;
+    }
+    .pixel-toggle-btn {
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      min-width: 44px;
+      padding: 2px 7px;
+      border-radius: 0;
+      border: 2px solid #4e6682;
+      background: #1a2433;
+      color: #9cb0c7;
+      cursor: pointer;
+      box-shadow: 2px 2px 0 #000000;
+    }
+    .pixel-toggle-btn.on {
+      border-color: #6fe87b;
+      background: #173d25;
+      color: #a8ffb2;
+    }
+    .pixel-toggle-btn:active {
+      transform: translate(1px, 1px);
+      box-shadow: 1px 1px 0 #000000;
+    }
+
+    .pixel-vol-row {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .pixel-step-btn {
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 13px;
+      font-weight: 700;
+      width: 24px;
+      height: 22px;
+      line-height: 1;
+      border-radius: 0;
+      border: 2px solid #415c80;
+      background: #162840;
+      color: #ffe58a;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 2px 2px 0 #000;
+      flex-shrink: 0;
+    }
+    .pixel-step-btn:hover {
+      background: #233b5c;
+      border-color: #efc462;
+    }
+    .pixel-step-btn:active {
+      transform: translate(1px, 1px);
+      box-shadow: 1px 1px 0 #000;
+    }
+    .pixel-vol-bars {
+      display: flex;
+      gap: 3px;
+      flex: 1;
+      align-items: center;
+      justify-content: center;
+    }
+    .pixel-vol-pip {
+      flex: 1;
+      height: 14px;
+      border: 2px solid #354c6b;
+      background: #0a1220;
+      cursor: pointer;
+      padding: 0;
+    }
+    .pixel-vol-pip.filled {
+      border-color: #ffe066;
+      background: #efc462;
+      box-shadow: inset 0 -3px 0 #a8761c;
+    }
+    .pixel-vol-pip.zero-pip {
+      max-width: 18px;
+      font-family: 'Pixelify Sans', monospace;
+      font-size: 10px;
+      font-weight: 700;
+      color: #88a2bd;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .pixel-vol-pip.zero-pip.active {
+      border-color: #e06774;
+      background: #3b141c;
+      color: #ffd0d5;
+    }
+    .pixel-vol-num {
+      font-size: 11px;
+      font-weight: 700;
+      color: #ffe58a;
+      min-width: 24px;
+      text-align: right;
+    }
+
+    /* Pixel Zoom Row */
+    .pixel-zoom-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .pixel-zoom-btn {
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 0;
+      border: 2px solid #415c80;
+      background: #162840;
+      color: #ffe58a;
+      cursor: pointer;
+      box-shadow: 2px 2px 0 #000;
+      flex: 1;
+      text-align: center;
+    }
+    .pixel-zoom-btn:hover {
+      background: #233b5c;
+      border-color: #efc462;
+    }
+    .pixel-zoom-btn:active {
+      transform: translate(1px, 1px);
+      box-shadow: 1px 1px 0 #000;
+    }
+    .pixel-zoom-val {
+      font-size: 12px;
+      font-weight: 700;
+      color: #a8f0ff;
+      min-width: 48px;
+      text-align: center;
+    }
+
+    /* Co-op Box inside Menu */
+    #coop-menu-box {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      background: #0d1a2c;
+      border: 2px solid #6fe87b;
+      padding: 8px;
+      box-shadow: 2px 2px 0 #000;
+    }
+    #coop-menu-box.visible {
+      display: flex;
+    }
+    .coop-code-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      background: #07101c;
+      border: 2px solid #2e4a39;
+      padding: 5px 7px;
+    }
+    #coop-room-code-val {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.2em;
+      color: #a8ffb2;
+    }
+    .coop-mini-btn {
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 7px;
+      border-radius: 0;
+      border: 2px solid #efc462;
+      background: #2b210b;
+      color: #ffe58a;
+      cursor: pointer;
+      box-shadow: 2px 2px 0 #000;
+    }
+    .coop-mini-btn:active {
+      transform: translate(1px, 1px);
+      box-shadow: 1px 1px 0 #000;
+    }
+    #coop-members-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .coop-member-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: #122136;
+      border: 2px solid #263d5c;
+      padding: 4px 6px;
+    }
+    .coop-member-avatar {
+      width: 24px;
+      height: 24px;
+      border: 2px solid #efc462;
+      object-fit: cover;
+      flex-shrink: 0;
+      background: #1c2f4a;
+    }
+    .coop-member-info {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      flex: 1;
+      line-height: 1.1;
+    }
+    .coop-member-name {
+      font-size: 12px;
+      font-weight: 700;
+      color: #f0f6fc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .coop-member-role {
+      font-size: 10px;
+      color: #82b4d9;
+    }
+    .coop-member-actions {
+      display: flex;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .coop-icon-act {
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border-radius: 0;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 1px 1px 0 #000;
+    }
+    .coop-icon-act.kick {
+      background: #471620;
+      border: 2px solid #e06774;
+      color: #ffd5da;
+    }
+    .coop-icon-act.report {
+      background: #422b0c;
+      border: 2px solid #f5a623;
+      color: #ffe08a;
+    }
+
     .menu-hint {
       font-size: 10px;
       color: #879db3;
-      padding-top: 4px;
-      border-top: 1px solid rgba(255, 255, 255, 0.08);
-      line-height: 1.4;
+      padding-top: 5px;
+      border-top: 2px solid #1b2c44;
+      line-height: 1.35;
+    }
+
+    /* =====================================================================
+       IN-GAME PIXEL TEXT CHAT PANEL
+       ===================================================================== */
+    #coop-chat-panel {
+      position: fixed;
+      top: calc(max(8px, env(safe-area-inset-top)) + 44px);
+      right: calc(max(8px, env(safe-area-inset-right)) + 46px);
+      width: 256px;
+      max-width: calc(100vw - 64px);
+      height: 230px;
+      max-height: calc(100dvh - 110px);
+      z-index: 27;
+      display: none;
+      flex-direction: column;
+      background: rgba(9, 16, 28, 0.94);
+      border: 2px solid #efc462;
+      box-shadow: 4px 4px 0 #000000;
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+    }
+    #coop-chat-panel.open {
+      display: flex;
+    }
+    #coop-chat-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px;
+      background: #132238;
+      border-bottom: 2px solid #2b4161;
+      font-size: 12px;
+      font-weight: 700;
+      color: #ffe58a;
+    }
+    #coop-chat-close {
+      font-family: 'Pixelify Sans', monospace;
+      font-size: 12px;
+      font-weight: 700;
+      width: 22px;
+      height: 20px;
+      background: #471620;
+      border: 2px solid #e06774;
+      color: #ffd5da;
+      cursor: pointer;
+    }
+    #coop-chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 7px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-size: 12px;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    .chat-msg-line {
+      line-height: 1.25;
+      word-break: break-word;
+      color: #e4f0fb;
+    }
+    .chat-msg-author {
+      color: #ffe58a;
+      font-weight: 700;
+      margin-right: 4px;
+    }
+    .chat-msg-sys {
+      color: #7ee8c4;
+      font-size: 11px;
+    }
+    #coop-chat-form {
+      display: flex;
+      border-top: 2px solid #2b4161;
+      background: #07101c;
+    }
+    #coop-chat-input {
+      flex: 1;
+      min-width: 0;
+      background: transparent;
+      border: none;
+      outline: none;
+      padding: 7px;
+      color: #ffffff;
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 12px;
+      user-select: text;
+      -webkit-user-select: text;
+      touch-action: manipulation;
+    }
+    #coop-chat-send {
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 0 10px;
+      background: #173d25;
+      border: none;
+      border-left: 2px solid #2b4161;
+      color: #a8ffb2;
+      cursor: pointer;
+    }
+
+    /* =====================================================================
+       PIXEL MODALS (Join Co-op Code & Community Report)
+       ===================================================================== */
+    .pixel-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 60;
+      background: rgba(4, 8, 16, 0.82);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+    }
+    .pixel-modal.open {
+      display: flex;
+    }
+    .pixel-modal-card {
+      width: min(380px, 100%);
+      background: #0a1424;
+      border: 2px solid #efc462;
+      box-shadow: 6px 6px 0 #000000, inset 0 0 0 2px #1a2b44;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .pixel-modal-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #ffe58a;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border-bottom: 2px solid #223550;
+      padding-bottom: 6px;
+    }
+    .pixel-input {
+      width: 100%;
+      background: #060d18;
+      border: 2px solid #415c80;
+      color: #ffffff;
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      padding: 8px 10px;
+      outline: none;
+      user-select: text;
+      -webkit-user-select: text;
+      touch-action: manipulation;
+    }
+    .pixel-input:focus {
+      border-color: #6fe87b;
+    }
+    .pixel-textarea {
+      width: 100%;
+      min-height: 64px;
+      resize: vertical;
+      background: #060d18;
+      border: 2px solid #415c80;
+      color: #ffffff;
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 12px;
+      padding: 7px 9px;
+      outline: none;
+      user-select: text;
+      -webkit-user-select: text;
+      touch-action: manipulation;
+    }
+    .pixel-reason-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+    .pixel-reason-btn {
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 7px 6px;
+      border: 2px solid #3c5475;
+      background: #122034;
+      color: #d6e6f5;
+      cursor: pointer;
+      box-shadow: 2px 2px 0 #000;
+      text-align: center;
+    }
+    .pixel-reason-btn.selected {
+      border-color: #f5a623;
+      background: #42290a;
+      color: #ffe58a;
+    }
+    .pixel-modal-status {
+      font-size: 11px;
+      color: #ff9aa2;
+      min-height: 14px;
+      line-height: 1.35;
+    }
+    .pixel-modal-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    .pixel-btn {
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 7px 12px;
+      border: 2px solid #415c80;
+      background: #162840;
+      color: #eaf3fc;
+      cursor: pointer;
+      box-shadow: 2px 2px 0 #000;
+    }
+    .pixel-btn.primary {
+      border-color: #6fe87b;
+      background: #153826;
+      color: #a8ffb2;
+    }
+    .pixel-btn.danger {
+      border-color: #e06774;
+      background: #471620;
+      color: #ffd5da;
     }
 
     /* First-Login White Oblong Google Sign-In Gate */
@@ -237,18 +845,17 @@
       flex-shrink: 0;
     }
     #google-gate-sub {
-      font-size: 11px;
+      font-size: 12px;
       color: #d6e7f7;
       text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
       line-height: 1.4;
       max-width: 280px;
     }
     #google-gate-status {
-      font-size: 11px;
+      font-size: 12px;
       color: #ffd882;
-      background: rgba(9, 17, 29, 0.86);
-      border: 1px solid rgba(239, 196, 98, 0.45);
-      border-radius: 8px;
+      background: #0a1424;
+      border: 2px solid #efc462;
       padding: 6px 10px;
       display: none;
       line-height: 1.35;
@@ -258,21 +865,16 @@
     }
     #btn-guest-fallback {
       display: none;
-      background: rgba(14, 24, 38, 0.82);
-      border: 1px solid rgba(158, 196, 224, 0.35);
-      border-radius: 9999px;
+      background: #101d30;
+      border: 2px solid #415c80;
       color: #b7d2e8;
-      font-family: inherit;
-      font-size: 11px;
+      font-family: 'Pixelify Sans', monospace;
+      font-size: 12px;
       padding: 6px 14px;
       cursor: pointer;
     }
     #btn-guest-fallback.visible {
       display: inline-block;
-    }
-    #btn-guest-fallback:hover {
-      border-color: rgba(239, 196, 98, 0.6);
-      color: #ffe58a;
     }
 
     /* Compact Signed-In Google User Pill (top-left on login screen) */
@@ -286,12 +888,10 @@
       gap: 8px;
       max-width: calc(100vw - 76px);
       height: 36px;
-      padding: 0 12px 0 6px;
-      background: rgba(10, 17, 28, 0.88);
-      border: 1px solid rgba(239, 196, 98, 0.5);
-      border-radius: 9999px;
-      backdrop-filter: blur(6px);
-      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+      padding: 0 10px 0 6px;
+      background: #0a1424;
+      border: 2px solid #efc462;
+      box-shadow: 3px 3px 0 #000000;
     }
     #google-user-badge.visible {
       display: flex;
@@ -299,9 +899,8 @@
     #google-user-avatar {
       width: 24px;
       height: 24px;
-      border-radius: 50%;
+      border: 2px solid #ffffff;
       object-fit: cover;
-      border: 1px solid rgba(255, 255, 255, 0.45);
       background: #ffffff;
       flex-shrink: 0;
     }
@@ -309,10 +908,10 @@
       display: flex;
       flex-direction: column;
       min-width: 0;
-      line-height: 1.15;
+      line-height: 1.1;
     }
     #google-user-name {
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 700;
       color: #f3f7fc;
       white-space: nowrap;
@@ -320,48 +919,48 @@
       text-overflow: ellipsis;
     }
     #google-user-sync {
-      font-size: 9px;
+      font-size: 10px;
       color: #7ee8c4;
       white-space: nowrap;
     }
 
-    /* Admin Players Dashboard Modal */
+    /* Admin Players & Moderation Dashboard Modal (Pixel-Art Styled) */
     #admin-modal {
       position: fixed;
       inset: 0;
-      z-index: 50;
-      background: rgba(4, 8, 16, 0.82);
-      backdrop-filter: blur(6px);
+      z-index: 65;
+      background: rgba(4, 8, 16, 0.85);
       display: none;
       align-items: center;
       justify-content: center;
       padding: 14px;
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
     }
     #admin-modal.open {
       display: flex;
     }
     #admin-card {
-      width: min(860px, 100%);
+      width: min(900px, 100%);
       max-height: 88dvh;
-      background: #0b1422;
-      border: 1px solid rgba(239, 196, 98, 0.6);
-      border-radius: 10px;
+      background: #0a1322;
+      border: 2px solid #efc462;
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.78);
+      box-shadow: 6px 6px 0 #000000;
     }
     #admin-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      padding: 12px 14px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-      background: rgba(18, 30, 48, 0.9);
+      padding: 10px 14px;
+      border-bottom: 2px solid #243752;
+      background: #122036;
+      flex-wrap: wrap;
     }
     #admin-header h2 {
-      font-size: 13px;
+      font-size: 15px;
       letter-spacing: 0.08em;
       color: #ffe58a;
       text-transform: uppercase;
@@ -369,80 +968,87 @@
     .admin-btn-group {
       display: flex;
       gap: 6px;
+      flex-wrap: wrap;
     }
     .admin-btn {
       padding: 5px 10px;
-      border-radius: 5px;
-      border: 1px solid rgba(239, 196, 98, 0.5);
-      background: rgba(24, 38, 58, 0.95);
+      border-radius: 0;
+      border: 2px solid #efc462;
+      background: #182a42;
       color: #e6f0fa;
-      font-family: inherit;
-      font-size: 11px;
+      font-family: 'Pixelify Sans', monospace;
+      font-size: 12px;
+      font-weight: 700;
       cursor: pointer;
+      box-shadow: 2px 2px 0 #000;
+    }
+    .admin-btn.active-tab {
+      background: #33270d;
+      color: #ffe58a;
     }
     .admin-btn.close {
-      background: #4a1c26;
-      border-color: #e07a85;
+      background: #471620;
+      border-color: #e06774;
       color: #ffe3e6;
     }
     #admin-kpis {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
       gap: 8px;
-      padding: 12px 14px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 10px 14px;
+      border-bottom: 2px solid #1b2c44;
     }
     .admin-kpi {
-      background: rgba(16, 28, 44, 0.85);
-      border: 1px solid rgba(158, 196, 224, 0.22);
-      border-radius: 6px;
+      background: #112036;
+      border: 2px solid #2b4363;
       padding: 8px 10px;
     }
     .admin-kpi-val {
-      font-size: 18px;
+      font-size: 19px;
       font-weight: 700;
       color: #ffe58a;
     }
     .admin-kpi-lbl {
-      font-size: 10px;
+      font-size: 11px;
       color: #9bb7d0;
       margin-top: 2px;
     }
-    #admin-table-wrap {
+    #admin-table-wrap, #admin-bans-wrap {
       overflow: auto;
       padding: 10px 14px 14px;
       flex: 1;
     }
-    #admin-table {
+    #admin-table, #admin-bans-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 11px;
+      font-size: 12px;
     }
-    #admin-table th {
+    #admin-table th, #admin-bans-table th {
       text-align: left;
       padding: 7px 8px;
       color: #efc462;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+      border-bottom: 2px solid #263d5c;
       white-space: nowrap;
     }
-    #admin-table td {
+    #admin-table td, #admin-bans-table td {
       padding: 7px 8px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      border-bottom: 1px solid #1b2c44;
       color: #dce9f5;
       white-space: nowrap;
     }
     .status-pill {
       display: inline-block;
       padding: 2px 7px;
-      border-radius: 999px;
+      border: 2px solid transparent;
       font-size: 10px;
       font-weight: 700;
       text-transform: uppercase;
     }
-    .status-playing { background: rgba(52, 168, 83, 0.24); color: #7ef29d; }
-    .status-menu { background: rgba(66, 133, 244, 0.24); color: #8ec1ff; }
-    .status-paused { background: rgba(251, 188, 5, 0.24); color: #ffe07d; }
-    .status-offline { background: rgba(140, 160, 180, 0.18); color: #9db0c2; }
+    .status-playing { background: #143620; border-color: #6fe87b; color: #9effaa; }
+    .status-menu { background: #152b4a; border-color: #6fa8ff; color: #9ec8ff; }
+    .status-paused { background: #3b2d0d; border-color: #efc462; color: #ffe07d; }
+    .status-offline { background: #182230; border-color: #51667d; color: #9db0c2; }
+    .status-banned { background: #471620; border-color: #e06774; color: #ffadb6; }
 
     /* Character Name Text Input overlaid cleanly during char_select */
     #char-name-input {
@@ -500,7 +1106,48 @@
       </div>
     </div>
 
+    <!-- Top-Right Pixel Menu Button -->
     <button id="btn-menu" aria-label="Menu" title="Menu">☰</button>
+
+    <!-- Gameplay Co-op Quick Rail directly below Menu Button (Chat Bubble + Microphone) -->
+    <div id="coop-quick-rail" aria-label="Comunicação Co-op">
+      <button id="btn-coop-chat" class="rail-pixel-btn" type="button" title="Chat Co-op">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <rect x="2" y="2" width="12" height="9" fill="currentColor"/>
+          <rect x="3" y="3" width="10" height="7" fill="#0c1524"/>
+          <rect x="4" y="11" width="3" height="2" fill="currentColor"/>
+          <rect x="4" y="13" width="2" height="1" fill="currentColor"/>
+          <rect x="5" y="6" width="2" height="2" fill="#ffe58a"/>
+          <rect x="8" y="6" width="2" height="2" fill="#ffe58a"/>
+          <rect x="11" y="6" width="1" height="2" fill="#ffe58a"/>
+        </svg>
+        <span id="chat-unread-dot" class="rail-unread-dot">0</span>
+      </button>
+      <button id="btn-coop-mic" class="rail-pixel-btn muted" type="button" title="Microfone Co-op">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <rect x="6" y="2" width="4" height="7" fill="currentColor"/>
+          <rect x="4" y="6" width="1" height="4" fill="currentColor"/>
+          <rect x="11" y="6" width="1" height="4" fill="currentColor"/>
+          <rect x="5" y="10" width="6" height="1" fill="currentColor"/>
+          <rect x="7" y="11" width="2" height="2" fill="currentColor"/>
+          <rect x="5" y="13" width="6" height="1" fill="currentColor"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- In-Game Pixel Co-op Text Chat Panel -->
+    <div id="coop-chat-panel" role="region" aria-label="Chat Co-op">
+      <div id="coop-chat-header">
+        <span id="coop-chat-title">CHAT CO-OP</span>
+        <button id="coop-chat-close" type="button" aria-label="Fechar Chat">✕</button>
+      </div>
+      <div id="coop-chat-messages"></div>
+      <form id="coop-chat-form">
+        <input id="coop-chat-input" type="text" maxlength="180" autocomplete="off" placeholder="Digite sua mensagem..." />
+        <button id="coop-chat-send" type="submit">OK</button>
+      </form>
+    </div>
+
     <div id="menu-backdrop"></div>
     <div id="menu-panel" role="menu">
       <div id="menu-title">MENU</div>
@@ -518,6 +1165,65 @@
         <span id="lbl-map">Mapa das Ilhas</span>
         <span id="val-map" class="menu-badge on">I/IX</span>
       </button>
+
+      <!-- CO-OP ONLINE SECTION (HOST GENERATES CODE / CLOSES CO-OP / KICKS / REPORTS) -->
+      <div id="menu-coop-section-lbl" class="menu-section-label" style="display:none;">CO-OP ONLINE (MÁX 4)</div>
+      <button id="menu-coop-host-toggle" class="menu-item coop-open" style="display:none;">
+        <span id="lbl-coop-host">Abrir Co-op (Gerar Código)</span>
+        <span id="val-coop-host" class="menu-badge on">CO-OP</span>
+      </button>
+      <button id="menu-coop-guest-leave" class="menu-item danger" style="display:none;">
+        <span>Sair da Sala Co-op</span>
+        <span class="menu-badge">SAIR</span>
+      </button>
+      <div id="coop-menu-box">
+        <div class="coop-code-row">
+          <span id="coop-room-code-val">------</span>
+          <button id="btn-coop-copy-code" class="coop-mini-btn" type="button">COPIAR</button>
+        </div>
+        <div id="coop-members-list"></div>
+      </div>
+
+      <!-- CAMERA ZOOM IN / ZOOM OUT -->
+      <div class="menu-section-label">CÂMERA</div>
+      <div class="pixel-control-card">
+        <div class="pixel-zoom-row">
+          <button id="btn-zoom-out" class="pixel-zoom-btn" type="button">ZOOM -</button>
+          <span id="val-zoom" class="pixel-zoom-val">100%</span>
+          <button id="btn-zoom-in" class="pixel-zoom-btn" type="button">ZOOM +</button>
+        </div>
+      </div>
+
+      <!-- AUDIO: SEPARATE MUSIC & SFX ON/OFF TOGGLE + VOLUME 0..5 -->
+      <div class="menu-section-label">ÁUDIO</div>
+      <div class="pixel-control-card">
+        <div class="pixel-control-top">
+          <span id="lbl-music" class="pixel-control-name">Música</span>
+          <button id="menu-music" class="pixel-toggle-btn on" type="button">ON</button>
+        </div>
+        <div class="pixel-vol-row">
+          <button id="btn-music-vol-down" class="pixel-step-btn" type="button">-</button>
+          <div id="music-vol-bars" class="pixel-vol-bars"></div>
+          <button id="btn-music-vol-up" class="pixel-step-btn" type="button">+</button>
+          <span id="val-music-vol" class="pixel-vol-num">3/5</span>
+        </div>
+      </div>
+
+      <div class="pixel-control-card">
+        <div class="pixel-control-top">
+          <span id="lbl-sfx" class="pixel-control-name">Efeitos Sonoros</span>
+          <button id="menu-sfx" class="pixel-toggle-btn on" type="button">ON</button>
+        </div>
+        <div class="pixel-vol-row">
+          <button id="btn-sfx-vol-down" class="pixel-step-btn" type="button">-</button>
+          <div id="sfx-vol-bars" class="pixel-vol-bars"></div>
+          <button id="btn-sfx-vol-up" class="pixel-step-btn" type="button">+</button>
+          <span id="val-sfx-vol" class="pixel-vol-num">4/5</span>
+        </div>
+      </div>
+
+      <!-- GAMEPLAY & SYSTEM -->
+      <div class="menu-section-label">SISTEMA</div>
       <button id="menu-daylen" class="menu-item">
         <span id="lbl-daylen">Dia / Noite</span>
         <span id="val-daylen" class="menu-badge on">3 min</span>
@@ -525,14 +1231,6 @@
       <button id="menu-lang" class="menu-item">
         <span id="lbl-lang">Idioma</span>
         <span id="val-lang" class="menu-badge on">Português</span>
-      </button>
-      <button id="menu-music" class="menu-item">
-        <span id="lbl-music">Música</span>
-        <span id="val-music" class="menu-badge on">ON</span>
-      </button>
-      <button id="menu-sfx" class="menu-item">
-        <span id="lbl-sfx">Efeitos Sonoros</span>
-        <span id="val-sfx" class="menu-badge on">ON</span>
       </button>
       <button id="menu-fullscreen" class="menu-item">
         <span id="lbl-fullscreen">Tela Cheia</span>
@@ -558,12 +1256,54 @@
       <div id="lbl-esc-hint" class="menu-hint">ESC ou toque aqui para sair da Tela Cheia</div>
     </div>
 
-    <!-- Admin Players Metrics Dashboard Modal -->
+    <!-- Join Co-op by Code Modal -->
+    <div id="coop-join-modal" class="pixel-modal" role="dialog" aria-modal="true" aria-label="Entrar em Co-op Online">
+      <div class="pixel-modal-card">
+        <div class="pixel-modal-title">⚔ ENTRAR EM CO-OP ONLINE</div>
+        <div style="font-size:12px;color:#b8d4ec;line-height:1.35;">
+          Digite o código de 6 letras gerado pelo Host. Antes de entrar na campanha, você irá customizar seu personagem.
+        </div>
+        <input id="coop-join-code-input" class="pixel-input" type="text" maxlength="6" autocomplete="off" placeholder="EX: K7M9P2" />
+        <div id="coop-join-status" class="pixel-modal-status"></div>
+        <div class="pixel-modal-actions">
+          <button id="btn-coop-join-cancel" class="pixel-btn" type="button">Cancelar</button>
+          <button id="btn-coop-join-go" class="pixel-btn primary" type="button">Entrar &amp; Customizar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Community Report & Ban Modal -->
+    <div id="coop-report-modal" class="pixel-modal" role="dialog" aria-modal="true" aria-label="Denunciar Jogador">
+      <div class="pixel-modal-card">
+        <div class="pixel-modal-title">⚠ DENUNCIAR JOGADOR</div>
+        <div id="coop-report-target-info" style="font-size:12px;color:#ffdca8;line-height:1.35;"></div>
+        <div style="font-size:11px;color:#9bb7d0;">Selecione o tipo de denúncia:</div>
+        <div id="coop-report-reasons" class="pixel-reason-grid">
+          <button type="button" class="pixel-reason-btn selected" data-reason="Assédio sexual">Assédio sexual</button>
+          <button type="button" class="pixel-reason-btn" data-reason="Racismo">Racismo</button>
+          <button type="button" class="pixel-reason-btn" data-reason="Xenofobia">Xenofobia</button>
+          <button type="button" class="pixel-reason-btn" data-reason="Linguagem inapropriada">Linguagem inapropriada</button>
+        </div>
+        <textarea id="coop-report-details" class="pixel-textarea" maxlength="400" placeholder="Descreva brevemente o ocorrido (opcional)..."></textarea>
+        <div style="font-size:10px;color:#9bb7d0;line-height:1.35;">
+          Ao confirmar, o jogador será banido imediatamente da comunidade e o Google Forms será aberto com o Gmail do denunciante, do denunciado e a queixa para análise de guillermes.mozzer@gmail.com.
+        </div>
+        <div id="coop-report-status" class="pixel-modal-status"></div>
+        <div class="pixel-modal-actions">
+          <button id="btn-coop-report-cancel" class="pixel-btn" type="button">Cancelar</button>
+          <button id="btn-coop-report-confirm" class="pixel-btn danger" type="button">Denunciar &amp; Banir</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Admin Players & Moderation Dashboard Modal -->
     <div id="admin-modal" role="dialog" aria-modal="true" aria-label="Painel de Jogadores">
       <div id="admin-card">
         <div id="admin-header">
-          <h2>Painel de Jogadores — Corona Sagas</h2>
+          <h2>Painel Admin — Corona Sagas</h2>
           <div class="admin-btn-group">
+            <button id="admin-tab-players" class="admin-btn active-tab" type="button">Jogadores</button>
+            <button id="admin-tab-bans" class="admin-btn" type="button">Denúncias &amp; Banidos</button>
             <button id="admin-refresh" class="admin-btn" type="button">Atualizar</button>
             <button id="admin-close" class="admin-btn close" type="button">✕ Fechar</button>
           </div>
@@ -583,6 +1323,20 @@
               </tr>
             </thead>
             <tbody id="admin-tbody"></tbody>
+          </table>
+        </div>
+        <div id="admin-bans-wrap" style="display:none;">
+          <table id="admin-bans-table">
+            <thead>
+              <tr>
+                <th>Denunciado (Gmail)</th>
+                <th>Denunciante (Gmail)</th>
+                <th>Queixa</th>
+                <th>Status</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="admin-bans-tbody"></tbody>
           </table>
         </div>
       </div>

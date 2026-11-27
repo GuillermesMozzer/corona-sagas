@@ -1,0 +1,1224 @@
+import {
+  addDoc,
+  arrayUnion,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  type Unsubscribe,
+} from 'firebase/firestore';
+import {
+  type CommunityReportReason,
+  buildCommunityReportFormUrl,
+  isCustomReportFormConfigured,
+} from '../config/reportForm';
+import {
+  CENTER_X,
+  GROUND_Y,
+  type CharacterAppearance,
+  type InputState,
+  type Monarch,
+  type WorldState,
+} from '../types';
+import { authCloudState, getFirestoreDb } from './googleAuthCloud';
+
+export const MAX_COOP_PLAYERS = 4;
+
+export interface CoopMember {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL: string | null;
+  role: 'host' | 'guest';
+  appearance: CharacterAppearance;
+  micOn: boolean;
+  joinedAtMs: number;
+}
+
+export interface CoopChatMessage {
+  id: string;
+  uid: string;
+  email: string;
+  displayName: string;
+  text: string;
+  createdAtMs: number;
+}
+
+export interface CommunityBanRecord {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL: string | null;
+  banned: boolean;
+  reason: string;
+  details: string;
+  reporterUid: string;
+  reporterEmail: string;
+  reporterName: string;
+  roomCode: string;
+  createdAtMs: number;
+  unbannedAtMs?: number;
+  unbannedBy?: string;
+}
+
+export interface RemoteGuestInputSnapshot {
+  left: boolean;
+  right: boolean;
+  sprint: boolean;
+  dropSeq: number;
+  powerSeq: number;
+  updatedAtMs: number;
+}
+
+export interface CoopState {
+  active: boolean;
+  role: 'none' | 'host' | 'guest';
+  roomCode: string | null;
+  hostUid: string | null;
+  hostName: string;
+  members: CoopMember[];
+  messages: CoopChatMessage[];
+  unreadMessages: number;
+  chatOpen: boolean;
+  micOn: boolean;
+  micError: string | null;
+  statusBanner: string | null;
+}
+
+export const coopState: CoopState = {
+  active: false,
+  role: 'none',
+  roomCode: null,
+  hostUid: null,
+  hostName: '',
+  members: [],
+  messages: [],
+  unreadMessages: 0,
+  chatOpen: false,
+  micOn: false,
+  micError: null,
+  statusBanner: null,
+};
+
+type CoopListener = (state: CoopState) => void;
+const listeners = new Set<CoopListener>();
+
+let roomUnsub: Unsubscribe | null = null;
+let membersUnsub: Unsubscribe | null = null;
+let inputsUnsub: Unsubscribe | null = null;
+let messagesUnsub: Unsubscribe | null = null;
+let signalsUnsub: Unsubscribe | null = null;
+
+// Host-side tracking of guest inputs
+const remoteRawInputs = new Map<string, RemoteGuestInputSnapshot>();
+const processedDropSeq = new Map<string, number>();
+const processedPowerSeq = new Map<string, number>();
+let lastHostBroadcastMs = 0;
+
+// Guest-side tracking of outgoing input & incoming world snapshot
+let guestDropSeq = 0;
+let guestPowerSeq = 0;
+let lastSentInputKey = '';
+let lastGuestInputMs = 0;
+let latestGuestWorldSnapshot: WorldState | null = null;
+let onGuestForceExit: ((reason: string) => void) | null = null;
+
+// WebRTC Voice Chat state
+let localAudioStream: MediaStream | null = null;
+const peerConnections = new Map<string, RTCPeerConnection>();
+const remoteAudioEls = new Map<string, HTMLAudioElement>();
+const processedSignalIds = new Set<string>();
+
+const RTC_CONFIG: RTCConfiguration = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ],
+};
+
+function notify(): void {
+  for (const fn of listeners) {
+    try {
+      fn(coopState);
+    } catch {
+      // Ignore UI subscriber errors
+    }
+  }
+}
+
+export function subscribeCoop(fn: CoopListener): () => void {
+  listeners.add(fn);
+  fn(coopState);
+  return () => listeners.delete(fn);
+}
+
+export function setGuestForceExitHandler(fn: (reason: string) => void): void {
+  onGuestForceExit = fn;
+}
+
+export function setCoopChatOpen(open: boolean): void {
+  coopState.chatOpen = open;
+  if (open) coopState.unreadMessages = 0;
+  notify();
+}
+
+function generateRoomCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  for (let i = 0; i < 6; i++) {
+    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return out;
+}
+
+export function normalizeRoomCode(raw: string): string {
+  return raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+}
+
+/**
+ * Checks whether the currently signed-in Google account is banned from the Co-op community.
+ */
+export async function checkMyCommunityBan(): Promise<{ banned: boolean; reason?: string }> {
+  const db = getFirestoreDb();
+  const user = authCloudState.user;
+  if (!db || !user) return { banned: false };
+  try {
+    const snap = await getDoc(doc(db, 'community_bans', user.uid));
+    if (!snap.exists()) return { banned: false };
+    const data = snap.data() as Record<string, unknown>;
+    if (data.banned === true) {
+      return {
+        banned: true,
+        reason: typeof data.reason === 'string' ? data.reason : 'Violação das regras da comunidade',
+      };
+    }
+  } catch {
+    // Allow check to fail gracefully if offline
+  }
+  return { banned: false };
+}
+
+/**
+ * Validates a Co-op code BEFORE sending the guest to Character Customization.
+ */
+export async function validateCoopJoinCode(rawCode: string): Promise<{
+  ok: boolean;
+  code?: string;
+  hostName?: string;
+  error?: string;
+}> {
+  const user = authCloudState.user;
+  const db = getFirestoreDb();
+  if (!user || !db) {
+    return { ok: false, error: 'Conecte sua conta Google para entrar no Co-op online.' };
+  }
+
+  const ban = await checkMyCommunityBan();
+  if (ban.banned) {
+    return {
+      ok: false,
+      error: `Sua conta está banida da comunidade (${ban.reason ?? 'Denúncia'}). Somente guillermes.mozzer@gmail.com pode autorizar seu retorno.`,
+    };
+  }
+
+  const code = normalizeRoomCode(rawCode);
+  if (code.length < 4) {
+    return { ok: false, error: 'Digite um código Co-op válido (6 caracteres).' };
+  }
+
+  try {
+    const roomSnap = await getDoc(doc(db, 'coop_rooms', code));
+    if (!roomSnap.exists()) {
+      return { ok: false, error: 'Sala não encontrada. Confira o código com o Host.' };
+    }
+    const room = roomSnap.data() as Record<string, unknown>;
+    if (room.active !== true) {
+      return { ok: false, error: 'O Host já encerrou esta sessão Co-op.' };
+    }
+    const kicked = Array.isArray(room.kickedUids) ? (room.kickedUids as string[]) : [];
+    if (kicked.includes(user.uid)) {
+      return { ok: false, error: 'Você foi removido desta campanha pelo Host.' };
+    }
+    const membersSnap = await getDocs(collection(db, 'coop_rooms', code, 'members'));
+    const alreadyIn = membersSnap.docs.some((d) => d.id === user.uid);
+    if (!alreadyIn && membersSnap.size >= MAX_COOP_PLAYERS) {
+      return { ok: false, error: `Sala lotada (máximo ${MAX_COOP_PLAYERS} jogadores por campanha).` };
+    }
+    return {
+      ok: true,
+      code,
+      hostName: typeof room.hostName === 'string' ? room.hostName : 'Host',
+    };
+  } catch (err) {
+    console.warn('[Corona Co-op] Validate room error:', err);
+    return { ok: false, error: 'Erro de conexão com o servidor Co-op. Tente novamente.' };
+  }
+}
+
+function cleanupSubscriptionsAndAudio(): void {
+  roomUnsub?.();
+  membersUnsub?.();
+  inputsUnsub?.();
+  messagesUnsub?.();
+  signalsUnsub?.();
+  roomUnsub = null;
+  membersUnsub = null;
+  inputsUnsub = null;
+  messagesUnsub = null;
+  signalsUnsub = null;
+
+  remoteRawInputs.clear();
+  processedDropSeq.clear();
+  processedPowerSeq.clear();
+  latestGuestWorldSnapshot = null;
+  lastSentInputKey = '';
+
+  stopLocalMicrophoneInternal();
+  for (const pc of peerConnections.values()) {
+    try {
+      pc.close();
+    } catch {
+      // Ignore
+    }
+  }
+  peerConnections.clear();
+  for (const el of remoteAudioEls.values()) {
+    try {
+      el.pause();
+      el.srcObject = null;
+      el.remove();
+    } catch {
+      // Ignore
+    }
+  }
+  remoteAudioEls.clear();
+  processedSignalIds.clear();
+}
+
+function resetCoopState(): void {
+  cleanupSubscriptionsAndAudio();
+  coopState.active = false;
+  coopState.role = 'none';
+  coopState.roomCode = null;
+  coopState.hostUid = null;
+  coopState.hostName = '';
+  coopState.members = [];
+  coopState.messages = [];
+  coopState.unreadMessages = 0;
+  coopState.chatOpen = false;
+  coopState.micOn = false;
+  coopState.micError = null;
+  coopState.statusBanner = null;
+  notify();
+}
+
+function makeSlimSnapshot(w: WorldState): string {
+  // Keep snapshot compact & fast for Firestore (< 100 KB) by trimming transient visual particles
+  const slim: WorldState = {
+    ...w,
+    activePrompt: null,
+    particles: w.particles.filter((p) => p.kind !== 'snow').slice(-40),
+  };
+  return JSON.stringify(slim);
+}
+
+function subscribeCommonRoomChannels(code: string, myUid: string): void {
+  const db = getFirestoreDb();
+  if (!db) return;
+
+  // 1. Live Members list
+  membersUnsub = onSnapshot(collection(db, 'coop_rooms', code, 'members'), (snap) => {
+    const list: CoopMember[] = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data() as Record<string, unknown>;
+      list.push({
+        uid: String(d.uid ?? docSnap.id),
+        email: String(d.email ?? ''),
+        displayName: String(d.displayName ?? 'Monarca'),
+        photoURL: typeof d.photoURL === 'string' ? d.photoURL : null,
+        role: d.role === 'host' ? 'host' : 'guest',
+        appearance: (d.appearance as CharacterAppearance) ?? {
+          gender: 'king',
+          name: String(d.displayName ?? 'Monarca'),
+          outfitIndex: 0,
+          hairIndex: 0,
+          horseIndex: 0,
+          crownIndex: 0,
+        },
+        micOn: d.micOn === true,
+        joinedAtMs: typeof d.joinedAtMs === 'number' ? d.joinedAtMs : 0,
+      });
+    });
+    list.sort((a, b) => {
+      if (a.role !== b.role) return a.role === 'host' ? -1 : 1;
+      return a.joinedAtMs - b.joinedAtMs;
+    });
+    coopState.members = list;
+
+    // Clean up disconnected WebRTC peers & offer connections to newly joined peers if mic is active
+    const activeUids = new Set(list.map((m) => m.uid));
+    for (const [peerUid, pc] of peerConnections.entries()) {
+      if (!activeUids.has(peerUid)) {
+        try {
+          pc.close();
+        } catch {
+          // Ignore
+        }
+        peerConnections.delete(peerUid);
+        const aEl = remoteAudioEls.get(peerUid);
+        if (aEl) {
+          aEl.pause();
+          aEl.srcObject = null;
+          aEl.remove();
+          remoteAudioEls.delete(peerUid);
+        }
+      }
+    }
+    if (localAudioStream) {
+      for (const m of list) {
+        if (m.uid !== myUid && !peerConnections.has(m.uid) && myUid < m.uid) {
+          void initiateVoiceOffer(code, myUid, m.uid);
+        }
+      }
+    }
+    notify();
+  });
+
+  // 2. Live Text Chat messages
+  const msgQ = query(
+    collection(db, 'coop_rooms', code, 'messages'),
+    orderBy('createdAtMs', 'asc'),
+    limit(60)
+  );
+  messagesUnsub = onSnapshot(msgQ, (snap) => {
+    const prevCount = coopState.messages.length;
+    const msgs: CoopChatMessage[] = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data() as Record<string, unknown>;
+      msgs.push({
+        id: docSnap.id,
+        uid: String(d.uid ?? ''),
+        email: String(d.email ?? ''),
+        displayName: String(d.displayName ?? 'Monarca'),
+        text: String(d.text ?? ''),
+        createdAtMs: typeof d.createdAtMs === 'number' ? d.createdAtMs : 0,
+      });
+    });
+    coopState.messages = msgs;
+    if (!coopState.chatOpen && msgs.length > prevCount) {
+      const latest = msgs[msgs.length - 1];
+      if (latest && latest.uid !== myUid) {
+        coopState.unreadMessages += msgs.length - prevCount;
+      }
+    }
+    notify();
+  });
+
+  // 3. Live WebRTC Signaling channel for Voice Chat
+  signalsUnsub = onSnapshot(collection(db, 'coop_rooms', code, 'signals'), (snap) => {
+    snap.docChanges().forEach((chg) => {
+      if (chg.type !== 'added') return;
+      const sigId = chg.doc.id;
+      if (processedSignalIds.has(sigId)) return;
+      const d = chg.doc.data() as Record<string, unknown>;
+      if (d.to !== myUid) return;
+      processedSignalIds.add(sigId);
+      void handleIncomingVoiceSignal(code, myUid, String(d.from ?? ''), d);
+    });
+  });
+}
+
+/**
+ * HOST ONLY: Opens the player's current campaign to online Co-op (up to 4 players) and generates a room code.
+ */
+export async function hostOpenCoopRoom(world: WorldState): Promise<{ ok: boolean; code?: string; error?: string }> {
+  const user = authCloudState.user;
+  const db = getFirestoreDb();
+  if (!user || !db) {
+    return { ok: false, error: 'Conecte sua conta Google para abrir o Co-op online.' };
+  }
+  const ban = await checkMyCommunityBan();
+  if (ban.banned) {
+    return {
+      ok: false,
+      error: `Sua conta está banida da comunidade (${ban.reason ?? 'Denúncia'}). Somente guillermes.mozzer@gmail.com pode autorizar seu retorno.`,
+    };
+  }
+  if (coopState.active && coopState.role === 'host' && coopState.roomCode) {
+    return { ok: true, code: coopState.roomCode };
+  }
+
+  resetCoopState();
+  const code = generateRoomCode();
+
+  // Tag host monarch with host identity
+  if (world.monarchs[0]) {
+    world.monarchs[0].playerUid = user.uid;
+    world.monarchs[0].playerName = world.appearance.name?.trim() || user.displayName;
+    world.monarchs[0].appearance = { ...world.appearance };
+  }
+  world.localPlayerUid = user.uid;
+
+  try {
+    await setDoc(doc(db, 'coop_rooms', code), {
+      code,
+      hostUid: user.uid,
+      hostEmail: user.email,
+      hostName: user.displayName,
+      hostPhoto: user.photoURL,
+      active: true,
+      maxPlayers: MAX_COOP_PLAYERS,
+      kickedUids: [],
+      worldSnapshotJson: makeSlimSnapshot(world),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    await setDoc(doc(db, 'coop_rooms', code, 'members', user.uid), {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName,
+      photoURL: user.photoURL,
+      role: 'host',
+      appearance: { ...world.appearance },
+      micOn: false,
+      joinedAtMs: Date.now(),
+    });
+
+    coopState.active = true;
+    coopState.role = 'host';
+    coopState.roomCode = code;
+    coopState.hostUid = user.uid;
+    coopState.hostName = user.displayName;
+
+    subscribeCommonRoomChannels(code, user.uid);
+
+    // Host listens to guest inputs in real time
+    inputsUnsub = onSnapshot(collection(db, 'coop_rooms', code, 'inputs'), (snap) => {
+      snap.forEach((docSnap) => {
+        const uid = docSnap.id;
+        if (uid === user.uid) return;
+        const d = docSnap.data() as Record<string, unknown>;
+        remoteRawInputs.set(uid, {
+          left: d.left === true,
+          right: d.right === true,
+          sprint: d.sprint === true,
+          dropSeq: typeof d.dropSeq === 'number' ? d.dropSeq : 0,
+          powerSeq: typeof d.powerSeq === 'number' ? d.powerSeq : 0,
+          updatedAtMs: typeof d.updatedAtMs === 'number' ? d.updatedAtMs : 0,
+        });
+      });
+    });
+
+    notify();
+    return { ok: true, code };
+  } catch (err) {
+    console.warn('[Corona Co-op] Failed to open room:', err);
+    resetCoopState();
+    return { ok: false, error: 'Não foi possível criar a sala Co-op. Verifique sua conexão.' };
+  }
+}
+
+/**
+ * HOST ONLY: Closes the Co-op room, disconnects guests, and keeps 100% of campaign progress on the Host.
+ */
+export async function hostCloseCoopRoom(world?: WorldState): Promise<void> {
+  if (!coopState.active || coopState.role !== 'host' || !coopState.roomCode) return;
+  const db = getFirestoreDb();
+  const code = coopState.roomCode;
+  if (world && world.monarchs.length > 1) {
+    world.monarchs = [world.monarchs[0]];
+  }
+  resetCoopState();
+  if (db) {
+    try {
+      await setDoc(
+        doc(db, 'coop_rooms', code),
+        { active: false, closedAt: serverTimestamp(), updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+    } catch {
+      // Ignore network close errors
+    }
+  }
+}
+
+/**
+ * HOST ONLY: Kicks/eliminates a specific guest player from the Co-op campaign.
+ */
+export async function hostKickCoopPlayer(targetUid: string, world?: WorldState): Promise<boolean> {
+  if (!coopState.active || coopState.role !== 'host' || !coopState.roomCode) return false;
+  if (targetUid === coopState.hostUid) return false;
+  const db = getFirestoreDb();
+  if (!db) return false;
+  const code = coopState.roomCode;
+  try {
+    await setDoc(
+      doc(db, 'coop_rooms', code),
+      { kickedUids: arrayUnion(targetUid), updatedAt: serverTimestamp() },
+      { merge: true }
+    );
+    await deleteDoc(doc(db, 'coop_rooms', code, 'members', targetUid));
+    await deleteDoc(doc(db, 'coop_rooms', code, 'inputs', targetUid));
+    if (world) {
+      world.monarchs = world.monarchs.filter((m, idx) => idx === 0 || m.playerUid !== targetUid);
+    }
+    return true;
+  } catch (err) {
+    console.warn('[Corona Co-op] Failed to kick player:', err);
+    return false;
+  }
+}
+
+/**
+ * GUEST: Joins an active Host room AFTER completing character customization.
+ */
+export async function joinCoopRoomAsGuest(
+  rawCode: string,
+  appearance: CharacterAppearance
+): Promise<{ ok: boolean; initialWorld?: WorldState; error?: string }> {
+  const validation = await validateCoopJoinCode(rawCode);
+  if (!validation.ok || !validation.code) {
+    return { ok: false, error: validation.error ?? 'Código inválido.' };
+  }
+  const user = authCloudState.user;
+  const db = getFirestoreDb();
+  if (!user || !db) return { ok: false, error: 'Conta Google necessária.' };
+
+  const code = validation.code;
+  resetCoopState();
+
+  try {
+    const roomSnap = await getDoc(doc(db, 'coop_rooms', code));
+    if (!roomSnap.exists()) return { ok: false, error: 'Sala não encontrada.' };
+    const roomData = roomSnap.data() as Record<string, unknown>;
+    if (roomData.active !== true) return { ok: false, error: 'Sala encerrada pelo Host.' };
+
+    const memberAppearance: CharacterAppearance = {
+      ...appearance,
+      name: appearance.name?.trim() || user.displayName,
+    };
+
+    await setDoc(doc(db, 'coop_rooms', code, 'members', user.uid), {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName,
+      photoURL: user.photoURL,
+      role: 'guest',
+      appearance: memberAppearance,
+      micOn: false,
+      joinedAtMs: Date.now(),
+    });
+
+    coopState.active = true;
+    coopState.role = 'guest';
+    coopState.roomCode = code;
+    coopState.hostUid = String(roomData.hostUid ?? '');
+    coopState.hostName = String(roomData.hostName ?? 'Host');
+
+    let initialWorld: WorldState | undefined;
+    if (typeof roomData.worldSnapshotJson === 'string') {
+      try {
+        initialWorld = JSON.parse(roomData.worldSnapshotJson) as WorldState;
+        initialWorld.mode = 'playing';
+        initialWorld.localPlayerUid = user.uid;
+      } catch {
+        // Wait for next snapshot
+      }
+    }
+
+    subscribeCommonRoomChannels(code, user.uid);
+
+    // Guest subscribes to room document for live world snapshots & kick/close events
+    roomUnsub = onSnapshot(doc(db, 'coop_rooms', code), (docSnap) => {
+      if (!docSnap.exists()) {
+        resetCoopState();
+        onGuestForceExit?.('A sala Co-op foi encerrada.');
+        return;
+      }
+      const d = docSnap.data() as Record<string, unknown>;
+      if (d.active !== true) {
+        resetCoopState();
+        onGuestForceExit?.('O Host encerrou o modo Co-op.');
+        return;
+      }
+      const kicked = Array.isArray(d.kickedUids) ? (d.kickedUids as string[]) : [];
+      if (kicked.includes(user.uid)) {
+        resetCoopState();
+        onGuestForceExit?.('Você foi removido da campanha pelo Host.');
+        return;
+      }
+      if (typeof d.worldSnapshotJson === 'string') {
+        try {
+          const parsed = JSON.parse(d.worldSnapshotJson) as WorldState;
+          parsed.mode = 'playing';
+          parsed.localPlayerUid = user.uid;
+          latestGuestWorldSnapshot = parsed;
+        } catch {
+          // Ignore malformed frame
+        }
+      }
+    });
+
+    notify();
+    return { ok: true, initialWorld };
+  } catch (err) {
+    console.warn('[Corona Co-op] Join error:', err);
+    resetCoopState();
+    return { ok: false, error: 'Erro ao conectar à campanha Co-op.' };
+  }
+}
+
+/**
+ * GUEST: Leaves the Host's room cleanly WITHOUT closing the Host's Co-op session.
+ */
+export async function leaveCoopAsGuest(): Promise<void> {
+  if (!coopState.active || coopState.role !== 'guest' || !coopState.roomCode) return;
+  const db = getFirestoreDb();
+  const user = authCloudState.user;
+  const code = coopState.roomCode;
+  resetCoopState();
+  if (db && user) {
+    try {
+      await deleteDoc(doc(db, 'coop_rooms', code, 'members', user.uid));
+      await deleteDoc(doc(db, 'coop_rooms', code, 'inputs', user.uid));
+    } catch {
+      // Ignore network errors on exit
+    }
+  }
+}
+
+/**
+ * HOST TICK: Syncs guest monarchs in world.monarchs[], extracts fresh remote InputStates,
+ * and broadcasts compact live world snapshots to Firestore (~10 Hz).
+ */
+export function hostSyncCoopWorld(world: WorldState): Map<string, InputState> {
+  const remoteInputs = new Map<string, InputState>();
+  if (!coopState.active || coopState.role !== 'host' || !coopState.roomCode) return remoteInputs;
+
+  const hostUid = coopState.hostUid;
+  const guests = coopState.members.filter((m) => m.uid !== hostUid).slice(0, MAX_COOP_PLAYERS - 1);
+  const guestUids = new Set(guests.map((g) => g.uid));
+
+  // Remove monarchs of guests who left
+  if (world.monarchs.length > 1) {
+    world.monarchs = world.monarchs.filter((m, idx) => idx === 0 || (m.playerUid && guestUids.has(m.playerUid)));
+  }
+
+  // Ensure every connected guest has a live Monarch in the Host's campaign
+  const hostMonarch = world.monarchs[0];
+  guests.forEach((guest, idx) => {
+    let m = world.monarchs.find((item) => item.playerUid === guest.uid);
+    if (!m && hostMonarch) {
+      const spawnX = Math.max(160, Math.min(2400, (hostMonarch.x || CENTER_X) + (idx % 2 === 0 ? -24 : 24) * (idx + 1)));
+      const newMonarch: Monarch = {
+        id: 100 + idx,
+        x: spawnX,
+        y: GROUND_Y,
+        vx: 0,
+        facing: 1,
+        stamina: 1,
+        maxStamina: 1,
+        exhausted: false,
+        sprinting: false,
+        coins: 6,
+        maxCoins: hostMonarch.maxCoins,
+        diamonds: 0,
+        mount: 'starter',
+        mountPowerCooldown: 0,
+        flyTimer: 0,
+        flyY: 0,
+        roarTimer: 0,
+        wolfBiteCooldown: 0,
+        hasCrown: true,
+        crownX: spawnX,
+        crownY: GROUND_Y - 24,
+        crownVx: 0,
+        crownVy: 0,
+        crownGrounded: false,
+        crownStolenByEnemyId: null,
+        animTime: 0,
+        dropCooldown: 0,
+        hurtCooldown: 0,
+        cameraX: Math.max(0, spawnX - (world.viewWidth || 480) / 2),
+        playerUid: guest.uid,
+        playerName: guest.appearance?.name?.trim() || guest.displayName,
+        appearance: { ...guest.appearance },
+      };
+      world.monarchs.push(newMonarch);
+      m = newMonarch;
+    } else if (m) {
+      m.playerName = guest.appearance?.name?.trim() || guest.displayName;
+      m.appearance = { ...guest.appearance };
+      m.maxCoins = hostMonarch?.maxCoins ?? 30;
+    }
+
+    const raw = remoteRawInputs.get(guest.uid);
+    const prevDrop = processedDropSeq.get(guest.uid) ?? 0;
+    const prevPower = processedPowerSeq.get(guest.uid) ?? 0;
+    const dropTriggered = Boolean(raw && raw.dropSeq > prevDrop);
+    const powerTriggered = Boolean(raw && raw.powerSeq > prevPower);
+    if (raw) {
+      processedDropSeq.set(guest.uid, raw.dropSeq);
+      processedPowerSeq.set(guest.uid, raw.powerSeq);
+    }
+
+    remoteInputs.set(guest.uid, {
+      left: Boolean(raw?.left),
+      right: Boolean(raw?.right),
+      leftJustPressed: false,
+      rightJustPressed: false,
+      sprint: Boolean(raw?.sprint),
+      powerJustPressed: powerTriggered,
+      drop: false,
+      dropJustPressed: dropTriggered,
+      cmdZ: false,
+      cmdX: false,
+      cmdC: false,
+      cmdV: false,
+    });
+  });
+
+  // Throttled broadcast of live world snapshot (~10 Hz)
+  const now = performance.now();
+  const db = getFirestoreDb();
+  if (db && now - lastHostBroadcastMs >= 110) {
+    lastHostBroadcastMs = now;
+    const code = coopState.roomCode;
+    void setDoc(
+      doc(db, 'coop_rooms', code),
+      {
+        worldSnapshotJson: makeSlimSnapshot(world),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    ).catch(() => {
+      // Transient write error ignored
+    });
+  }
+
+  return remoteInputs;
+}
+
+/**
+ * GUEST TICK: Consumes the latest authoritative world snapshot from the Host and uploads local inputs.
+ */
+export function guestSyncCoopFrame(
+  currentWorld: WorldState,
+  localInput: InputState
+): WorldState {
+  if (!coopState.active || coopState.role !== 'guest' || !coopState.roomCode) {
+    return currentWorld;
+  }
+
+  // Send local inputs when changed or on action edge (drop / power)
+  if (localInput.dropJustPressed) guestDropSeq += 1;
+  if (localInput.powerJustPressed) guestPowerSeq += 1;
+
+  const key = `${localInput.left ? 1 : 0}${localInput.right ? 1 : 0}${localInput.sprint ? 1 : 0}:${guestDropSeq}:${guestPowerSeq}`;
+  const now = performance.now();
+  const db = getFirestoreDb();
+  const user = authCloudState.user;
+
+  if (db && user && (key !== lastSentInputKey || now - lastGuestInputMs > 450)) {
+    lastSentInputKey = key;
+    lastGuestInputMs = now;
+    void setDoc(doc(db, 'coop_rooms', coopState.roomCode, 'inputs', user.uid), {
+      left: localInput.left,
+      right: localInput.right,
+      sprint: localInput.sprint,
+      dropSeq: guestDropSeq,
+      powerSeq: guestPowerSeq,
+      updatedAtMs: Date.now(),
+    }).catch(() => {
+      // Ignore transient write failures
+    });
+  }
+
+  if (latestGuestWorldSnapshot) {
+    const snap = latestGuestWorldSnapshot;
+    latestGuestWorldSnapshot = null;
+    snap.viewWidth = currentWorld.viewWidth;
+    snap.viewHeight = currentWorld.viewHeight;
+    snap.localPlayerUid = user?.uid;
+    return snap;
+  }
+
+  return currentWorld;
+}
+
+/**
+ * Sends a real-time Co-op text chat message.
+ */
+export async function sendCoopChatMessage(rawText: string): Promise<boolean> {
+  const text = rawText.trim().slice(0, 180);
+  if (!text) return false;
+  if (!coopState.active || !coopState.roomCode) return false;
+  const db = getFirestoreDb();
+  const user = authCloudState.user;
+  if (!db || !user) return false;
+
+  try {
+    await addDoc(collection(db, 'coop_rooms', coopState.roomCode, 'messages'), {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName,
+      text,
+      createdAtMs: Date.now(),
+      createdAt: serverTimestamp(),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reports & IMMEDIATELY BANS a player from the Co-op community, kicks them from the room,
+ * records the complaint in Firestore for Admin review, and opens the Google Form!
+ */
+export async function reportAndBanCoopPlayer(
+  target: CoopMember,
+  reason: CommunityReportReason,
+  details: string,
+  world?: WorldState
+): Promise<{ ok: boolean; formUrl: string; customFormConfigured: boolean; error?: string }> {
+  const db = getFirestoreDb();
+  const me = authCloudState.user;
+  const formUrl = buildCommunityReportFormUrl({
+    reporterEmail: me?.email ?? '',
+    reportedEmail: target.email,
+    reason,
+    details,
+  });
+
+  if (!db || !me) {
+    return {
+      ok: false,
+      formUrl,
+      customFormConfigured: isCustomReportFormConfigured(),
+      error: 'Conecte sua conta Google para enviar denúncias.',
+    };
+  }
+
+  try {
+    const nowMs = Date.now();
+    const record: CommunityBanRecord = {
+      uid: target.uid,
+      email: target.email,
+      displayName: target.displayName,
+      photoURL: target.photoURL,
+      banned: true,
+      reason,
+      details: details.trim().slice(0, 400),
+      reporterUid: me.uid,
+      reporterEmail: me.email,
+      reporterName: me.displayName,
+      roomCode: coopState.roomCode ?? 'COOP',
+      createdAtMs: nowMs,
+    };
+
+    // 1. Immediately ban the reported player in community_bans/{uid}
+    await setDoc(doc(db, 'community_bans', target.uid), {
+      ...record,
+      createdAt: serverTimestamp(),
+    });
+
+    // 2. Append immutable report log in community_reports
+    await addDoc(collection(db, 'community_reports'), {
+      ...record,
+      createdAt: serverTimestamp(),
+    });
+
+    // 3. Immediately remove them from the active room
+    if (coopState.active && coopState.roomCode) {
+      await setDoc(
+        doc(db, 'coop_rooms', coopState.roomCode),
+        { kickedUids: arrayUnion(target.uid), updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      await deleteDoc(doc(db, 'coop_rooms', coopState.roomCode, 'members', target.uid));
+      await deleteDoc(doc(db, 'coop_rooms', coopState.roomCode, 'inputs', target.uid));
+      if (world) {
+        world.monarchs = world.monarchs.filter((m, idx) => idx === 0 || m.playerUid !== target.uid);
+      }
+    }
+
+    // Copy summary to clipboard so even without pre-fill entry IDs the player can paste easily if needed
+    const summaryText = `Denunciante: ${me.email}\nDenunciado: ${target.email}\nMotivo: ${reason}${details.trim() ? `\nQueixa: ${details.trim()}` : ''}`;
+    try {
+      await navigator.clipboard?.writeText(summaryText);
+    } catch {
+      // Clipboard optional
+    }
+
+    // Open Google Forms in a new tab
+    window.open(formUrl, '_blank', 'noopener,noreferrer');
+
+    return {
+      ok: true,
+      formUrl,
+      customFormConfigured: isCustomReportFormConfigured(),
+    };
+  } catch (err) {
+    console.warn('[Corona Co-op] Report failed:', err);
+    return {
+      ok: false,
+      formUrl,
+      customFormConfigured: isCustomReportFormConfigured(),
+      error: 'Erro ao registrar denúncia. Tente novamente.',
+    };
+  }
+}
+
+/**
+ * ADMIN ONLY (guillermes.mozzer@gmail.com): Loads all community bans/reports.
+ */
+export async function fetchCommunityBans(): Promise<CommunityBanRecord[]> {
+  const db = getFirestoreDb();
+  if (!db || !authCloudState.user?.isAdmin) return [];
+  try {
+    const snap = await getDocs(
+      query(collection(db, 'community_bans'), orderBy('createdAtMs', 'desc'), limit(100))
+    );
+    const rows: CommunityBanRecord[] = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data() as Record<string, unknown>;
+      rows.push({
+        uid: String(d.uid ?? docSnap.id),
+        email: String(d.email ?? ''),
+        displayName: String(d.displayName ?? 'Jogador'),
+        photoURL: typeof d.photoURL === 'string' ? d.photoURL : null,
+        banned: d.banned === true,
+        reason: String(d.reason ?? ''),
+        details: String(d.details ?? ''),
+        reporterUid: String(d.reporterUid ?? ''),
+        reporterEmail: String(d.reporterEmail ?? ''),
+        reporterName: String(d.reporterName ?? ''),
+        roomCode: String(d.roomCode ?? ''),
+        createdAtMs: typeof d.createdAtMs === 'number' ? d.createdAtMs : 0,
+        unbannedAtMs: typeof d.unbannedAtMs === 'number' ? d.unbannedAtMs : undefined,
+        unbannedBy: typeof d.unbannedBy === 'string' ? d.unbannedBy : undefined,
+      });
+    });
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * ADMIN ONLY (guillermes.mozzer@gmail.com): Re-authorizes a banned player to enter the Co-op community again.
+ */
+export async function adminUnbanCommunityPlayer(targetUid: string): Promise<boolean> {
+  const db = getFirestoreDb();
+  const me = authCloudState.user;
+  if (!db || !me?.isAdmin) return false;
+  try {
+    await setDoc(
+      doc(db, 'community_bans', targetUid),
+      {
+        banned: false,
+        unbannedBy: me.email,
+        unbannedAtMs: Date.now(),
+        unbannedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// =========================================================================
+// WEBRTC PEER-TO-PEER VOICE CHAT (MICROPHONE) VIA FIRESTORE SIGNALING
+// =========================================================================
+
+function stopLocalMicrophoneInternal(): void {
+  if (localAudioStream) {
+    for (const track of localAudioStream.getTracks()) {
+      track.stop();
+    }
+    localAudioStream = null;
+  }
+}
+
+function getOrCreatePeerConnection(code: string, myUid: string, peerUid: string): RTCPeerConnection {
+  const existing = peerConnections.get(peerUid);
+  if (existing) return existing;
+
+  const pc = new RTCPeerConnection(RTC_CONFIG);
+  peerConnections.set(peerUid, pc);
+
+  if (localAudioStream) {
+    for (const track of localAudioStream.getAudioTracks()) {
+      pc.addTrack(track, localAudioStream);
+    }
+  }
+
+  pc.onicecandidate = (ev) => {
+    if (!ev.candidate) return;
+    const db = getFirestoreDb();
+    if (!db) return;
+    void addDoc(collection(db, 'coop_rooms', code, 'signals'), {
+      from: myUid,
+      to: peerUid,
+      type: 'ice',
+      candidate: ev.candidate.toJSON(),
+      createdAtMs: Date.now(),
+    }).catch(() => {});
+  };
+
+  pc.ontrack = (ev) => {
+    const stream = ev.streams[0];
+    if (!stream) return;
+    let audioEl = remoteAudioEls.get(peerUid);
+    if (!audioEl) {
+      audioEl = document.createElement('audio');
+      audioEl.autoplay = true;
+      audioEl.setAttribute('playsinline', 'true');
+      audioEl.style.display = 'none';
+      document.body.appendChild(audioEl);
+      remoteAudioEls.set(peerUid, audioEl);
+    }
+    audioEl.srcObject = stream;
+    void audioEl.play().catch(() => {});
+  };
+
+  return pc;
+}
+
+async function initiateVoiceOffer(code: string, myUid: string, peerUid: string): Promise<void> {
+  const db = getFirestoreDb();
+  if (!db) return;
+  try {
+    const pc = getOrCreatePeerConnection(code, myUid, peerUid);
+    const offer = await pc.createOffer({ offerToReceiveAudio: true });
+    await pc.setLocalDescription(offer);
+    await addDoc(collection(db, 'coop_rooms', code, 'signals'), {
+      from: myUid,
+      to: peerUid,
+      type: 'offer',
+      sdp: offer.sdp ?? '',
+      createdAtMs: Date.now(),
+    });
+  } catch {
+    // Ignore transient WebRTC negotiation failure
+  }
+}
+
+async function handleIncomingVoiceSignal(
+  code: string,
+  myUid: string,
+  fromUid: string,
+  data: Record<string, unknown>
+): Promise<void> {
+  if (!fromUid || fromUid === myUid) return;
+  const db = getFirestoreDb();
+  if (!db) return;
+  const sigType = String(data.type ?? '');
+
+  try {
+    const pc = getOrCreatePeerConnection(code, myUid, fromUid);
+    if (sigType === 'offer' && typeof data.sdp === 'string') {
+      await pc.setRemoteDescription({ type: 'offer', sdp: data.sdp });
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await addDoc(collection(db, 'coop_rooms', code, 'signals'), {
+        from: myUid,
+        to: fromUid,
+        type: 'answer',
+        sdp: answer.sdp ?? '',
+        createdAtMs: Date.now(),
+      });
+    } else if (sigType === 'answer' && typeof data.sdp === 'string') {
+      if (pc.signalingState === 'have-local-offer') {
+        await pc.setRemoteDescription({ type: 'answer', sdp: data.sdp });
+      }
+    } else if (sigType === 'ice' && data.candidate) {
+      await pc.addIceCandidate(new RTCIceCandidate(data.candidate as RTCIceCandidateInit));
+    }
+  } catch {
+    // Ignore stale ICE / SDP signal errors
+  }
+}
+
+/**
+ * Toggles the player's microphone ON / OFF for live Co-op voice chat.
+ */
+export async function toggleCoopMicrophone(): Promise<{ ok: boolean; micOn: boolean; error?: string }> {
+  if (!coopState.active || !coopState.roomCode) {
+    coopState.micError = 'Ative ou entre em uma campanha Co-op para usar o microfone.';
+    notify();
+    return { ok: false, micOn: false, error: coopState.micError };
+  }
+  const user = authCloudState.user;
+  const db = getFirestoreDb();
+  if (!user || !db) {
+    return { ok: false, micOn: false, error: 'Conta Google necessária.' };
+  }
+
+  coopState.micError = null;
+
+  if (coopState.micOn) {
+    stopLocalMicrophoneInternal();
+    coopState.micOn = false;
+    void setDoc(
+      doc(db, 'coop_rooms', coopState.roomCode, 'members', user.uid),
+      { micOn: false },
+      { merge: true }
+    ).catch(() => {});
+    notify();
+    return { ok: true, micOn: false };
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    coopState.micError = 'Microfone não suportado neste navegador.';
+    notify();
+    return { ok: false, micOn: false, error: coopState.micError };
+  }
+
+  try {
+    localAudioStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false,
+    });
+    coopState.micOn = true;
+
+    const code = coopState.roomCode;
+    void setDoc(
+      doc(db, 'coop_rooms', code, 'members', user.uid),
+      { micOn: true },
+      { merge: true }
+    ).catch(() => {});
+
+    // Attach local audio track to existing peers & initiate offers to all other room members
+    for (const m of coopState.members) {
+      if (m.uid === user.uid) continue;
+      const pc = getOrCreatePeerConnection(code, user.uid, m.uid);
+      const senders = pc.getSenders();
+      for (const track of localAudioStream.getAudioTracks()) {
+        if (!senders.some((s) => s.track?.kind === 'audio')) {
+          pc.addTrack(track, localAudioStream);
+        }
+      }
+      await initiateVoiceOffer(code, user.uid, m.uid);
+    }
+
+    notify();
+    return { ok: true, micOn: true };
+  } catch {
+    coopState.micOn = false;
+    coopState.micError = 'Permissão de microfone negada.';
+    notify();
+    return { ok: false, micOn: false, error: coopState.micError };
+  }
+}

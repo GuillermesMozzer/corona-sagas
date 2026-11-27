@@ -203,6 +203,14 @@ export class PixelRenderer {
     return { top, bot, nightFactor };
   }
 
+  private getLocalMonarch(w: WorldState): Monarch | undefined {
+    if (w.localPlayerUid) {
+      const found = w.monarchs.find((m) => m.playerUid === w.localPlayerUid);
+      if (found) return found;
+    }
+    return w.monarchs[0];
+  }
+
   public render(ctx: CanvasRenderingContext2D, w: WorldState): void {
     this.syncViewport(ctx, w);
     ctx.setTransform(this.renderScale, 0, 0, this.renderScale, 0, 0);
@@ -227,7 +235,7 @@ export class PixelRenderer {
       return;
     }
 
-    const monarch = w.monarchs[0];
+    const monarch = this.getLocalMonarch(w);
     const shakeX = w.screenShake > 0 ? Math.round((Math.random() - 0.5) * 4) : 0;
     const shakeY = w.screenShake > 0 ? Math.round((Math.random() - 0.5) * 3) : 0;
     const fallbackCam = Math.max(0, Math.round(1400 - this.viewW / 2));
@@ -276,6 +284,11 @@ export class PixelRenderer {
     this.drawWildlife(ctx, w, camX);
     this.drawVillagers(ctx, w, camX);
     this.drawEnemies(ctx, w, camX);
+    for (const m of w.monarchs) {
+      if (m !== monarch) {
+        this.drawMonarch(ctx, w, m, camX, 1, Math.round(m.x - camX), GROUND_Y);
+      }
+    }
     if (monarch) this.drawMonarch(ctx, w, monarch, camX, 1, Math.round(monarch.x - camX), GROUND_Y);
     this.drawTutorialSpirit(ctx, w, camX);
     this.drawFireTrailsAndLightning(ctx, w, camX);
@@ -361,10 +374,10 @@ export class PixelRenderer {
     ctx.fillText(t('subtitle'), cx, titleY + 14);
 
     if (isPlayerAuthorizedToPlay()) {
-      const btnW = Math.min(200, this.viewW - 28);
-      const btnH = 24;
+      const btnW = Math.min(204, this.viewW - 28);
+      const btnH = 22;
       const bx = Math.round(cx - btnW / 2);
-      const by1 = titleY + 26;
+      const by1 = titleY + 22;
 
       ctx.fillStyle = 'rgba(20, 32, 48, 0.92)';
       ctx.fillRect(bx, by1, btnW, btnH);
@@ -372,44 +385,58 @@ export class PixelRenderer {
       ctx.lineWidth = 1;
       ctx.strokeRect(bx + 0.5, by1 + 0.5, btnW - 1, btnH - 1);
       ctx.fillStyle = '#ffe58a';
-      ctx.font = 'bold 9px monospace';
-      ctx.fillText(t('new_campaign'), cx, by1 + 15);
+      ctx.font = 'bold 8.5px monospace';
+      ctx.fillText(t('new_campaign'), cx, by1 + 14);
       this.addHit('login_new', bx, by1, btnW, btnH);
 
-      const by2 = by1 + 30;
+      const by2 = by1 + 26;
       const savedCount = countSavedCampaigns();
       ctx.fillStyle = saved ? 'rgba(16, 28, 42, 0.92)' : 'rgba(14, 20, 30, 0.85)';
-      ctx.fillRect(bx, by2, btnW, 32);
+      ctx.fillRect(bx, by2, btnW, 28);
       ctx.strokeStyle = saved ? 'rgba(140, 210, 255, 0.78)' : 'rgba(140, 175, 210, 0.42)';
-      ctx.strokeRect(bx + 0.5, by2 + 0.5, btnW - 1, 31);
+      ctx.strokeRect(bx + 0.5, by2 + 0.5, btnW - 1, 27);
 
       if (saved) {
-        drawShieldEmblem(ctx, saved.crest, bx + 20, by2 + 16, 9);
+        drawShieldEmblem(ctx, saved.crest, bx + 18, by2 + 14, 8);
         ctx.textAlign = 'left';
         ctx.fillStyle = '#d9eeff';
-        ctx.font = 'bold 8px monospace';
-        ctx.fillText(`${t('slots_btn')} (${savedCount}/${MAX_SAVE_SLOTS})`, bx + 36, by2 + 13);
+        ctx.font = 'bold 7.5px monospace';
+        ctx.fillText(`${t('slots_btn')} (${savedCount}/${MAX_SAVE_SLOTS})`, bx + 33, by2 + 12);
         ctx.fillStyle = '#95b2cc';
-        ctx.font = '7px monospace';
+        ctx.font = '6.5px monospace';
         ctx.fillText(
           `Slot ${saved.slot + 1} · ${t('day_short')} ${saved.day} · ${saved.gold}g`,
-          bx + 36,
-          by2 + 24
+          bx + 33,
+          by2 + 22
         );
       } else {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#c4d8eb';
-        ctx.font = 'bold 8px monospace';
-        ctx.fillText(`${t('slots_btn')} (0/${MAX_SAVE_SLOTS})`, cx, by2 + 14);
+        ctx.font = 'bold 7.5px monospace';
+        ctx.fillText(`${t('slots_btn')} (0/${MAX_SAVE_SLOTS})`, cx, by2 + 12);
         ctx.fillStyle = '#7e93a8';
-        ctx.font = '7px monospace';
-        ctx.fillText(t('no_save'), cx, by2 + 25);
+        ctx.font = '6.5px monospace';
+        ctx.fillText(t('no_save'), cx, by2 + 22);
       }
-      this.addHit('login_slots', bx, by2, btnW, 32);
+      this.addHit('login_slots', bx, by2, btnW, 28);
+
+      // Co-op Online Join by Code Button
+      const byCoop = by2 + 32;
+      const coopH = 21;
+      ctx.fillStyle = 'rgba(18, 40, 32, 0.94)';
+      ctx.fillRect(bx, byCoop, btnW, coopH);
+      ctx.strokeStyle = '#6fe87b';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx + 0.5, byCoop + 0.5, btnW - 1, coopH - 1);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#a7ffae';
+      ctx.font = 'bold 8px monospace';
+      ctx.fillText('⚔ CO-OP ONLINE (CÓDIGO)', cx, byCoop + 13.5);
+      this.addHit('login_coop', bx, byCoop, btnW, coopH);
 
       // Pixel-Art Google Forms Rating Button (+3 Diamonds)
-      const by3 = by2 + 38;
-      const fbBtnH = 22;
+      const by3 = byCoop + 25;
+      const fbBtnH = 20;
       const alreadyAnswered = isFeedbackAnswered();
       ctx.fillStyle = alreadyAnswered ? 'rgba(16, 26, 38, 0.88)' : 'rgba(15, 36, 48, 0.94)';
       ctx.fillRect(bx, by3, btnW, fbBtnH);
@@ -418,21 +445,15 @@ export class PixelRenderer {
       ctx.strokeRect(bx + 0.5, by3 + 0.5, btnW - 1, fbBtnH - 1);
 
       // Pixel-art star on left and diamond on right
-      this.drawPixelStar(ctx, bx + 12, by3 + 11, 1, true);
+      this.drawPixelStar(ctx, bx + 12, by3 + 10, 1, true);
       if (!alreadyAnswered) {
-        this.drawPixelDiamondIcon(ctx, bx + btnW - 13, by3 + 11, 1, w.elapsed);
+        this.drawPixelDiamondIcon(ctx, bx + btnW - 13, by3 + 10, 1, w.elapsed);
       }
       ctx.textAlign = 'center';
       ctx.fillStyle = alreadyAnswered ? '#b7d4e8' : '#b8f7ff';
-      ctx.font = 'bold 7.5px monospace';
-      ctx.fillText(alreadyAnswered ? t('rate_game_done_btn') : t('rate_game_btn'), cx, by3 + 14);
+      ctx.font = 'bold 7px monospace';
+      ctx.fillText(alreadyAnswered ? t('rate_game_done_btn') : t('rate_game_btn'), cx, by3 + 13);
       this.addHit('login_feedback', bx, by3, btnW, fbBtnH);
-
-      ctx.textAlign = 'center';
-      const pulse = 0.6 + 0.4 * Math.sin(w.elapsed * 3);
-      ctx.fillStyle = `rgba(205, 224, 242, ${pulse.toFixed(2)})`;
-      ctx.font = '7px monospace';
-      ctx.fillText(t('login_hint'), cx, by3 + 33);
     }
 
     // Google Technology Disclaimer Badge with Pixel-Art Google "G" Logo
@@ -3120,9 +3141,10 @@ export class PixelRenderer {
     screenX: number,
     groundY: number
   ): void {
-    const outfit = OUTFIT_PRESETS[w.appearance.outfitIndex] ?? OUTFIT_PRESETS[0];
-    const hair = HAIR_PRESETS[w.appearance.hairIndex] ?? HAIR_PRESETS[0];
-    const horse = HORSE_PRESETS[w.appearance.horseIndex] ?? HORSE_PRESETS[0];
+    const app = m.appearance ?? w.appearance;
+    const outfit = OUTFIT_PRESETS[app.outfitIndex] ?? OUTFIT_PRESETS[0];
+    const hair = HAIR_PRESETS[app.hairIndex] ?? HAIR_PRESETS[0];
+    const horse = HORSE_PRESETS[app.horseIndex] ?? HORSE_PRESETS[0];
     const primary = w.crest.primaryColor;
     const secondary = w.crest.secondaryColor;
 
@@ -3271,7 +3293,7 @@ export class PixelRenderer {
     ctx.fillStyle = secondary;
     ctx.fillRect(-4, -10 - bob + riderYOffset, 8, 1);
 
-    const isQueen = w.appearance.gender === 'queen';
+    const isQueen = app.gender === 'queen';
 
     const capeSway = moving ? (m.sprinting ? 5 : 3) : 1;
     ctx.fillStyle = primary;
@@ -3318,6 +3340,18 @@ export class PixelRenderer {
 
     if (m.hasCrown) {
       this.drawCrownSprite(ctx, w, 0, -27 - bob + riderYOffset);
+    }
+
+    // Subtle pixel name tag in Co-op so teammates recognize each other
+    if (scale === 1 && w.monarchs.length > 1) {
+      const tag = (m.playerName || app.name || '').trim();
+      if (tag) {
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 5.5px monospace';
+        ctx.fillStyle = m.playerUid === w.localPlayerUid ? '#ffe58a' : '#8ef7ff';
+        ctx.fillText(tag.slice(0, 14), 0, -34 - bob + riderYOffset);
+        ctx.textAlign = 'left';
+      }
     }
 
     // Nighttime Torch carried in front hand (always active at dusk/night in gameplay!)
@@ -3469,23 +3503,24 @@ export class PixelRenderer {
       ctx.fillRect(sx - radius, sy - radius, radius * 2, radius * 2);
     };
 
-    const monarch = w.monarchs[0];
-    if (monarch && (w.isNight || (w.timeOfDay >= 0.45 && w.timeOfDay < 0.99))) {
+    if (w.isNight || (w.timeOfDay >= 0.45 && w.timeOfDay < 0.99)) {
       const torchFlick = Math.sin(w.elapsed * 15) * 3.5 + Math.cos(w.elapsed * 23) * 1.5;
-      const torchWorldX = monarch.x + monarch.facing * 6;
-      const torchY = GROUND_Y - 23 - Math.round(monarch.flyY);
-      drawGlow(
-        torchWorldX,
-        torchY,
-        74 + torchFlick,
-        `rgba(255, 168, 68, ${(0.36 * nightFactor).toFixed(2)})`
-      );
-      drawGlow(
-        torchWorldX,
-        torchY,
-        28 + torchFlick * 0.4,
-        `rgba(255, 224, 132, ${(0.28 * nightFactor).toFixed(2)})`
-      );
+      for (const monarch of w.monarchs) {
+        const torchWorldX = monarch.x + monarch.facing * 6;
+        const torchY = GROUND_Y - 23 - Math.round(monarch.flyY);
+        drawGlow(
+          torchWorldX,
+          torchY,
+          74 + torchFlick,
+          `rgba(255, 168, 68, ${(0.36 * nightFactor).toFixed(2)})`
+        );
+        drawGlow(
+          torchWorldX,
+          torchY,
+          28 + torchFlick * 0.4,
+          `rgba(255, 224, 132, ${(0.28 * nightFactor).toFixed(2)})`
+        );
+      }
     }
 
     if (w.hall.level >= 1) {
@@ -3910,7 +3945,7 @@ export class PixelRenderer {
   }
 
   private drawHud(ctx: CanvasRenderingContext2D, w: WorldState): void {
-    const monarch = w.monarchs[0];
+    const monarch = this.getLocalMonarch(w);
     if (!monarch) return;
 
     const isNarrow = this.viewW < 380;
@@ -4159,6 +4194,11 @@ export class PixelRenderer {
     }
     ctx.fillStyle = w.crest.secondaryColor;
     ctx.fillRect(toMapX(w.hall.x) - 1, mapY - 1, 3, 5);
+    for (const m of w.monarchs) {
+      if (m === monarch) continue;
+      ctx.fillStyle = '#7cf7ff';
+      ctx.fillRect(toMapX(m.x) - 1, mapY - 1, 2, 5);
+    }
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(toMapX(monarch.x) - 1, mapY - 1, 2, 6);
   }

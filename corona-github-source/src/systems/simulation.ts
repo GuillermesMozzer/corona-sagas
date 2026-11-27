@@ -701,7 +701,7 @@ function ringShipBell(w: WorldState): void {
   );
 }
 
-function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
+export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
   if (!m.hasCrown) return null;
   let best: FloatingPrompt | null = null;
   let bestDist = 36;
@@ -1864,10 +1864,10 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
   }
 }
 
-function handleCoinDrop(w: WorldState, m: Monarch): void {
+function handleCoinDrop(w: WorldState, m: Monarch, promptOverride?: FloatingPrompt | null): void {
   if (m.dropCooldown > 0) return;
 
-  const prompt = w.activePrompt;
+  const prompt = promptOverride !== undefined ? promptOverride : w.activePrompt;
 
   // Do not spend extra coins while the final coin is already jumping into the last slot
   if (prompt && prompt.targetType !== 'banker' && !prompt.blockedReason && prompt.paid + prompt.pending >= prompt.cost) {
@@ -1917,7 +1917,7 @@ function handleCoinDrop(w: WorldState, m: Monarch): void {
       return;
     }
     m.diamonds -= 1;
-    w.resources.diamonds = m.diamonds;
+    if (m === w.monarchs[0]) w.resources.diamonds = m.diamonds;
     m.dropCooldown = 0.18;
     sound.playCoinDrop();
     const nextSlotIndex = Math.min(prompt.cost - 1, prompt.paid + prompt.pending);
@@ -1940,7 +1940,7 @@ function handleCoinDrop(w: WorldState, m: Monarch): void {
   if (m.coins <= 0) return;
 
   m.coins -= 1;
-  w.resources.gold = m.coins;
+  if (m === w.monarchs[0]) w.resources.gold = m.coins;
   m.dropCooldown = prompt?.targetType === 'banker' ? 0.1 : 0.16;
   sound.playCoinDrop();
 
@@ -2326,7 +2326,13 @@ export function triggerMountPower(w: WorldState): boolean {
   return false;
 }
 
-function updateMonarch(w: WorldState, m: Monarch, input: InputState, dt: number): void {
+function updateMonarch(
+  w: WorldState,
+  m: Monarch,
+  input: InputState,
+  dt: number,
+  isHostPrimary = true
+): void {
   m.dropCooldown = Math.max(0, m.dropCooldown - dt);
   m.hurtCooldown = Math.max(0, m.hurtCooldown - dt);
   m.mountPowerCooldown = Math.max(0, m.mountPowerCooldown - dt);
@@ -2338,7 +2344,7 @@ function updateMonarch(w: WorldState, m: Monarch, input: InputState, dt: number)
   const lokiStaminaMult = w.activeGod === 'loki' ? 0.78 : 1.0;
 
   // Trigger mount active power via Shift / Attack button
-  if (input.powerJustPressed) {
+  if (input.powerJustPressed && isHostPrimary) {
     triggerMountPower(w);
   }
 
@@ -2350,7 +2356,7 @@ function updateMonarch(w: WorldState, m: Monarch, input: InputState, dt: number)
     m.flyY = Math.max(0, m.flyY - dt * 135);
   }
 
-  const commanding = w.activeCommand !== 'none';
+  const commanding = isHostPrimary && w.activeCommand !== 'none';
   const dir = commanding ? 0 : (input.right ? 1 : 0) - (input.left ? 1 : 0);
   if (dir !== 0) m.facing = dir as 1 | -1;
 
@@ -2411,7 +2417,7 @@ function updateMonarch(w: WorldState, m: Monarch, input: InputState, dt: number)
   const speedAbs = Math.abs(m.vx);
   if (speedAbs > 6) {
     m.animTime += dt * (m.sprinting ? 12.5 : 8);
-    if (m.flyY <= 2) sound.playHoof(m.sprinting);
+    if (isHostPrimary && m.flyY <= 2) sound.playHoof(m.sprinting);
     if (m.sprinting && Math.random() < dt * 12) {
       spawnParticle(w, {
         x: m.x - m.facing * 10,
@@ -2450,7 +2456,7 @@ function updateMonarch(w: WorldState, m: Monarch, input: InputState, dt: number)
   const clampedCam = Math.max(0, Math.min(WORLD_WIDTH - vw, desiredCam));
   m.cameraX += (clampedCam - m.cameraX) * Math.min(1, dt * 5.2);
 
-  // Open wilderness chests (gold + diamonds up to 5 per island!)
+  // Open wilderness chests (gold + diamonds up to 5 per island — all diamonds belong to the Host's campaign!)
   for (const chest of w.chests) {
     if (!chest.opened && Math.abs(m.x - chest.x) < 22) {
       chest.opened = true;
@@ -2465,8 +2471,9 @@ function updateMonarch(w: WorldState, m: Monarch, input: InputState, dt: number)
         const already = isl ? isl.diamondsCollected : 0;
         const grant = Math.max(0, Math.min(chest.diamonds, def.maxDiamonds - already));
         if (grant > 0) {
-          m.diamonds += grant;
-          w.resources.diamonds = m.diamonds;
+          const hostM = w.monarchs[0] ?? m;
+          hostM.diamonds += grant;
+          w.resources.diamonds = hostM.diamonds;
           if (isl) isl.diamondsCollected += grant;
           spawnBurst(w, chest.x, GROUND_Y - 16, 12, '#7ef5ff', 'spark', 55);
           showBanner(w, 'BAÚ REAL ENCONTRADO!', `+${chest.coins} ouro e +${grant} diamantes!`, '#7ef5ff');
@@ -2482,7 +2489,7 @@ function updateMonarch(w: WorldState, m: Monarch, input: InputState, dt: number)
     const take = Math.min(w.hall.storedTaxCoins, m.maxCoins - m.coins);
     w.hall.storedTaxCoins -= take;
     m.coins += take;
-    w.resources.gold = m.coins;
+    if (isHostPrimary) w.resources.gold = m.coins;
     sound.playCoinPickup();
     spawnBurst(w, w.hall.x, GROUND_Y - 22, 6, '#f7d265', 'spark', 32);
   }
@@ -2493,7 +2500,7 @@ function updateMonarch(w: WorldState, m: Monarch, input: InputState, dt: number)
       const take = Math.min(farm.storedCoins, m.maxCoins - m.coins);
       farm.storedCoins -= take;
       m.coins += take;
-      w.resources.gold = m.coins;
+      if (isHostPrimary) w.resources.gold = m.coins;
       sound.playCoinPickup();
       spawnBurst(w, farm.x, GROUND_Y - 16, 6, '#f7d265', 'spark', 28);
     }
@@ -2528,10 +2535,14 @@ function updateMonarch(w: WorldState, m: Monarch, input: InputState, dt: number)
     m.crownY = GROUND_Y - 24 - m.flyY;
   }
 
-  w.activePrompt = computeActivePrompt(w, m);
-
-  if (input.dropJustPressed || (input.drop && m.dropCooldown <= 0)) {
-    handleCoinDrop(w, m);
+  if (isHostPrimary) {
+    w.activePrompt = computeActivePrompt(w, m);
+    if (input.dropJustPressed || (input.drop && m.dropCooldown <= 0)) {
+      handleCoinDrop(w, m, w.activePrompt);
+    }
+  } else if (input.dropJustPressed || (input.drop && m.dropCooldown <= 0)) {
+    const guestPrompt = computeActivePrompt(w, m);
+    handleCoinDrop(w, m, guestPrompt);
   }
 }
 
@@ -4257,7 +4268,6 @@ function updateArrows(w: WorldState, dt: number): void {
 }
 
 function updateCoins(w: WorldState, dt: number): void {
-  const monarch = w.monarchs[0];
   for (let i = w.coins.length - 1; i >= 0; i--) {
     const c = w.coins[i];
     c.age += dt;
@@ -4279,24 +4289,26 @@ function updateCoins(w: WorldState, dt: number): void {
       }
     }
 
-    if (
-      monarch &&
-      c.pickupDelay <= 0 &&
-      monarch.coins < monarch.maxCoins &&
-      Math.abs(monarch.x - c.x) < 16 &&
-      Math.abs(GROUND_Y - c.y) < 22
-    ) {
+    if (c.pickupDelay <= 0 && Math.abs(GROUND_Y - c.y) < 22) {
       const wandererClaimed =
         c.fromMonarch &&
         c.age < 5 &&
         w.villagers.some((v) => v.role === 'wanderer' && Math.abs(v.x - c.x) < 95);
       if (!wandererClaimed) {
-        monarch.coins += 1;
-        w.resources.gold = monarch.coins;
-        sound.playCoinPickup();
-        spawnBurst(w, c.x, c.y - 4, 4, '#ffe169', 'spark', 25);
-        w.coins.splice(i, 1);
-        continue;
+        let picked = false;
+        for (let mi = 0; mi < w.monarchs.length; mi++) {
+          const m = w.monarchs[mi];
+          if (m.coins < m.maxCoins && Math.abs(m.x - c.x) < 16) {
+            m.coins += 1;
+            if (mi === 0) w.resources.gold = m.coins;
+            sound.playCoinPickup();
+            spawnBurst(w, c.x, c.y - 4, 4, '#ffe169', 'spark', 25);
+            w.coins.splice(i, 1);
+            picked = true;
+            break;
+          }
+        }
+        if (picked) continue;
       }
     }
 
@@ -4639,7 +4651,27 @@ function updateTutorial(w: WorldState, dt: number): void {
   }
 }
 
-export function stepWorld(w: WorldState, input: InputState, dt: number): void {
+const IDLE_REMOTE_INPUT: InputState = {
+  left: false,
+  right: false,
+  leftJustPressed: false,
+  rightJustPressed: false,
+  sprint: false,
+  powerJustPressed: false,
+  drop: false,
+  dropJustPressed: false,
+  cmdZ: false,
+  cmdX: false,
+  cmdC: false,
+  cmdV: false,
+};
+
+export function stepWorld(
+  w: WorldState,
+  input: InputState,
+  dt: number,
+  remoteInputs?: Map<string, InputState>
+): void {
   w.elapsed += dt;
   w.screenShake = Math.max(0, w.screenShake - dt);
 
@@ -4671,7 +4703,14 @@ export function stepWorld(w: WorldState, input: InputState, dt: number): void {
   updateTacticalCommands(w, input, dt);
 
   const monarch = w.monarchs[0];
-  if (monarch) updateMonarch(w, monarch, input, dt);
+  if (monarch) updateMonarch(w, monarch, input, dt, true);
+
+  // Step up to 3 remote Co-op guest monarchs in the Host's campaign
+  for (let i = 1; i < w.monarchs.length; i++) {
+    const gm = w.monarchs[i];
+    const gInput = (gm.playerUid ? remoteInputs?.get(gm.playerUid) : undefined) ?? IDLE_REMOTE_INPUT;
+    updateMonarch(w, gm, gInput, dt, false);
+  }
 
   updateFlyingCoins(w, dt);
   updateForgeAndRegrowth(w, dt);

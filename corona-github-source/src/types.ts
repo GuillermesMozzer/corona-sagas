@@ -98,6 +98,9 @@ export interface Monarch {
   dropCooldown: number;
   hurtCooldown: number;
   cameraX: number;
+  playerUid?: string;
+  playerName?: string;
+  appearance?: CharacterAppearance;
 }
 
 export type VillagerRole =
@@ -619,6 +622,7 @@ export interface WorldState {
   priorityTask?: PriorityTaskRef | null;
   discoveredHud?: DiscoveredHudItems;
   completedActionClasses?: Record<string, boolean>;
+  localPlayerUid?: string;
   worldMapContext: 'inspect' | 'sail';
   viewWidth: number;
   viewHeight: number;

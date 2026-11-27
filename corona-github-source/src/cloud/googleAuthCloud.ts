@@ -119,6 +119,10 @@ function notify(): void {
   }
 }
 
+export function getFirestoreDb(): Firestore | null {
+  return db;
+}
+
 export function subscribeAuthCloud(fn: AuthListener): () => void {
   listeners.add(fn);
   fn(authCloudState);
