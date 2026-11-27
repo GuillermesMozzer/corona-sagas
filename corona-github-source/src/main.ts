@@ -65,6 +65,90 @@ const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d');
 if (!ctx) throw new Error('Canvas 2D context unavailable');
 
+/**
+ * Enhances every canvas text draw with crisp pixel-art typography:
+ * - Maps generic `monospace` fonts to Google Fonts `Pixelify Sans` (authentic pixel-art geometry with full PT/ES accents)
+ * - Gently boosts microscopic 5.5px–7px labels so they remain effortless to read without overflowing buttons
+ * - Adds a crisp 1-logical-pixel dark drop shadow behind light text so labels pop over snow, torches, sky, and water
+ */
+function installCrispPixelText(targetCtx: CanvasRenderingContext2D): void {
+  const upgradeFontString = (raw: string): string => {
+    if (!raw.includes('monospace')) return raw;
+    return raw.replace(
+      /(bold\s+|normal\s+|\d{3}\s+)?(\d+(?:\.\d+)?)px\s+monospace\b/i,
+      (_match, weight = '', sizeStr: string) => {
+        const size = parseFloat(sizeStr);
+        let nextSize = size;
+        if (size <= 5.6) nextSize = 6.3;
+        else if (size <= 6.1) nextSize = 6.7;
+        else if (size <= 6.6) nextSize = 7.1;
+        else if (size <= 7.1) nextSize = 7.5;
+        return `${weight}${nextSize}px "Pixelify Sans", "Trebuchet MS", ui-monospace, monospace`;
+      }
+    );
+  };
+
+  try {
+    const desc = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'font');
+    if (desc?.get && desc?.set) {
+      Object.defineProperty(targetCtx, 'font', {
+        configurable: true,
+        get() {
+          return desc.get!.call(this);
+        },
+        set(val: string) {
+          desc.set!.call(this, upgradeFontString(val));
+        },
+      });
+    }
+  } catch {
+    // Fallback gracefully if environment restricts prototype descriptors
+  }
+
+  const rawFillText = targetCtx.fillText.bind(targetCtx);
+  const isLightFill = (fill: string | CanvasGradient | CanvasPattern): boolean => {
+    if (typeof fill !== 'string') return true;
+    const s = fill.trim().toLowerCase();
+    if (s.startsWith('#') && (s.length === 7 || s.length === 4)) {
+      const hex = s.length === 4 ? `${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}` : s.slice(1);
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      return 0.299 * r + 0.587 * g + 0.114 * b > 85;
+    }
+    const rgbMatch = s.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+    if (rgbMatch) {
+      const r = Number(rgbMatch[1]);
+      const g = Number(rgbMatch[2]);
+      const b = Number(rgbMatch[3]);
+      return 0.299 * r + 0.587 * g + 0.114 * b > 85;
+    }
+    return true;
+  };
+
+  targetCtx.fillText = (text: string, x: number, y: number, maxWidth?: number): void => {
+    const rx = Math.round(x * 2) / 2;
+    const ry = Math.round(y * 2) / 2;
+    const prevFill = targetCtx.fillStyle;
+    if (isLightFill(prevFill)) {
+      targetCtx.fillStyle = 'rgba(2, 6, 14, 0.8)';
+      if (maxWidth !== undefined) {
+        rawFillText(text, rx + 0.5, ry + 0.75, maxWidth);
+      } else {
+        rawFillText(text, rx + 0.5, ry + 0.75);
+      }
+      targetCtx.fillStyle = prevFill;
+    }
+    if (maxWidth !== undefined) {
+      rawFillText(text, rx, ry, maxWidth);
+    } else {
+      rawFillText(text, rx, ry);
+    }
+  };
+}
+
+installCrispPixelText(ctx);
+
 // Top-right Menu DOM elements
 const btnMenu = document.getElementById('btn-menu') as HTMLButtonElement | null;
 const menuPanel = document.getElementById('menu-panel') as HTMLDivElement | null;
@@ -188,10 +272,16 @@ function fitCanvas(): void {
     logicalW = Math.max(230, Math.round(logicalH * aspect));
   }
 
-  if (canvas.width !== logicalW || canvas.height !== logicalH) {
-    canvas.width = logicalW;
-    canvas.height = logicalH;
+  const dpr = Math.min(2.5, Math.max(1, window.devicePixelRatio || 1));
+  const renderScale = Math.max(2, Math.min(4, Math.ceil((vw * dpr) / logicalW)));
+  const bufW = logicalW * renderScale;
+  const bufH = logicalH * renderScale;
+
+  if (canvas.width !== bufW || canvas.height !== bufH) {
+    canvas.width = bufW;
+    canvas.height = bufH;
   }
+  renderer.setViewport(logicalW, logicalH, renderScale);
   world.viewWidth = logicalW;
   world.viewHeight = logicalH;
 }
@@ -824,8 +914,8 @@ function handleCanvasHit(hitId: string): boolean {
 function getLogicalCoords(e: PointerEvent): { lx: number; ly: number } {
   const rect = canvas.getBoundingClientRect();
   return {
-    lx: ((e.clientX - rect.left) / rect.width) * canvas.width,
-    ly: ((e.clientY - rect.top) / rect.height) * canvas.height,
+    lx: ((e.clientX - rect.left) / rect.width) * world.viewWidth,
+    ly: ((e.clientY - rect.top) / rect.height) * world.viewHeight,
   };
 }
 
@@ -850,7 +940,7 @@ canvas.addEventListener('pointerdown', (e) => {
 
   if (world.mode !== 'playing') return;
 
-  const side: -1 | 1 = lx < canvas.width / 2 ? -1 : 1;
+  const side: -1 | 1 = lx < world.viewWidth / 2 ? -1 : 1;
 
   if (world.activeCommand !== 'none') {
     issueUnitCommand(world, world.activeCommand, side);
@@ -877,7 +967,7 @@ canvas.addEventListener('pointerdown', (e) => {
 canvas.addEventListener('pointermove', (e) => {
   if (activePointerId !== e.pointerId || world.mode !== 'playing' || ptrMoveSide === 0) return;
   const { lx } = getLogicalCoords(e);
-  const side: -1 | 1 = lx < canvas.width / 2 ? -1 : 1;
+  const side: -1 | 1 = lx < world.viewWidth / 2 ? -1 : 1;
   if (side !== ptrMoveSide) {
     ptrMoveSide = side;
     ptrSprint = false;

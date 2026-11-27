@@ -99,6 +99,7 @@ export class PixelRenderer {
   // Live responsive logical viewport dimensions (adapts to 100% of any device!)
   private viewW = LOGICAL_WIDTH;
   private viewH = LOGICAL_HEIGHT;
+  private renderScale = 1;
   private groundScreenY = GROUND_Y;
   private waterScreenY = GROUND_Y + 6;
   private worldOffsetY = 0;
@@ -124,6 +125,12 @@ export class PixelRenderer {
     }
   }
 
+  public setViewport(logicalW: number, logicalH: number, renderScale: number): void {
+    this.viewW = Math.max(200, Math.round(logicalW));
+    this.viewH = Math.max(180, Math.round(logicalH));
+    this.renderScale = Math.max(1, renderScale);
+  }
+
   public hitTest(lx: number, ly: number): string | null {
     for (let i = this.hitRegions.length - 1; i >= 0; i--) {
       const r = this.hitRegions[i];
@@ -138,11 +145,12 @@ export class PixelRenderer {
     this.hitRegions.push({ id, x, y, w, h });
   }
 
-  private syncViewport(ctx: CanvasRenderingContext2D): void {
-    const cw = Math.max(200, ctx.canvas.width);
-    const ch = Math.max(180, ctx.canvas.height);
+  private syncViewport(ctx: CanvasRenderingContext2D, w: WorldState): void {
+    const cw = Math.max(200, Math.round(w.viewWidth || this.viewW || ctx.canvas.width));
+    const ch = Math.max(180, Math.round(w.viewHeight || this.viewH || ctx.canvas.height));
     this.viewW = cw;
     this.viewH = ch;
+    this.renderScale = Math.max(1, ctx.canvas.width / cw);
     this.groundScreenY = Math.round(ch * 0.778);
     this.waterScreenY = this.groundScreenY + 6;
     this.worldOffsetY = this.groundScreenY - GROUND_Y;
@@ -196,8 +204,9 @@ export class PixelRenderer {
   }
 
   public render(ctx: CanvasRenderingContext2D, w: WorldState): void {
+    this.syncViewport(ctx, w);
+    ctx.setTransform(this.renderScale, 0, 0, this.renderScale, 0, 0);
     ctx.imageSmoothingEnabled = false;
-    this.syncViewport(ctx);
     this.hitRegions = [];
 
     if (w.mode === 'slot_select') {
@@ -3171,13 +3180,14 @@ export class PixelRenderer {
   }
 
   private drawWaterReflection(ctx: CanvasRenderingContext2D, w: WorldState, nightFactor: number): void {
+    this.reflectionCtx.imageSmoothingEnabled = false;
     this.reflectionCtx.clearRect(0, 0, this.viewW, this.waterScreenY);
     this.reflectionCtx.drawImage(
       ctx.canvas,
       0,
       0,
-      this.viewW,
-      this.waterScreenY,
+      Math.round(this.viewW * this.renderScale),
+      Math.round(this.waterScreenY * this.renderScale),
       0,
       0,
       this.viewW,
