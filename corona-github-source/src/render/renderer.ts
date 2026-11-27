@@ -378,7 +378,7 @@ export class PixelRenderer {
     ctx.fillText('CORONA', cx, titleY - 0.6);
 
     ctx.fillStyle = '#9ec4e0';
-    ctx.font = '8px monospace';
+    ctx.font = '8px "Pixelify Sans", monospace';
     ctx.fillText(t('subtitle'), cx, titleY + 14);
 
     if (isPlayerAuthorizedToPlay()) {
@@ -393,7 +393,7 @@ export class PixelRenderer {
       ctx.lineWidth = 1;
       ctx.strokeRect(bx + 0.5, by1 + 0.5, btnW - 1, btnH - 1);
       ctx.fillStyle = '#ffe58a';
-      ctx.font = 'bold 8.5px monospace';
+      ctx.font = 'bold 8.5px "Pixelify Sans", monospace';
       ctx.fillText(t('new_campaign'), cx, by1 + 14);
       this.addHit('login_new', bx, by1, btnW, btnH);
 
@@ -408,10 +408,10 @@ export class PixelRenderer {
         drawShieldEmblem(ctx, saved.crest, bx + 18, by2 + 14, 8);
         ctx.textAlign = 'left';
         ctx.fillStyle = '#d9eeff';
-        ctx.font = 'bold 7.5px monospace';
+        ctx.font = 'bold 7.5px "Pixelify Sans", monospace';
         ctx.fillText(`${t('slots_btn')} (${savedCount}/${MAX_SAVE_SLOTS})`, bx + 33, by2 + 12);
         ctx.fillStyle = '#95b2cc';
-        ctx.font = '6.5px monospace';
+        ctx.font = '6.5px "Pixelify Sans", monospace';
         ctx.fillText(
           `Slot ${saved.slot + 1} · ${t('day_short')} ${saved.day} · ${saved.gold}g`,
           bx + 33,
@@ -420,10 +420,10 @@ export class PixelRenderer {
       } else {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#c4d8eb';
-        ctx.font = 'bold 7.5px monospace';
+        ctx.font = 'bold 7.5px "Pixelify Sans", monospace';
         ctx.fillText(`${t('slots_btn')} (0/${MAX_SAVE_SLOTS})`, cx, by2 + 12);
         ctx.fillStyle = '#7e93a8';
-        ctx.font = '6.5px monospace';
+        ctx.font = '6.5px "Pixelify Sans", monospace';
         ctx.fillText(t('no_save'), cx, by2 + 22);
       }
       this.addHit('login_slots', bx, by2, btnW, 28);
@@ -438,7 +438,7 @@ export class PixelRenderer {
       ctx.strokeRect(bx + 0.5, byCoop + 0.5, btnW - 1, coopH - 1);
       ctx.textAlign = 'center';
       ctx.fillStyle = '#a7ffae';
-      ctx.font = 'bold 8px monospace';
+      ctx.font = 'bold 8px "Pixelify Sans", monospace';
       ctx.fillText('⚔ CO-OP ONLINE (CÓDIGO)', cx, byCoop + 13.5);
       this.addHit('login_coop', bx, byCoop, btnW, coopH);
 
@@ -459,7 +459,7 @@ export class PixelRenderer {
       }
       ctx.textAlign = 'center';
       ctx.fillStyle = alreadyAnswered ? '#b7d4e8' : '#b8f7ff';
-      ctx.font = 'bold 7px monospace';
+      ctx.font = 'bold 7px "Pixelify Sans", monospace';
       ctx.fillText(alreadyAnswered ? t('rate_game_done_btn') : t('rate_game_btn'), cx, by3 + 13);
       this.addHit('login_feedback', bx, by3, btnW, fbBtnH);
     }
@@ -467,7 +467,7 @@ export class PixelRenderer {
     // Google Technology Disclaimer Badge with Pixel-Art Google "G" Logo
     const gText = t('google_tech_disclaimer');
     const isNarrow = this.viewW < 260;
-    ctx.font = isNarrow ? 'bold 5.5px monospace' : 'bold 6.5px monospace';
+    ctx.font = isNarrow ? 'bold 5.5px "Pixelify Sans", monospace' : 'bold 6.5px "Pixelify Sans", monospace';
     const gTextW = Math.ceil(ctx.measureText(gText).width);
     const badgeH = 16;
     const badgeW = Math.min(this.viewW - 14, gTextW + 24);
@@ -499,7 +499,7 @@ export class PixelRenderer {
 
     // Subtle creator & inspiration credit in small letters at the bottom footer
     ctx.fillStyle = 'rgba(186, 208, 228, 0.72)';
-    ctx.font = '5.5px monospace';
+    ctx.font = '5.5px "Pixelify Sans", monospace';
     if (this.viewW < 390) {
       ctx.fillText('Jogo criado e desenvolvido por Guillermes Mozzer,', cx, this.viewH - 14);
       ctx.fillText('inspirado por Kingdom Two Crowns, franquia da Raw Fury', cx, this.viewH - 6);
@@ -664,18 +664,18 @@ export class PixelRenderer {
     // Modal Title
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffe58a';
-    ctx.font = 'bold 10px monospace';
+    ctx.font = 'bold 10px "Pixelify Sans", monospace';
     ctx.fillText(t('fb_title'), cx, py + 36);
 
     // Description lines
     ctx.fillStyle = '#d3e6f7';
-    ctx.font = '6.5px monospace';
+    ctx.font = '6.5px "Pixelify Sans", monospace';
     if (feedbackUi.loginGrantedNotice) {
       ctx.fillStyle = '#7ff7c4';
-      ctx.font = 'bold 7px monospace';
+      ctx.font = 'bold 7px "Pixelify Sans", monospace';
       ctx.fillText(t('fb_reward_banner_title'), cx, py + 51);
       ctx.fillStyle = '#c8e9ff';
-      ctx.font = '6.5px monospace';
+      ctx.font = '6.5px "Pixelify Sans", monospace';
       ctx.fillText(t('fb_saved_for_next'), cx, py + 62);
     } else if (feedbackUi.awaitingConfirm) {
       ctx.fillText(t('fb_wait_desc1'), cx, py + 49);
@@ -704,7 +704,7 @@ export class PixelRenderer {
     }
     ctx.textAlign = 'left';
     ctx.fillStyle = '#8ef6ff';
-    ctx.font = 'bold 7.5px monospace';
+    ctx.font = 'bold 7.5px "Pixelify Sans", monospace';
     ctx.fillText(t('fb_reward_label'), dBaseX + 42, stripY + 16);
 
     // Primary CTA Button
@@ -720,7 +720,7 @@ export class PixelRenderer {
       ctx.strokeStyle = '#7ff7c4';
       ctx.strokeRect(ctaX + 0.5, ctaY + 0.5, ctaW - 1, ctaH - 1);
       ctx.fillStyle = '#e8fff5';
-      ctx.font = 'bold 8px monospace';
+      ctx.font = 'bold 8px "Pixelify Sans", monospace';
       ctx.fillText('OK', cx, ctaY + 14);
       this.addHit('feedback_close', ctaX, ctaY, ctaW, ctaH);
     } else if (feedbackUi.awaitingConfirm) {
@@ -730,13 +730,13 @@ export class PixelRenderer {
       ctx.strokeStyle = '#7ff7c4';
       ctx.strokeRect(ctaX + 0.5, ctaY + 0.5, ctaW - 1, ctaH - 1);
       ctx.fillStyle = '#f2fff8';
-      ctx.font = 'bold 7px monospace';
+      ctx.font = 'bold 7px "Pixelify Sans", monospace';
       ctx.fillText(t('fb_claim_btn'), cx, ctaY + 14);
       this.addHit('feedback_claim', ctaX, ctaY, ctaW, ctaH);
 
       // Reopen link below
       ctx.fillStyle = '#9ec4e0';
-      ctx.font = '6px monospace';
+      ctx.font = '6px "Pixelify Sans", monospace';
       ctx.fillText(t('fb_reopen_btn'), cx, ctaY + 34);
       this.addHit('feedback_open', ctaX + 18, ctaY + 25, ctaW - 36, 13);
     } else {
@@ -745,7 +745,7 @@ export class PixelRenderer {
       ctx.strokeStyle = '#ffe066';
       ctx.strokeRect(ctaX + 0.5, ctaY + 0.5, ctaW - 1, ctaH - 1);
       ctx.fillStyle = '#fff2b0';
-      ctx.font = 'bold 7.5px monospace';
+      ctx.font = 'bold 7.5px "Pixelify Sans", monospace';
       ctx.fillText(t('fb_open_btn'), cx, ctaY + 14);
       this.addHit('feedback_open', ctaX, ctaY, ctaW, ctaH);
     }
@@ -753,11 +753,11 @@ export class PixelRenderer {
     // Footer hint or configuration notice
     if (feedbackUi.noUrlNotice) {
       ctx.fillStyle = '#ffb380';
-      ctx.font = '6px monospace';
+      ctx.font = '6px "Pixelify Sans", monospace';
       ctx.fillText(t('fb_not_configured'), cx, py + ph - 9);
     } else if (!feedbackUi.awaitingConfirm) {
       ctx.fillStyle = 'rgba(162, 188, 212, 0.85)';
-      ctx.font = '6px monospace';
+      ctx.font = '6px "Pixelify Sans", monospace';
       ctx.fillText(t('fb_later_hint'), cx, py + ph - 9);
     }
 
@@ -779,11 +779,11 @@ export class PixelRenderer {
 
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffe58a';
-    ctx.font = isPortrait ? 'bold 9.5px Georgia, serif' : 'bold 12px Georgia, serif';
+    ctx.font = isPortrait ? 'bold 9.5px "Pixelify Sans", monospace' : 'bold 12px "Pixelify Sans", monospace';
     ctx.fillText(t('slots_title'), cx, 22);
 
     ctx.fillStyle = '#8eb3d1';
-    ctx.font = '6.5px monospace';
+    ctx.font = '6.5px "Pixelify Sans", monospace';
     ctx.fillText(t('slots_hint'), cx, 34);
 
     const slots = listCampaignSlots();
@@ -812,7 +812,7 @@ export class PixelRenderer {
 
       ctx.textAlign = 'left';
       ctx.fillStyle = info ? '#ffe58a' : '#7b92a8';
-      ctx.font = 'bold 7px monospace';
+      ctx.font = 'bold 7px "Pixelify Sans", monospace';
       ctx.fillText(`SLOT ${i + 1}`, x + 6, y + 12);
 
       if (info) {
@@ -823,24 +823,24 @@ export class PixelRenderer {
         drawShieldEmblem(ctx, info.crest, x + 16, y + 32, 8);
 
         ctx.fillStyle = '#eef5fc';
-        ctx.font = 'bold 7px monospace';
+        ctx.font = 'bold 7px "Pixelify Sans", monospace';
         const islRoman = romans[(info.island - 1) % 7] ?? 'I';
         ctx.fillText(`ILHA ${islRoman} · ${t('day_short')} ${info.day}`, x + 28, y + 28);
 
         ctx.fillStyle = '#f7d265';
-        ctx.font = '6.5px monospace';
+        ctx.font = '6.5px "Pixelify Sans", monospace';
         const diamTxt = info.diamonds > 0 ? `  ◆${info.diamonds}` : '';
         ctx.fillText(`${info.gold}g${diamTxt}`, x + 28, y + 39);
 
         ctx.fillStyle = '#92b0c9';
-        ctx.font = '6px monospace';
+        ctx.font = '6px "Pixelify Sans", monospace';
         ctx.fillText(`${info.villagers} ${t('subjects')}`, x + 6, y + cardH - 18);
 
         // Play pill
         ctx.fillStyle = 'rgba(46, 36, 12, 0.92)';
         ctx.fillRect(x + 5, y + cardH - 14, cardW - 10, 10);
         ctx.fillStyle = '#ffe58a';
-        ctx.font = 'bold 6.5px monospace';
+        ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
         ctx.textAlign = 'center';
         ctx.fillText(`▶ ${t('slot_play')}`, x + cardW / 2, y + cardH - 7);
         ctx.textAlign = 'left';
@@ -856,17 +856,17 @@ export class PixelRenderer {
         ctx.strokeRect(delX + 0.5, delY + 0.5, delW - 1, 10);
         ctx.textAlign = 'center';
         ctx.fillStyle = '#ffd6db';
-        ctx.font = 'bold 6.5px monospace';
+        ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
         ctx.fillText(confirming ? 'OK?' : '×', delX + delW / 2, delY + 8);
         ctx.textAlign = 'left';
         this.addHit(`slot_del_${i}`, delX - 3, delY - 3, delW + 6, 17);
       } else {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#6f859b';
-        ctx.font = '7px monospace';
+        ctx.font = '7px "Pixelify Sans", monospace';
         ctx.fillText(t('slot_empty'), x + cardW / 2, y + Math.round(cardH * 0.48));
         ctx.fillStyle = '#9cc5e6';
-        ctx.font = 'bold 6.5px monospace';
+        ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
         ctx.fillText(t('slot_new'), x + cardW / 2, y + Math.round(cardH * 0.72));
         ctx.textAlign = 'left';
         this.addHit(`slot_new_${i}`, x, y, cardW, cardH);
@@ -884,7 +884,7 @@ export class PixelRenderer {
     ctx.strokeRect(backX + 0.5, backY + 0.5, backW - 1, backH - 1);
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffe58a';
-    ctx.font = 'bold 7.5px monospace';
+    ctx.font = 'bold 7.5px "Pixelify Sans", monospace';
     ctx.fillText(t('slot_back'), cx, backY + 13);
     this.addHit('slot_back', backX - 4, backY - 4, backW + 8, backH + 8);
     ctx.textAlign = 'left';
@@ -905,14 +905,14 @@ export class PixelRenderer {
     ctx.font = isPortrait ? 'bold 10px "Pixelify Sans", monospace' : 'bold 12px "Pixelify Sans", monospace';
     ctx.fillText(t('choose_monarch'), padX, 20);
     ctx.fillStyle = '#8b99a8';
-    ctx.font = '7px monospace';
+    ctx.font = '7px "Pixelify Sans", monospace';
     ctx.fillText(t('starter_note'), padX, 31);
 
     const secs = Math.ceil(w.selectTimer);
     const urgent = secs <= 5;
     ctx.textAlign = 'right';
     ctx.fillStyle = urgent ? '#ff646c' : '#efc462';
-    ctx.font = 'bold 13px monospace';
+    ctx.font = 'bold 13px "Pixelify Sans", monospace';
     ctx.fillText(`${secs}s`, this.viewW - rightSafe, 22);
     ctx.textAlign = 'left';
 
@@ -951,7 +951,7 @@ export class PixelRenderer {
     const customName = w.appearance.name.trim();
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffe58a';
-    ctx.font = 'bold 8px monospace';
+    ctx.font = 'bold 8px "Pixelify Sans", monospace';
     ctx.fillText(customName ? `${roleTitle} ${customName.toUpperCase()}` : roleTitle, previewX, previewY + 18);
     ctx.textAlign = 'left';
 
@@ -967,7 +967,7 @@ export class PixelRenderer {
     ctx.lineWidth = 1;
     ctx.strokeRect(px + 0.5, nameBoxY + 0.5, pw - 1, nameBoxH - 1);
     ctx.fillStyle = '#9ec4e0';
-    ctx.font = '5.5px monospace';
+    ctx.font = '5.5px "Pixelify Sans", monospace';
     ctx.fillText(t('monarch_name_lbl'), px + 6, nameBoxY + 8);
     this.charNameBoxRect = {
       x: px + 4,
@@ -997,11 +997,11 @@ export class PixelRenderer {
       ctx.strokeRect(px + 0.5, ry + 0.5, pw - 1, rowH - 1);
 
       ctx.fillStyle = '#7e8fa3';
-      ctx.font = '5.5px monospace';
+      ctx.font = '5.5px "Pixelify Sans", monospace';
       ctx.fillText(row.label, px + 24, ry + 8.5);
 
       ctx.fillStyle = '#eef4fa';
-      ctx.font = 'bold 7.5px monospace';
+      ctx.font = 'bold 7.5px "Pixelify Sans", monospace';
       ctx.fillText(row.val, px + 24, ry + 19);
 
       const arrowH = rowH - 6;
@@ -1009,7 +1009,7 @@ export class PixelRenderer {
       ctx.fillRect(px + 3, ry + 3, 17, arrowH);
       ctx.fillStyle = '#efc462';
       ctx.textAlign = 'center';
-      ctx.font = 'bold 8.5px monospace';
+      ctx.font = 'bold 8.5px "Pixelify Sans", monospace';
       ctx.fillText('◀', px + 11.5, ry + rowH / 2 + 3);
       this.addHit(`char_prev_${row.key}`, px + 1, ry + 1, 22, rowH - 2);
 
@@ -1031,7 +1031,7 @@ export class PixelRenderer {
     ctx.strokeRect(px + 0.5, btnY + 0.5, randW - 1, 21);
     ctx.textAlign = 'center';
     ctx.fillStyle = '#cbd8e6';
-    ctx.font = 'bold 7.5px monospace';
+    ctx.font = 'bold 7.5px "Pixelify Sans", monospace';
     ctx.fillText(t('random'), px + randW / 2, btnY + 14);
     this.addHit('char_random', px, btnY, randW, 22);
 
@@ -1044,7 +1044,7 @@ export class PixelRenderer {
     this.addHit('char_confirm', px + randW + 6, btnY, confW, 22);
 
     ctx.fillStyle = '#6f7e91';
-    ctx.font = '6.5px monospace';
+    ctx.font = '6.5px "Pixelify Sans", monospace';
     ctx.fillText(t('char_hint'), Math.round(this.viewW / 2), Math.min(this.viewH - 6, btnY + 34));
     ctx.textAlign = 'left';
   }
@@ -1062,17 +1062,17 @@ export class PixelRenderer {
     const rightSafe = 40;
 
     ctx.fillStyle = '#fff2c9';
-    ctx.font = isPortrait ? 'bold 10px Georgia, serif' : 'bold 12px Georgia, serif';
+    ctx.font = isPortrait ? 'bold 10px "Pixelify Sans", monospace' : 'bold 12px "Pixelify Sans", monospace';
     ctx.fillText(t('forge_crest'), padX, 22);
     ctx.fillStyle = '#8b99a8';
-    ctx.font = '7px monospace';
+    ctx.font = '7px "Pixelify Sans", monospace';
     ctx.fillText(t('crest_note'), padX, 33);
 
     const secs = Math.ceil(w.selectTimer);
     const urgent = secs <= 6;
     ctx.textAlign = 'right';
     ctx.fillStyle = urgent ? '#ff646c' : '#efc462';
-    ctx.font = 'bold 13px monospace';
+    ctx.font = 'bold 13px "Pixelify Sans", monospace';
     ctx.fillText(`${secs}s`, this.viewW - rightSafe, 24);
     ctx.textAlign = 'left';
 
@@ -1113,18 +1113,18 @@ export class PixelRenderer {
       ctx.strokeRect(x + 0.5, y + 0.5, width - 1, 31);
 
       ctx.fillStyle = '#7e8fa3';
-      ctx.font = '6px monospace';
+      ctx.font = '6px "Pixelify Sans", monospace';
       ctx.textAlign = 'center';
       ctx.fillText(title, x + width / 2, y + 9);
       ctx.fillStyle = '#eef4fa';
-      ctx.font = 'bold 7px monospace';
+      ctx.font = 'bold 7px "Pixelify Sans", monospace';
       ctx.fillText(value, x + width / 2, y + 23);
 
       ctx.fillStyle = '#1c2432';
       ctx.fillRect(x + 3, y + 12, 16, 16);
       ctx.fillRect(x + width - 19, y + 12, 16, 16);
       ctx.fillStyle = '#efc462';
-      ctx.font = 'bold 8px monospace';
+      ctx.font = 'bold 8px "Pixelify Sans", monospace';
       ctx.fillText('◀', x + 11, y + 23);
       ctx.fillText('▶', x + width - 11, y + 23);
       ctx.textAlign = 'left';
@@ -1149,7 +1149,7 @@ export class PixelRenderer {
       ctx.strokeRect(x + 0.5, y + 0.5, width - 1, 39);
 
       ctx.fillStyle = '#7e8fa3';
-      ctx.font = '6px monospace';
+      ctx.font = '6px "Pixelify Sans", monospace';
       ctx.fillText(title, x + 7, y + 10);
 
       const avail = width - 14;
@@ -1190,7 +1190,7 @@ export class PixelRenderer {
       // Flag preview under centered shield
       const flagY = shieldY + shieldR + 18;
       ctx.fillStyle = '#6f7e91';
-      ctx.font = '6px monospace';
+      ctx.font = '6px "Pixelify Sans", monospace';
       ctx.textAlign = 'center';
       ctx.fillText(t('flag_preview'), cx, flagY);
       ctx.fillStyle = '#7a6855';
@@ -1212,12 +1212,12 @@ export class PixelRenderer {
     ctx.strokeStyle = '#efc462';
     ctx.strokeRect(cbX + 0.5, confirmY + 0.5, cbW - 1, 23);
     ctx.fillStyle = '#ffe58a';
-    ctx.font = 'bold 8px monospace';
+    ctx.font = 'bold 8px "Pixelify Sans", monospace';
     ctx.fillText(t('seal_crest'), cx, confirmY + 15);
     this.addHit('crest_confirm', cbX, confirmY, cbW, 24);
 
     ctx.fillStyle = '#6f7e91';
-    ctx.font = '7px monospace';
+    ctx.font = '7px "Pixelify Sans", monospace';
     ctx.fillText(t('crest_hint'), cx, Math.min(this.viewH - 8, confirmY + 36));
     ctx.textAlign = 'left';
   }
@@ -1539,7 +1539,7 @@ export class PixelRenderer {
           ctx.fillRect(bx - 11, GROUND_Y - 30, Math.max(1, Math.round(22 * Math.min(1, tr.chopProgress))), 2);
           if (workers > 1) {
             ctx.fillStyle = '#ffe58a';
-            ctx.font = 'bold 6px monospace';
+            ctx.font = 'bold 6px "Pixelify Sans", monospace';
             ctx.textAlign = 'center';
             ctx.fillText(`x${workers}`, bx, GROUND_Y - 33);
             ctx.textAlign = 'left';
@@ -1607,7 +1607,7 @@ export class PixelRenderer {
           ctx.fillRect(bx - 12, GROUND_Y - rh - 16, Math.max(1, Math.round(24 * Math.min(1, r.mineProgress))), 2);
           if (workers > 1) {
             ctx.fillStyle = '#ffe58a';
-            ctx.font = 'bold 6px monospace';
+            ctx.font = 'bold 6px "Pixelify Sans", monospace';
             ctx.textAlign = 'center';
             ctx.fillText(`x${workers}`, bx, GROUND_Y - rh - 19);
             ctx.textAlign = 'left';
@@ -1954,7 +1954,7 @@ export class PixelRenderer {
       ctx.fillStyle = 'rgba(8, 14, 24, 0.78)';
       ctx.fillRect(sx - 15, pillY, 30, 8);
       ctx.fillStyle = '#ffe58a';
-      ctx.font = 'bold 6px monospace';
+      ctx.font = 'bold 6px "Pixelify Sans", monospace';
       ctx.textAlign = 'center';
       ctx.fillText(`NV.${lvl}`, sx, pillY + 6);
       ctx.textAlign = 'left';
@@ -2113,7 +2113,7 @@ export class PixelRenderer {
       ctx.fillStyle = 'rgba(8, 14, 24, 0.8)';
       ctx.fillRect(sx - 20, GROUND_Y - 41, 40, 8);
       ctx.fillStyle = buff.active ? '#82e08a' : accent;
-      ctx.font = 'bold 5.5px monospace';
+      ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
       ctx.textAlign = 'center';
       ctx.fillText(isCon ? (buff.active ? 'OBRA ✓' : 'BUFF OBRA') : buff.active ? 'FORJA ✓' : 'BUFF FORJA', sx, GROUND_Y - 35);
       ctx.textAlign = 'left';
@@ -2179,7 +2179,7 @@ export class PixelRenderer {
         ctx.fillStyle = 'rgba(8, 14, 24, 0.76)';
         ctx.fillRect(sx - 14, badgeY, 28, 7);
         ctx.fillStyle = '#ffe58a';
-        ctx.font = '5.5px monospace';
+        ctx.font = '5.5px "Pixelify Sans", monospace';
         ctx.textAlign = 'center';
         ctx.fillText(`T${tw.level} ${occ}/${cap}`, sx, badgeY + 5.5);
         ctx.textAlign = 'left';
@@ -2323,7 +2323,7 @@ export class PixelRenderer {
         ctx.fillStyle = 'rgba(8, 14, 24, 0.78)';
         ctx.fillRect(sx - 20, badgeY, 40, 8);
         ctx.fillStyle = count >= maxF ? '#ffe066' : '#a7e89b';
-        ctx.font = '5.5px monospace';
+        ctx.font = '5.5px "Pixelify Sans", monospace';
         ctx.textAlign = 'center';
         ctx.fillText(`F${farm.level} ${count}/${maxF}`, sx, badgeY + 6);
         ctx.textAlign = 'left';
@@ -2517,7 +2517,7 @@ export class PixelRenderer {
       const startX = Math.round(bx - totalW / 2);
       const rowY = baseY - 49;
 
-      ctx.font = 'bold 7px monospace';
+      ctx.font = 'bold 7px "Pixelify Sans", monospace';
       ctx.textAlign = 'left';
       for (let i = 0; i < crewItems.length; i++) {
         const item = crewItems[i];
@@ -2571,7 +2571,7 @@ export class PixelRenderer {
         ctx.fillStyle = 'rgba(8, 14, 24, 0.78)';
         ctx.fillRect(sx - 18, GROUND_Y - 50, 36, 8);
         ctx.fillStyle = def.color;
-        ctx.font = 'bold 6px monospace';
+        ctx.font = 'bold 6px "Pixelify Sans", monospace';
         ctx.textAlign = 'center';
         ctx.fillText(def.name.toUpperCase(), sx, GROUND_Y - 44);
         ctx.textAlign = 'left';
@@ -2614,7 +2614,7 @@ export class PixelRenderer {
         ctx.fillStyle = 'rgba(8, 14, 24, 0.78)';
         ctx.fillRect(sx - 24, GROUND_Y - 42, 48, 8);
         ctx.fillStyle = def.accentColor;
-        ctx.font = 'bold 5.5px monospace';
+        ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
         ctx.textAlign = 'center';
         ctx.fillText(def.name[lang].slice(0, 12).toUpperCase(), sx, GROUND_Y - 36);
         ctx.textAlign = 'left';
@@ -2739,10 +2739,10 @@ export class PixelRenderer {
     // Header
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffe58a';
-    ctx.font = isPortrait ? 'bold 10px Georgia, serif' : 'bold 13px Georgia, serif';
+    ctx.font = isPortrait ? 'bold 10px "Pixelify Sans", monospace' : 'bold 13px "Pixelify Sans", monospace';
     ctx.fillText(t('map_title'), Math.round(this.viewW / 2), 22);
     ctx.fillStyle = '#9ec4e0';
-    ctx.font = '7px monospace';
+    ctx.font = '7px "Pixelify Sans", monospace';
     ctx.fillText(
       w.worldMapContext === 'sail' ? t('map_sail_hint') : t('map_view_hint'),
       Math.round(this.viewW / 2),
@@ -2826,7 +2826,7 @@ export class PixelRenderer {
 
       // Roman numeral label
       ctx.fillStyle = isSelected ? '#ffe58a' : '#d6e5f2';
-      ctx.font = 'bold 6.5px monospace';
+      ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
       ctx.fillText(romans[idx] ?? String(def.id), pos.x, pos.y + 16);
 
       this.addHit(`map_island_${def.id}`, pos.x - 16, pos.y - 16, 32, 34);
@@ -2846,7 +2846,7 @@ export class PixelRenderer {
 
     ctx.textAlign = 'left';
     ctx.fillStyle = '#ffe58a';
-    ctx.font = 'bold 8px monospace';
+    ctx.font = 'bold 8px "Pixelify Sans", monospace';
     ctx.fillText(selDef.name[lang], cardX + 10, cardY + 14);
 
     const statusTxt =
@@ -2857,12 +2857,12 @@ export class PixelRenderer {
           : t('map_unexplored');
     ctx.textAlign = 'right';
     ctx.fillStyle = selDef.id === w.currentIsland ? '#ffe066' : selProg?.colonized ? '#7ee08f' : '#8da9c4';
-    ctx.font = 'bold 7px monospace';
+    ctx.font = 'bold 7px "Pixelify Sans", monospace';
     ctx.fillText(statusTxt, cardX + cardW - 10, cardY + 14);
 
     ctx.textAlign = 'left';
     ctx.fillStyle = '#c8dceb';
-    ctx.font = '6.5px monospace';
+    ctx.font = '6.5px "Pixelify Sans", monospace';
     const godTxt = selDef.godId ? `Deus: ${GOD_DEFS[selDef.godId].name}` : 'Sem Deus';
     const mountTxt = selDef.mountId ? ` · ${MOUNT_DEFS[selDef.mountId].name[lang]}` : '';
     const lvTxt = ` · Reino Nv.${selDef.id === 1 ? 2 : Math.min(10, selDef.id + 1)}`;
@@ -2892,7 +2892,7 @@ export class PixelRenderer {
       ctx.strokeRect(bx + 0.5, by + 0.5, btnW - 1, 19);
       ctx.textAlign = 'center';
       ctx.fillStyle = '#ffe58a';
-      ctx.font = 'bold 8px monospace';
+      ctx.font = 'bold 8px "Pixelify Sans", monospace';
       ctx.fillText(t('map_sail_btn'), bx + btnW / 2, by + 13);
       this.addHit('map_sail_confirm', bx, by, btnW, 20);
     }
@@ -2906,7 +2906,7 @@ export class PixelRenderer {
     ctx.strokeRect(closeX + 0.5, closeY + 0.5, closeW - 1, 19);
     ctx.textAlign = 'center';
     ctx.fillStyle = '#d4e4f2';
-    ctx.font = 'bold 7px monospace';
+    ctx.font = 'bold 7px "Pixelify Sans", monospace';
     ctx.fillText(t('map_close'), closeX + closeW / 2, closeY + 13);
     this.addHit('map_close', closeX, closeY, closeW, 20);
     ctx.textAlign = 'left';
@@ -2980,7 +2980,7 @@ export class PixelRenderer {
           ctx.fillStyle = 'rgba(8, 14, 24, 0.74)';
           ctx.fillRect(sx - 7, GROUND_Y - 9, 14, 7);
           ctx.fillStyle = '#ffe58a';
-          ctx.font = 'bold 5.5px monospace';
+          ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
           ctx.textAlign = 'center';
           ctx.fillText(`${wall.level}`, sx, GROUND_Y - 3.5);
           ctx.textAlign = 'left';
@@ -3239,7 +3239,7 @@ export class PixelRenderer {
 
     if (v.orderFlashTimer > 0) {
       ctx.fillStyle = secondary;
-      ctx.font = 'bold 8px monospace';
+      ctx.font = 'bold 8px "Pixelify Sans", monospace';
       ctx.textAlign = 'center';
       ctx.fillText(v.orderDir < 0 ? '◀' : '▶', sx, baseY - 22 - walkBob);
       ctx.textAlign = 'left';
@@ -3308,7 +3308,7 @@ export class PixelRenderer {
 
     ctx.textAlign = 'left';
     ctx.fillStyle = '#ffe58a';
-    ctx.font = 'bold 6px monospace';
+    ctx.font = 'bold 6px "Pixelify Sans", monospace';
     ctx.fillText(roleLabel, px + 5, py + 9);
 
     // Tiny close [x] button on top-right
@@ -3318,7 +3318,7 @@ export class PixelRenderer {
     ctx.fillRect(cxX, cxY, 10, 9);
     ctx.fillStyle = '#ffd4dc';
     ctx.textAlign = 'center';
-    ctx.font = 'bold 6.5px monospace';
+    ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
     ctx.fillText('×', cxX + 5, cxY + 7);
     this.addHit('villager_dir_close', cxX - 2, cxY - 2, 14, 13);
 
@@ -3333,7 +3333,7 @@ export class PixelRenderer {
     ctx.strokeStyle = leftActive ? '#7ef5ff' : '#efc462';
     ctx.strokeRect(px + 4.5, btnY + 0.5, btnW - 1, btnH - 1);
     ctx.fillStyle = leftActive ? '#b8f7ff' : '#ffe58a';
-    ctx.font = 'bold 7px monospace';
+    ctx.font = 'bold 7px "Pixelify Sans", monospace';
     ctx.fillText(`◀ ${t('dir_left_short')}`, px + 4 + btnW / 2, btnY + 10.5);
     this.addHit('villager_dir_left', px + 2, btnY - 1, btnW + 3, btnH + 3);
 
@@ -3680,7 +3680,7 @@ export class PixelRenderer {
       const tag = (m.playerName || app.name || '').trim();
       if (tag) {
         ctx.textAlign = 'center';
-        ctx.font = 'bold 5.5px monospace';
+        ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
         ctx.fillStyle = m.playerUid === w.localPlayerUid ? '#ffe58a' : '#8ef7ff';
         ctx.fillText(tag.slice(0, 14), 0, -34 - bob + riderYOffset);
         ctx.textAlign = 'left';
@@ -4037,10 +4037,10 @@ export class PixelRenderer {
       const cx = Math.max(54, Math.min(this.viewW - 54, sx));
       ctx.textAlign = 'center';
       ctx.fillStyle = '#ffab91';
-      ctx.font = 'bold 6.5px monospace';
+      ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
       ctx.fillText(pr.label, cx, coinRowY - 2);
       ctx.fillStyle = '#ffe0b2';
-      ctx.font = 'bold 5.8px monospace';
+      ctx.font = 'bold 5.8px "Pixelify Sans", monospace';
       ctx.fillText(pr.blockedReason, cx, coinRowY + 7);
       ctx.textAlign = 'left';
       return;
@@ -4056,9 +4056,9 @@ export class PixelRenderer {
       const balTxt = `${balance}`;
       const pctTxt = `+${ratePct}%`;
 
-      ctx.font = 'bold 8px monospace';
+      ctx.font = 'bold 8px "Pixelify Sans", monospace';
       const balW = Math.ceil(ctx.measureText(balTxt).width);
-      ctx.font = 'bold 7.5px monospace';
+      ctx.font = 'bold 7.5px "Pixelify Sans", monospace';
       const pctW = Math.ceil(ctx.measureText(pctTxt).width);
       const infoTotalW = 8 + balW + 7 + pctW;
       const infoStartX = Math.round(centerX - infoTotalW / 2);
@@ -4067,12 +4067,12 @@ export class PixelRenderer {
       // Coin icon + total coins in the bank
       this.drawMinimalCoinIcon(ctx, infoStartX, infoY - 6);
       ctx.textAlign = 'left';
-      ctx.font = 'bold 8px monospace';
+      ctx.font = 'bold 8px "Pixelify Sans", monospace';
       ctx.fillStyle = '#ffe58a';
       ctx.fillText(balTxt, infoStartX + 9, infoY);
 
       // Green yield percentage right beside it
-      ctx.font = 'bold 7.5px monospace';
+      ctx.font = 'bold 7.5px "Pixelify Sans", monospace';
       ctx.fillStyle = '#6fe87b';
       ctx.fillText(pctTxt, infoStartX + 9 + balW + 6, infoY);
 
@@ -4124,7 +4124,7 @@ export class PixelRenderer {
     // CTA label ONLY appears before the player has executed this action class once!
     if (showCta) {
       ctx.fillStyle = isDiamond ? '#b5fbff' : '#f2f7fc';
-      ctx.font = 'bold 6.5px monospace';
+      ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
       ctx.textAlign = 'center';
       ctx.fillText(pr.label, centerX, coinRowY - 5);
     }
@@ -4144,7 +4144,7 @@ export class PixelRenderer {
 
       ctx.textAlign = 'left';
       ctx.fillStyle = '#ffe58a';
-      ctx.font = 'bold 7px monospace';
+      ctx.font = 'bold 7px "Pixelify Sans", monospace';
       ctx.fillText(`${pr.paid}/${pr.cost}`, barX + barW + 4, coinRowY + 6);
     } else {
       const startX = Math.round(centerX - slotsW / 2);
@@ -4176,7 +4176,7 @@ export class PixelRenderer {
       let mx = Math.round(centerX - matsW / 2 + 2);
       const my = coinRowY + 11;
       ctx.textAlign = 'left';
-      ctx.font = 'bold 6.5px monospace';
+      ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
       for (const item of matItems) {
         this.drawMaterialIcon(ctx, item.kind, mx, my);
         ctx.fillStyle = item.have >= item.need ? '#a7f0ad' : '#ff7b7b';
@@ -4354,7 +4354,7 @@ export class PixelRenderer {
 
     // 2. TOP-LEFT GROUP 1: Diamond + count, Coin + count (NO dark backgrounds!)
     let drewGroup1 = false;
-    ctx.font = 'bold 8.5px monospace';
+    ctx.font = 'bold 8.5px "Pixelify Sans", monospace';
 
     if (disc.diamond) {
       const txt = `${monarch.diamonds}`;
@@ -4386,7 +4386,7 @@ export class PixelRenderer {
 
     if (resItems.length > 0) {
       if (drewGroup1 && cx > 8) cx += isNarrow ? 10 : 16; // Respiro maior
-      ctx.font = 'bold 7px monospace';
+      ctx.font = 'bold 7px "Pixelify Sans", monospace';
       const group2EstW = resItems.reduce(
         (acc, it) => acc + 8 + Math.ceil(ctx.measureText(`${it.count}`).width) + 7,
         0
@@ -4420,7 +4420,7 @@ export class PixelRenderer {
 
     if (unitItems.length > 0) {
       if ((drewGroup1 || resItems.length > 0) && cx > 8) cx += isNarrow ? 10 : 16; // Respiro
-      ctx.font = 'bold 7px monospace';
+      ctx.font = 'bold 7px "Pixelify Sans", monospace';
       const measureUnit = (u: (typeof unitItems)[number]) => {
         const lw = Math.ceil(ctx.measureText(`${u.counts.left}`).width);
         const rw = Math.ceil(ctx.measureText(`${u.counts.right}`).width);
@@ -4471,14 +4471,14 @@ export class PixelRenderer {
       const msgY = cy + 14;
       ctx.textAlign = 'center';
       ctx.fillStyle = '#ffe58a';
-      ctx.font = 'bold 7px monospace';
+      ctx.font = 'bold 7px "Pixelify Sans", monospace';
       const feedbackTxt = w.commandFeedback ? w.commandFeedback.text : t('cmd_hint');
       ctx.fillText(feedbackTxt, Math.round(this.viewW / 2), msgY);
 
       if (w.touchCommandMode !== 'none') {
         const closeX = Math.round(this.viewW / 2 + ctx.measureText(feedbackTxt).width / 2 + 8);
         ctx.fillStyle = '#ff9aa2';
-        ctx.font = 'bold 8px monospace';
+        ctx.font = 'bold 8px "Pixelify Sans", monospace';
         ctx.fillText('×', closeX, msgY);
         this.addHit('hud_cmd_close', closeX - 8, msgY - 9, 16, 14);
       }
@@ -4497,7 +4497,7 @@ export class PixelRenderer {
       ctx.arc(ti.x, ti.y, 10 + (0.35 - ti.timer) * 18, 0, Math.PI * 2);
       ctx.stroke();
       ctx.fillStyle = ti.sprinting ? '#ffe066' : '#e6f2ff';
-      ctx.font = 'bold 9px monospace';
+      ctx.font = 'bold 9px "Pixelify Sans", monospace';
       ctx.textAlign = 'center';
       const arrow = ti.side < 0 ? (ti.sprinting ? '««' : '◀') : ti.sprinting ? '»»' : '▶';
       ctx.fillText(arrow, ti.x, ti.y + 3);
@@ -4514,7 +4514,7 @@ export class PixelRenderer {
       this.addHit('hud_mount_power', px - 12, py - 12, 26, 22);
       ctx.textAlign = 'center';
       ctx.fillStyle = ready ? mDef.accentColor : '#8ba0b5';
-      ctx.font = 'bold 9px monospace';
+      ctx.font = 'bold 9px "Pixelify Sans", monospace';
       ctx.fillText(ready ? '⚡' : `${Math.ceil(monarch.mountPowerCooldown)}s`, px, py);
       ctx.textAlign = 'left';
     }
@@ -4611,7 +4611,7 @@ export class PixelRenderer {
     const farFromTarget = m ? Math.abs(targetX - m.x) >= 58 : true;
     if (farFromTarget || tut.step === 'farewell') {
       ctx.fillStyle = '#d4fbff';
-      ctx.font = 'bold 8px monospace';
+      ctx.font = 'bold 8px "Pixelify Sans", monospace';
       ctx.textAlign = 'center';
       ctx.fillText(f > 0 ? '»' : '«', sx + f * (18 + pulse), sy - 6);
       ctx.textAlign = 'left';
@@ -4678,14 +4678,14 @@ export class PixelRenderer {
     // Dialogue text lines
     ctx.textAlign = 'left';
     ctx.fillStyle = '#d8f9ff';
-    ctx.font = 'bold 6.8px monospace';
+    ctx.font = 'bold 6.8px "Pixelify Sans", monospace';
     lines.forEach((line, idx) => {
       ctx.fillText(line, bx + 17, yOff + 11 + idx * 9);
     });
 
     if (showControls) {
       ctx.fillStyle = '#8ec0d8';
-      ctx.font = '6px monospace';
+      ctx.font = '6px "Pixelify Sans", monospace';
       ctx.fillText(t('tut_controls'), bx + 17, yOff + 11 + lines.length * 9 + 1);
     }
 
@@ -4699,7 +4699,7 @@ export class PixelRenderer {
     ctx.strokeRect(skipX + 0.5, skipY + 0.5, skipW - 1, 10);
     ctx.textAlign = 'center';
     ctx.fillStyle = '#9fe8ff';
-    ctx.font = 'bold 5.5px monospace';
+    ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
     ctx.fillText(t('tut_skip'), skipX + skipW / 2, skipY + 7.5);
     this.addHit('tutorial_skip', skipX - 4, skipY - 4, skipW + 8, 19);
 
@@ -4729,11 +4729,11 @@ export class PixelRenderer {
 
     ctx.textAlign = 'center';
     ctx.fillStyle = b.accent;
-    ctx.font = 'bold 8px monospace';
+    ctx.font = 'bold 8px "Pixelify Sans", monospace';
     ctx.fillText(b.title, Math.round(this.viewW / 2), yOff + 12);
 
     ctx.fillStyle = '#d4e2ef';
-    ctx.font = '6.5px monospace';
+    ctx.font = '6.5px "Pixelify Sans", monospace';
     ctx.fillText(b.subtitle, Math.round(this.viewW / 2), yOff + 23);
     ctx.restore();
     ctx.textAlign = 'left';
@@ -4747,10 +4747,10 @@ export class PixelRenderer {
 
     ctx.textAlign = 'center';
     ctx.fillStyle = '#f7d265';
-    ctx.font = 'bold 16px Georgia, serif';
+    ctx.font = 'bold 16px "Pixelify Sans", monospace';
     ctx.fillText(t('paused'), cx, cy - 22);
     ctx.fillStyle = '#d4e2ef';
-    ctx.font = '8px monospace';
+    ctx.font = '8px "Pixelify Sans", monospace';
     ctx.fillText(t('paused_hint'), cx, cy - 4);
 
     const bw = Math.min(168, this.viewW - 28);
@@ -4759,52 +4759,369 @@ export class PixelRenderer {
     ctx.strokeStyle = 'rgba(239, 196, 98, 0.6)';
     ctx.strokeRect(cx - bw / 2 + 0.5, cy + 12.5, bw - 1, 21);
     ctx.fillStyle = '#ffe58a';
-    ctx.font = 'bold 8px monospace';
+    ctx.font = 'bold 8px "Pixelify Sans", monospace';
     ctx.fillText(t('back_main_menu'), cx, cy + 26);
     this.addHit('pause_menu', cx - bw / 2, cy + 12, bw, 22);
     ctx.textAlign = 'left';
   }
 
+  private drawSummaryStatIcon(
+    ctx: CanvasRenderingContext2D,
+    kind: 'island' | 'coin' | 'diamond' | 'day' | 'draugr' | 'villager',
+    x: number,
+    y: number,
+    w: WorldState
+  ): void {
+    if (kind === 'coin') {
+      this.drawMinimalCoinIcon(ctx, x + 1, y + 1);
+      return;
+    }
+    if (kind === 'diamond') {
+      this.drawMinimalDiamondIcon(ctx, x + 1, y + 1);
+      return;
+    }
+    if (kind === 'island') {
+      // Mini fjord island with Nordic pine & water wave (matching World Map)
+      ctx.fillStyle = '#3c8dc4';
+      ctx.fillRect(x, y + 6, 9, 2);
+      ctx.fillStyle = '#73b8e8';
+      ctx.fillRect(x + 1, y + 6, 3, 1);
+      ctx.fillStyle = '#5c4632';
+      ctx.fillRect(x + 1, y + 4, 7, 2);
+      ctx.fillStyle = '#5da85c';
+      ctx.fillRect(x + 2, y + 3, 5, 2);
+      ctx.fillStyle = '#2d6a42';
+      ctx.fillRect(x + 4, y, 2, 3);
+      ctx.fillRect(x + 3, y + 1, 4, 2);
+      return;
+    }
+    if (kind === 'day') {
+      // Golden Nordic sun matching celestial sky
+      ctx.fillStyle = '#ff9b3d';
+      ctx.fillRect(x + 2, y + 1, 5, 5);
+      ctx.fillStyle = '#ffe066';
+      ctx.fillRect(x + 3, y + 2, 3, 3);
+      ctx.fillRect(x + 4, y, 1, 1);
+      ctx.fillRect(x + 4, y + 6, 1, 1);
+      ctx.fillRect(x + 1, y + 3, 1, 1);
+      ctx.fillRect(x + 7, y + 3, 1, 1);
+      return;
+    }
+    if (kind === 'draugr') {
+      // Helheim Draugr skull/helm with glowing cyan eyes (matching drawSingleEnemy)
+      ctx.fillStyle = '#1b2633';
+      ctx.fillRect(x + 2, y + 1, 5, 6);
+      ctx.fillStyle = '#7a8e9e';
+      ctx.fillRect(x + 1, y, 1, 3);
+      ctx.fillRect(x + 7, y, 1, 3);
+      ctx.fillRect(x + 2, y + 1, 5, 1);
+      ctx.fillStyle = '#6bf3ff';
+      ctx.fillRect(x + 3, y + 3, 1, 1);
+      ctx.fillRect(x + 5, y + 3, 1, 1);
+      ctx.fillStyle = '#a8c2d4';
+      ctx.fillRect(x + 3, y + 5, 3, 1);
+      return;
+    }
+    // Villager subject icon (matching drawSingleVillager with clan tunic)
+    ctx.fillStyle = '#e5be9e';
+    ctx.fillRect(x + 3, y, 3, 3);
+    ctx.fillStyle = w.crest.primaryColor;
+    ctx.fillRect(x + 2, y + 3, 5, 4);
+    ctx.fillStyle = w.crest.secondaryColor;
+    ctx.fillRect(x + 2, y + 5, 5, 1);
+    ctx.fillStyle = '#2d2522';
+    ctx.fillRect(x + 2, y + 7, 2, 1);
+    ctx.fillRect(x + 5, y + 7, 2, 1);
+  }
+
+  private drawPowerPixelIcon(
+    ctx: CanvasRenderingContext2D,
+    kind: 'thor' | 'freya' | 'odin' | 'loki' | 'mount' | 'buff_construction' | 'buff_forge',
+    x: number,
+    y: number,
+    accent: string
+  ): void {
+    if (kind === 'buff_construction') {
+      this.drawPixelIcon(ctx, 'hammer', x, y);
+      return;
+    }
+    if (kind === 'buff_forge') {
+      // Pixel forge anvil + ember spark
+      ctx.fillStyle = '#7e8fa3';
+      ctx.fillRect(x + 1, y + 3, 6, 2);
+      ctx.fillRect(x + 2, y + 5, 4, 2);
+      ctx.fillStyle = '#c8d6e5';
+      ctx.fillRect(x + 1, y + 3, 6, 1);
+      ctx.fillStyle = '#ff9b42';
+      ctx.fillRect(x + 3, y + 1, 2, 2);
+      return;
+    }
+    if (kind === 'thor') {
+      // Mjolnir hammer + lightning glow
+      ctx.fillStyle = '#9aaec2';
+      ctx.fillRect(x + 1, y + 1, 6, 3);
+      ctx.fillStyle = '#ffe066';
+      ctx.fillRect(x + 2, y + 2, 4, 1);
+      ctx.fillStyle = '#8a5a32';
+      ctx.fillRect(x + 3, y + 4, 2, 4);
+      ctx.fillStyle = '#7ef5ff';
+      ctx.fillRect(x + 7, y, 1, 2);
+      return;
+    }
+    if (kind === 'freya') {
+      // Golden harvest / nature blossom
+      ctx.fillStyle = '#6fd977';
+      ctx.fillRect(x + 3, y + 3, 2, 5);
+      ctx.fillRect(x + 1, y + 4, 2, 2);
+      ctx.fillRect(x + 5, y + 4, 2, 2);
+      ctx.fillStyle = '#ffe066';
+      ctx.fillRect(x + 2, y + 1, 4, 2);
+      ctx.fillRect(x + 3, y, 2, 1);
+      return;
+    }
+    if (kind === 'odin') {
+      // Odin rune eye / Allfather spear
+      ctx.fillStyle = '#7ec8ff';
+      ctx.fillRect(x + 1, y + 2, 6, 4);
+      ctx.fillStyle = '#e8f7ff';
+      ctx.fillRect(x + 2, y + 3, 4, 2);
+      ctx.fillStyle = '#1d3557';
+      ctx.fillRect(x + 3, y + 3, 2, 2);
+      return;
+    }
+    if (kind === 'loki') {
+      // Loki emerald/violet flame
+      ctx.fillStyle = '#c06bff';
+      ctx.fillRect(x + 2, y + 2, 4, 5);
+      ctx.fillStyle = '#6fe87b';
+      ctx.fillRect(x + 3, y + 1, 2, 5);
+      ctx.fillStyle = '#fff3a6';
+      ctx.fillRect(x + 3, y + 4, 2, 2);
+      return;
+    }
+    // Special Mount silhouette in mount accent color
+    ctx.fillStyle = accent;
+    ctx.fillRect(x + 1, y + 3, 5, 4);
+    ctx.fillRect(x + 4, y + 1, 3, 3);
+    ctx.fillRect(x + 5, y, 1, 1);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x + 5, y + 2, 1, 1);
+  }
+
   private drawGameOverOverlay(ctx: CanvasRenderingContext2D, w: WorldState): void {
-    ctx.fillStyle = 'rgba(14, 6, 12, 0.8)';
+    ctx.fillStyle = 'rgba(10, 6, 14, 0.86)';
     ctx.fillRect(0, 0, this.viewW, this.viewH);
+
     const cx = Math.round(this.viewW / 2);
     const cy = Math.round(this.viewH / 2);
+    const lang = getLanguage();
 
-    ctx.textAlign = 'center';
+    // Fallen golden crown pixel emblem above title
+    const topBaseY = Math.max(24, cy - 88);
+    ctx.fillStyle = '#f7c948';
+    ctx.fillRect(cx - 8, topBaseY - 12, 16, 4);
+    ctx.fillRect(cx - 8, topBaseY - 17, 3, 5);
+    ctx.fillRect(cx - 1, topBaseY - 19, 2, 7);
+    ctx.fillRect(cx + 5, topBaseY - 17, 3, 5);
     ctx.fillStyle = '#ff6b78';
-    ctx.font = 'bold 20px Georgia, serif';
-    ctx.fillText(t('crown_fell'), cx, cy - 46);
+    ctx.fillRect(cx - 1, topBaseY - 11, 2, 2);
+
+    // Pixel-art beveled title "A COROA CAIU"
+    const titleY = topBaseY + 12;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 20px "Pixelify Sans", monospace';
+    ctx.fillStyle = '#290a12';
+    ctx.fillText(t('crown_fell'), cx + 1.5, titleY + 2);
+    ctx.fillStyle = '#ff6b78';
+    ctx.fillText(t('crown_fell'), cx, titleY);
 
     ctx.fillStyle = '#d4dde8';
-    ctx.font = '8px monospace';
-    ctx.fillText(t('crown_fell_sub'), cx, cy - 28);
+    ctx.font = '7.5px "Pixelify Sans", monospace';
+    ctx.fillText(t('crown_fell_sub'), cx, titleY + 13);
 
-    const sw = Math.min(230, this.viewW - 24);
-    ctx.fillStyle = 'rgba(8, 14, 24, 0.85)';
-    ctx.fillRect(cx - sw / 2, cy - 16, sw, 56);
-    ctx.strokeStyle = 'rgba(255, 107, 120, 0.45)';
-    ctx.strokeRect(cx - sw / 2 + 0.5, cy - 15.5, sw - 1, 55);
-
-    ctx.fillStyle = '#f7d265';
-    ctx.fillText(`${t('days_survived')}: ${w.stats.daysSurvived}`, cx, cy);
-    ctx.fillStyle = '#cfe0ee';
-    ctx.fillText(`${t('draugr_slain')}: ${w.stats.draugrSlain}`, cx, cy + 13);
-    ctx.fillText(
-      `${t('recruited_lbl')}: ${w.stats.villagersRecruited}  ·  ${t('walls_lbl')}: ${w.stats.wallsBuilt}`,
-      cx,
-      cy + 26
+    // Compute comprehensive campaign stats
+    const monarch = w.monarchs[0];
+    const islandsConquered = Math.max(
+      1,
+      w.islands.filter((isl) => isl.visited || isl.colonized).length
     );
+    const totalCoins =
+      (monarch ? monarch.coins : w.resources.gold) +
+      (w.banker.balance || 0) +
+      (w.hall.storedTaxCoins || 0);
+    const totalDiamonds = Math.max(monarch ? monarch.diamonds : 0, w.resources.diamonds || 0);
+    const daysSurvived = Math.max(w.day, w.stats.daysSurvived);
+    const draugrSlain = w.stats.draugrSlain;
+    const subjectsRecruited = w.stats.villagersRecruited;
 
+    // Collect activated powers (Gods, Special Mounts, Island Buffs)
+    type PowerBadge = {
+      iconKind: 'thor' | 'freya' | 'odin' | 'loki' | 'mount' | 'buff_construction' | 'buff_forge';
+      label: string;
+      accent: string;
+    };
+    const activatedPowers: PowerBadge[] = [];
+    const seenGods = new Set<string>();
+    for (const gId of w.unlockedGods) {
+      if (seenGods.has(gId)) continue;
+      seenGods.add(gId);
+      const def = GOD_DEFS[gId];
+      if (def) {
+        activatedPowers.push({
+          iconKind: gId,
+          label: def.name,
+          accent: def.color,
+        });
+      }
+    }
+    if (w.activeGod && !seenGods.has(w.activeGod)) {
+      const def = GOD_DEFS[w.activeGod];
+      if (def) {
+        activatedPowers.push({
+          iconKind: w.activeGod,
+          label: def.name,
+          accent: def.color,
+        });
+      }
+    }
+    for (const mId of w.unlockedMounts) {
+      if (mId === 'starter') continue;
+      const def = MOUNT_DEFS[mId];
+      if (def) {
+        activatedPowers.push({
+          iconKind: 'mount',
+          label: def.name[lang],
+          accent: def.accentColor,
+        });
+      }
+    }
+    const hasConBuff =
+      w.islandBuffs.some((b) => b.kind === 'construction' && b.active) ||
+      w.islands.some((isl) => isl.constructionBuff);
+    const hasForgeBuff =
+      w.islandBuffs.some((b) => b.kind === 'forge' && b.active) ||
+      w.islands.some((isl) => isl.forgeBuff);
+    if (hasConBuff) {
+      activatedPowers.push({
+        iconKind: 'buff_construction',
+        label: 'Construção',
+        accent: '#7ce88c',
+      });
+    }
+    if (hasForgeBuff) {
+      activatedPowers.push({
+        iconKind: 'buff_forge',
+        label: 'Forja',
+        accent: '#ff9b52',
+      });
+    }
+
+    // Main pixel-bordered campaign summary panel
+    const sw = Math.min(286, this.viewW - 18);
+    const sh = activatedPowers.length > 4 ? 124 : 110;
+    const cardX = Math.round(cx - sw / 2);
+    const cardY = titleY + 21;
+
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.9)';
+    ctx.fillRect(cardX, cardY, sw, sh);
+    ctx.strokeStyle = 'rgba(255, 107, 120, 0.52)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(cardX + 0.5, cardY + 0.5, sw - 1, sh - 1);
+
+    // 2-column × 3-row Grid of 6 core campaign metrics with authentic in-game pixel icons
+    const statRows: Array<{
+      icon: 'island' | 'coin' | 'diamond' | 'day' | 'draugr' | 'villager';
+      label: string;
+      value: string;
+      color: string;
+    }> = [
+      { icon: 'island', label: 'Ilhas', value: `${islandsConquered}/${ISLAND_DEFINITIONS.length}`, color: '#8fd8ff' },
+      { icon: 'day', label: 'Dias', value: `${daysSurvived}`, color: '#f7d265' },
+      { icon: 'coin', label: 'Moedas', value: `${totalCoins}`, color: '#ffe58a' },
+      { icon: 'diamond', label: 'Diamantes', value: `${totalDiamonds}`, color: '#7ef5ff' },
+      { icon: 'draugr', label: 'Draugrs', value: `${draugrSlain}`, color: '#a8e6ff' },
+      { icon: 'villager', label: 'Súditos', value: `${subjectsRecruited}`, color: '#d4e8d4' },
+    ];
+
+    const colW = Math.floor((sw - 20) / 2);
+    ctx.textAlign = 'left';
+    for (let i = 0; i < statRows.length; i++) {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const ix = cardX + 12 + col * colW;
+      const iy = cardY + 10 + row * 17;
+      const item = statRows[i];
+
+      this.drawSummaryStatIcon(ctx, item.icon, ix, iy, w);
+
+      ctx.font = '7px "Pixelify Sans", monospace';
+      ctx.fillStyle = '#aebfd1';
+      ctx.fillText(`${item.label}:`, ix + 13, iy + 7);
+
+      const labelW = ctx.measureText(`${item.label}: `).width;
+      ctx.font = 'bold 7.5px "Pixelify Sans", monospace';
+      ctx.fillStyle = item.color;
+      ctx.fillText(item.value, ix + 13 + labelW, iy + 7);
+    }
+
+    // Divider before Activated Powers
+    const divY = cardY + 63;
+    ctx.fillStyle = 'rgba(239, 196, 98, 0.28)';
+    ctx.fillRect(cardX + 10, divY, sw - 20, 1);
+
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
+    ctx.fillStyle = '#efc462';
+    ctx.fillText('PODERES ATIVADOS', cx, divY + 11);
+
+    if (activatedPowers.length === 0) {
+      ctx.font = '7px "Pixelify Sans", monospace';
+      ctx.fillStyle = '#7e93a8';
+      ctx.fillText('Nenhum poder ativado nesta saga', cx, divY + 25);
+    } else {
+      ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
+      const maxRowW = sw - 18;
+      const rows: PowerBadge[][] = [[]];
+      let curW = 0;
+      for (const p of activatedPowers) {
+        const chipW = Math.ceil(ctx.measureText(p.label).width) + 18;
+        if (rows[rows.length - 1].length > 0 && curW + chipW > maxRowW && rows.length < 2) {
+          rows.push([]);
+          curW = 0;
+        }
+        rows[rows.length - 1].push(p);
+        curW += chipW + 4;
+      }
+
+      ctx.textAlign = 'left';
+      for (let r = 0; r < rows.length; r++) {
+        const rowItems = rows[r];
+        const rowWidths = rowItems.map((p) => Math.ceil(ctx.measureText(p.label).width) + 16);
+        const totalRowW = rowWidths.reduce((acc, val) => acc + val, 0) + (rowItems.length - 1) * 5;
+        let rx = Math.round(cx - totalRowW / 2);
+        const ry = divY + 17 + r * 14;
+        for (let j = 0; j < rowItems.length; j++) {
+          const p = rowItems[j];
+          this.drawPowerPixelIcon(ctx, p.iconKind, rx, ry, p.accent);
+          ctx.fillStyle = p.accent;
+          ctx.fillText(p.label, rx + 11, ry + 7);
+          rx += rowWidths[j] + 5;
+        }
+      }
+    }
+
+    // Back to Main Menu button (100% pixel font)
     const bw = Math.min(196, this.viewW - 28);
+    const btnY = Math.min(this.viewH - 30, cardY + sh + 10);
     ctx.fillStyle = '#2b2412';
-    ctx.fillRect(cx - bw / 2, cy + 54, bw, 24);
+    ctx.fillRect(cx - bw / 2, btnY, bw, 22);
     ctx.strokeStyle = '#efc462';
-    ctx.strokeRect(cx - bw / 2 + 0.5, cy + 54.5, bw - 1, 23);
+    ctx.strokeRect(cx - bw / 2 + 0.5, btnY + 0.5, bw - 1, 21);
+    ctx.textAlign = 'center';
     ctx.fillStyle = '#ffe58a';
-    ctx.font = 'bold 8px monospace';
-    ctx.fillText(t('back_main_menu'), cx, cy + 69);
-    this.addHit('gameover_menu', cx - bw / 2, cy + 54, bw, 24);
+    ctx.font = 'bold 8px "Pixelify Sans", monospace';
+    ctx.fillText(t('back_main_menu'), cx, btnY + 14);
+    this.addHit('gameover_menu', cx - bw / 2, btnY, bw, 22);
     ctx.textAlign = 'left';
   }
 }
