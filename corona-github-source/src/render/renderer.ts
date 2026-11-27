@@ -3961,7 +3961,11 @@ export class PixelRenderer {
         const rw = Math.ceil(ctx.measureText(`${u.counts.right}`).width);
         return { lw, rw, totalW: lw + 1 + 9 + 1 + rw };
       };
-      const group3EstW = unitItems.reduce((acc, u) => acc + measureUnit(u).totalW + 8, 0);
+      const unitGap = isNarrow ? 11 : 13;
+      const group3EstW = Math.max(
+        0,
+        unitItems.reduce((acc, u) => acc + measureUnit(u).totalW + unitGap, 0) - unitGap
+      );
       if (cx > 8 && cx + group3EstW > rightLimit) {
         cx = 8;
         cy = cy === row1Y ? row2Y : row2Y + 14;
@@ -3993,7 +3997,7 @@ export class PixelRenderer {
           ctx.fillRect(cx, cy + 2, totalW, 1);
         }
 
-        cx += totalW + 8;
+        cx += totalW + unitGap;
       }
     }
 
