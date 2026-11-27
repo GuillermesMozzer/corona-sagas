@@ -1,3 +1,4 @@
+import { getAnalytics, isSupported as isAnalyticsSupported } from 'firebase/analytics';
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import {
   GoogleAuthProvider,
@@ -385,6 +386,15 @@ export function initGoogleAuthCloud(): void {
     app = initializeApp(FIREBASE_CONFIG);
     auth = getAuth(app);
     db = getFirestore(app);
+    if (FIREBASE_CONFIG.measurementId) {
+      void isAnalyticsSupported()
+        .then((ok) => {
+          if (ok && app) getAnalytics(app);
+        })
+        .catch(() => {
+          // Ignore analytics errors when blocked by privacy extensions
+        });
+    }
 
     // Handle redirect sign-in return (mobile Safari / in-app browsers)
     void getRedirectResult(auth).catch((err) => {

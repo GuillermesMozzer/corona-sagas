@@ -15,16 +15,18 @@ export interface FirebaseWebConfig {
   storageBucket: string;
   messagingSenderId: string;
   appId: string;
+  measurementId?: string;
 }
 
-// Cole aqui os valores do seu App Web no Firebase Console (ou use VITE_FIREBASE_* no Netlify)
+// Configuração oficial do projeto Firebase Corona-sagas (sobrescrevível por VITE_FIREBASE_* no Netlify)
 const FALLBACK_FIREBASE_CONFIG: FirebaseWebConfig = {
-  apiKey: '',
-  authDomain: '',
-  projectId: '',
-  storageBucket: '',
-  messagingSenderId: '',
-  appId: '',
+  apiKey: 'AIzaSyCng2Gk3Z96sN-CjNO8XyqpjARUnRS-BXk',
+  authDomain: 'corona-sagas.firebaseapp.com',
+  projectId: 'corona-sagas',
+  storageBucket: 'corona-sagas.firebasestorage.app',
+  messagingSenderId: '59900391966',
+  appId: '1:59900391966:web:4414f875348cd06115f40f',
+  measurementId: 'G-T48S65JWSZ',
 };
 
 export const FIREBASE_CONFIG: FirebaseWebConfig = {
@@ -34,13 +36,14 @@ export const FIREBASE_CONFIG: FirebaseWebConfig = {
   storageBucket: (env.VITE_FIREBASE_STORAGE_BUCKET ?? FALLBACK_FIREBASE_CONFIG.storageBucket).trim(),
   messagingSenderId: (env.VITE_FIREBASE_MESSAGING_SENDER_ID ?? FALLBACK_FIREBASE_CONFIG.messagingSenderId).trim(),
   appId: (env.VITE_FIREBASE_APP_ID ?? FALLBACK_FIREBASE_CONFIG.appId).trim(),
+  measurementId: (env.VITE_FIREBASE_MEASUREMENT_ID ?? FALLBACK_FIREBASE_CONFIG.measurementId ?? '').trim() || undefined,
 };
 
 /**
  * E-mails Google autorizados a abrir o Painel de Jogadores (métricas) dentro do jogo.
  * Pode ser definido via VITE_ADMIN_EMAILS (separados por vírgula) ou aqui.
  */
-const FALLBACK_ADMIN_EMAILS: string[] = [];
+const FALLBACK_ADMIN_EMAILS: string[] = ['guillermes.mozzer@gmail.com'];
 
 export const ADMIN_EMAILS: string[] = (
   env.VITE_ADMIN_EMAILS
