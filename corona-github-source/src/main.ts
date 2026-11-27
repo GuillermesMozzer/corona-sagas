@@ -1671,41 +1671,58 @@ function setCoopMenuStatus(msg: string | null, isError = true): void {
     coopMenuStatus.style.borderColor = isError ? '#e06774' : '#efc462';
     coopMenuStatus.style.background = isError ? '#36131b' : '#26200c';
     coopMenuStatus.style.color = isError ? '#ffd5da' : '#ffe58a';
+    coopMenuStatus.scrollIntoView({ block: 'nearest' });
   }
 }
 
 btnCoopHostToggle?.addEventListener('click', async () => {
   sound.unlock();
+  resumeRemoteCoopAudio();
   setCoopMenuStatus(null);
   if (coopState.active && coopState.role === 'host') {
-    await hostCloseCoopRoom(world);
-    sound.playCoinDrop();
-    saveCampaign(world);
-    showBanner(world, 'CO-OP ENCERRADO', 'Sua campanha voltou ao modo solo. Todo o progresso foi mantido!', '#ffe58a');
-    updateMenuUI();
+    if (btnCoopHostToggle) btnCoopHostToggle.disabled = true;
+    try {
+      await hostCloseCoopRoom(world);
+      sound.playCoinDrop();
+      saveCampaign(world);
+      showBanner(world, 'CO-OP ENCERRADO', 'Sua campanha voltou ao modo solo. Todo o progresso foi mantido!', '#ffe58a');
+      updateMenuUI();
+    } finally {
+      if (btnCoopHostToggle) btnCoopHostToggle.disabled = false;
+    }
     return;
   }
   if (btnCoopHostToggle) btnCoopHostToggle.disabled = true;
   setCoopMenuStatus('Gerando código Co-op...', false);
-  const res = await hostOpenCoopRoom(world, (stepMsg) => setCoopMenuStatus(stepMsg, false));
-  if (btnCoopHostToggle) btnCoopHostToggle.disabled = false;
-  if (!res.ok || !res.code) {
-    sound.playHit();
-    const errMsg = res.error ?? 'Conecte sua conta Google para abrir o Co-op.';
-    setCoopMenuStatus(errMsg, true);
-    showBanner(world, 'CO-OP INDISPONÍVEL', errMsg, '#ff8a65');
+  try {
+    const res = await hostOpenCoopRoom(world, (stepMsg) => setCoopMenuStatus(stepMsg, false));
+    if (!res.ok || !res.code) {
+      sound.playHit();
+      const errMsg = res.error ?? 'Conecte sua conta Google para abrir o Co-op.';
+      setCoopMenuStatus(errMsg, true);
+      showBanner(world, 'CO-OP INDISPONÍVEL', errMsg, '#ff8a65');
+      updateMenuUI();
+      return;
+    }
+    setCoopMenuStatus(null);
+    // Immediately resume live world so Host broadcasts live state to guests while viewing the code!
+    if (world.mode === 'paused' && pausedByMenu) {
+      world.mode = 'playing';
+      pausedByMenu = false;
+    }
+    sound.playHorn(false);
+    showBanner(world, `CO-OP ABERTO · CÓDIGO ${res.code}`, 'Compartilhe o código (máx 4 jogadores)!', '#6fe87b');
     updateMenuUI();
-    return;
+    coopMenuBox?.scrollIntoView({ block: 'nearest' });
+  } catch (err) {
+    sound.playHit();
+    const msg = `Erro inesperado ao abrir Co-op: ${err instanceof Error ? err.message : String(err)}`;
+    setCoopMenuStatus(msg, true);
+    showBanner(world, 'CO-OP INDISPONÍVEL', msg, '#ff8a65');
+    updateMenuUI();
+  } finally {
+    if (btnCoopHostToggle) btnCoopHostToggle.disabled = false;
   }
-  setCoopMenuStatus(null);
-  // Immediately resume live world so Host broadcasts live state to guests while viewing the code!
-  if (world.mode === 'paused' && pausedByMenu) {
-    world.mode = 'playing';
-    pausedByMenu = false;
-  }
-  sound.playHorn(false);
-  showBanner(world, `CO-OP ABERTO · CÓDIGO ${res.code}`, 'Compartilhe o código (máx 4 jogadores)!', '#6fe87b');
-  updateMenuUI();
 });
 
 btnCoopGuestLeave?.addEventListener('click', () => {
@@ -1758,19 +1775,42 @@ coopChatOpenRoom?.addEventListener('click', async (e) => {
   sound.unlock();
   resumeRemoteCoopAudio();
   if (coopState.active) return;
-  const res = await hostOpenCoopRoom(world);
-  if (res.ok && res.code) {
-    sound.playHorn(false);
-    showBanner(
-      world,
-      `CO-OP ABERTO · CÓDIGO ${res.code}`,
-      'Compartilhe este código para até 4 jogadores conversarem e jogarem juntos!',
-      '#6fe87b'
-    );
-    updateCoopUI();
-  } else {
+  if (coopChatOpenRoom) {
+    coopChatOpenRoom.disabled = true;
+    coopChatOpenRoom.textContent = '...';
+  }
+  const showChatSysMsg = (text: string, isErr = false) => {
+    if (!coopChatMessages) return;
+    coopChatMessages.innerHTML = `<div class="chat-msg-sys" style="color:${isErr ? '#ff9ea8' : '#ffe58a'};">${escapeHtml(text)}</div>`;
+  };
+  showChatSysMsg('Gerando código Co-op...');
+  try {
+    const res = await hostOpenCoopRoom(world, (step) => showChatSysMsg(step));
+    if (res.ok && res.code) {
+      sound.playHorn(false);
+      showBanner(
+        world,
+        `CO-OP ABERTO · CÓDIGO ${res.code}`,
+        'Compartilhe este código para até 4 jogadores conversarem e jogarem juntos!',
+        '#6fe87b'
+      );
+      updateCoopUI();
+    } else {
+      sound.playHit();
+      const errMsg = res.error ?? 'Conecte sua conta Google para abrir Co-op.';
+      showChatSysMsg(`Erro: ${errMsg}`, true);
+      showBanner(world, 'CO-OP ONLINE', errMsg, '#ff8a65');
+    }
+  } catch (err) {
     sound.playHit();
-    showBanner(world, 'CO-OP ONLINE', res.error ?? 'Conecte sua conta Google para abrir Co-op.', '#ff8a65');
+    const msg = err instanceof Error ? err.message : String(err);
+    showChatSysMsg(`Erro: ${msg}`, true);
+    showBanner(world, 'CO-OP ONLINE', msg, '#ff8a65');
+  } finally {
+    if (coopChatOpenRoom) {
+      coopChatOpenRoom.disabled = false;
+      coopChatOpenRoom.textContent = '+ CO-OP';
+    }
   }
 });
 
