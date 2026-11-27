@@ -1,4 +1,5 @@
-import type { CrestConfig, WorldState } from '../types';
+import { CENTER_X, type CrestConfig, type ResourceSize, type WorldState } from '../types';
+import { ISLAND_DEFINITIONS } from '../world/islands';
 
 export const MAX_SAVE_SLOTS = 8;
 
@@ -51,6 +52,12 @@ function slotKey(slot: number): string {
   return `${SLOT_KEY_PREFIX}${clamped}`;
 }
 
+function sizeForVariant(v: number): ResourceSize {
+  if (v === 0) return 'small';
+  if (v === 1) return 'medium';
+  return 'large';
+}
+
 function hydrateState(state: WorldState, slot: number): WorldState | null {
   if (!state || !state.boat || !state.dock || !state.islands) return null;
   state.mode = 'playing';
@@ -68,6 +75,7 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
   state.threatLevel = state.threatLevel ?? 1;
   state.worldMapContext = 'inspect';
   state.unlockedGods = state.unlockedGods ?? [];
+  state.thorActivated = state.thorActivated ?? (state.unlockedGods.includes('thor') && state.activeGod === 'thor');
   state.unlockedMounts = state.unlockedMounts ?? ['starter'];
   state.flyingCoins = state.flyingCoins ?? [];
   state.fireTrails = state.fireTrails ?? [];
@@ -75,14 +83,90 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
   state.godShrine = state.godShrine ?? null;
   state.mountShrine = state.mountShrine ?? null;
   state.puzzle = state.puzzle ?? null;
-  state.rocks = state.rocks ?? [];
-  state.farms = state.farms ?? [];
+  state.rocks = (state.rocks ?? []).map((r) => ({ ...r, size: r.size ?? sizeForVariant(r.variant) }));
+  state.trees = (state.trees ?? []).map((tr) => ({ ...tr, size: tr.size ?? sizeForVariant(tr.variant) }));
+  state.farms = (state.farms ?? []).map((f) => ({
+    ...f,
+    storedFood: f.storedFood ?? 0,
+    storedCoins: f.storedCoins ?? 0,
+  }));
+  state.banker = state.banker ?? {
+    x: CENTER_X + 68,
+    balance: 0,
+    interestFraction: 0,
+    lastDayYield: 0,
+  };
+  if (state.currentIsland >= 2 && !state.forge) {
+    state.forge = {
+      x: CENTER_X - 68,
+      built: false,
+      coinsPaid: 0,
+      underConstruction: false,
+      buildProgress: 0,
+      smelting: false,
+      smeltProgress: 0,
+      smeltCoinsPaid: 0,
+      smeltQueue: 0,
+    };
+  } else if (state.currentIsland === 1) {
+    state.forge = state.forge ?? null;
+  }
+  if (!state.towers || state.towers.length === 0) {
+    let tid = (state.nextId ?? 5000) + 1;
+    state.towers = [
+      { id: tid++, x: CENTER_X - 256, side: -1, tier: 'inner', level: 0, destroyed: false, previousLevel: 0, hp: 0, maxHp: 0, underConstruction: false, buildProgress: 0, targetLevel: 0, coinsPaid: 0, hitFlash: 0 },
+      { id: tid++, x: CENTER_X + 256, side: 1, tier: 'inner', level: 0, destroyed: false, previousLevel: 0, hp: 0, maxHp: 0, underConstruction: false, buildProgress: 0, targetLevel: 0, coinsPaid: 0, hitFlash: 0 },
+      { id: tid++, x: CENTER_X - 558, side: -1, tier: 'outer', level: 0, destroyed: false, previousLevel: 0, hp: 0, maxHp: 0, underConstruction: false, buildProgress: 0, targetLevel: 0, coinsPaid: 0, hitFlash: 0 },
+      { id: tid++, x: CENTER_X + 558, side: 1, tier: 'outer', level: 0, destroyed: false, previousLevel: 0, hp: 0, maxHp: 0, underConstruction: false, buildProgress: 0, targetLevel: 0, coinsPaid: 0, hitFlash: 0 },
+    ];
+    state.nextId = tid + 1;
+  }
+  if (!state.islandBuffs) {
+    state.islandBuffs =
+      state.currentIsland >= 2
+        ? [
+            { kind: 'construction', x: CENTER_X - 495, active: false, coinsPaid: 0 },
+            { kind: 'forge', x: CENTER_X + 518, active: false, coinsPaid: 0 },
+          ]
+        : [];
+  }
+  state.rockRegrowQueue = state.rockRegrowQueue ?? 0;
+  state.rockRegrowTimer = state.rockRegrowTimer ?? 0;
+  state.treeRegrowQueue = state.treeRegrowQueue ?? 0;
+  state.treeRegrowTimer = state.treeRegrowTimer ?? 0;
+  for (const def of ISLAND_DEFINITIONS) {
+    const existing = state.islands.find((i) => i.id === def.id);
+    if (!existing) {
+      state.islands.push({
+        id: def.id,
+        colonized: false,
+        visited: false,
+        dockBuilt: false,
+        boatBuilt: false,
+        hallLevel: 0,
+        wallsBuilt: 0,
+        diamondsCollected: 0,
+        godUnlocked: false,
+        mountUnlocked: false,
+        constructionBuff: false,
+        forgeBuff: false,
+      });
+    } else {
+      existing.constructionBuff = existing.constructionBuff ?? false;
+      existing.forgeBuff = existing.forgeBuff ?? false;
+    }
+  }
+  state.islands.sort((a, b) => a.id - b.id);
+  for (const v of state.villagers ?? []) {
+    v.assignedTowerId = v.assignedTowerId ?? null;
+  }
   if (state.monarchs?.[0]) {
     const m = state.monarchs[0];
     m.flyTimer = m.flyTimer ?? 0;
     m.flyY = m.flyY ?? 0;
     m.roarTimer = m.roarTimer ?? 0;
     m.wolfBiteCooldown = m.wolfBiteCooldown ?? 0;
+    m.maxCoins = Math.max(30, 30 + Math.max(0, (state.hall?.level ?? 1) - 1) * 5);
   }
   return state;
 }

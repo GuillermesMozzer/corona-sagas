@@ -20,7 +20,6 @@ import {
   GROUND_Y,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
-  MAX_FARMERS_PER_FARM,
   WORLD_WIDTH,
   type CommandMode,
   type Enemy,
@@ -28,7 +27,18 @@ import {
   type Villager,
   type WorldState,
 } from '../types';
-import { getTutorialTargetX } from '../systems/simulation';
+import {
+  countArchersAssignedToTower,
+  getBankerDailyRatePct,
+  getFarmMaxFarmers,
+  getIslandMaxKingdomLevel,
+  getTowerArcherCap,
+  getTowerHeight,
+  getTutorialTargetX,
+  getWallHeight,
+  isFarmsUnlocked,
+  isShopUnlocked,
+} from '../systems/simulation';
 import { ISLAND_DEFINITIONS, getIslandDef } from '../world/islands';
 import { GOD_DEFS, MOUNT_DEFS } from '../world/mountsAndGods';
 
@@ -241,10 +251,14 @@ export class PixelRenderer {
     this.drawChests(ctx, w, camX);
     this.drawPortals(ctx, w, camX);
     this.drawHall(ctx, w, camX);
+    this.drawBanker(ctx, w, camX);
+    this.drawForge(ctx, w, camX);
     this.drawShops(ctx, w, camX);
     this.drawFarms(ctx, w, camX);
     this.drawBoatAndDock(ctx, w, camX);
     this.drawShrinesAndPuzzle(ctx, w, camX);
+    this.drawIslandBuffs(ctx, w, camX);
+    this.drawTowers(ctx, w, camX);
     this.drawWalls(ctx, w, camX);
     this.drawWildlife(ctx, w, camX);
     this.drawVillagers(ctx, w, camX);
@@ -1011,20 +1025,24 @@ export class PixelRenderer {
     for (const tr of w.trees) {
       if (tr.chopped) continue;
       const sx = Math.round(tr.x - camX);
-      if (sx < -32 || sx > this.viewW + 32) continue;
+      if (sx < -36 || sx > this.viewW + 36) continue;
 
       const shake = tr.hitShake > 0 ? Math.round(Math.sin(w.elapsed * 60) * 2) : 0;
       const sway = Math.round(Math.sin(w.elapsed * 1.1 + tr.swayOffset) * 1);
       const bx = sx + shake;
+      const sz = tr.size ?? (tr.variant === 0 ? 'small' : tr.variant === 1 ? 'medium' : 'large');
+      const trunkW = sz === 'large' ? 6 : sz === 'medium' ? 4 : 3;
+      const trunkH = sz === 'large' ? 18 : sz === 'medium' ? 14 : 11;
 
       ctx.fillStyle = '#3d2c24';
-      ctx.fillRect(bx - 2, GROUND_Y - 14, 4, 14);
+      ctx.fillRect(bx - Math.floor(trunkW / 2), GROUND_Y - trunkH, trunkW, trunkH);
 
-      const tiers = 3 + (tr.variant === 2 ? 1 : 0);
+      const tiers = sz === 'large' ? 4 : sz === 'medium' ? 3 : 2;
+      const baseHalfW = sz === 'large' ? 16 : sz === 'medium' ? 13 : 9;
       for (let tier = 0; tier < tiers; tier++) {
-        const ty = GROUND_Y - 12 - tier * Math.floor((tr.height - 14) / tiers);
-        const halfW = 13 - tier * 2.5 + (tr.variant === 1 ? 2 : 0);
-        const topY = ty - 16;
+        const ty = GROUND_Y - (trunkH - 2) - tier * Math.floor((tr.height - trunkH) / tiers);
+        const halfW = Math.max(4, baseHalfW - tier * 2.5);
+        const topY = ty - (sz === 'large' ? 18 : sz === 'medium' ? 15 : 13);
         const shift = Math.round((sway * (tier + 1)) / tiers);
 
         ctx.fillStyle = rgbStr(tier % 2 === 0 ? darkGreen : midGreen);
@@ -1037,7 +1055,7 @@ export class PixelRenderer {
 
         ctx.fillStyle = rgbStr(snow, 0.8);
         ctx.fillRect(bx + shift - 2, topY + 2, 4, 2);
-        ctx.fillRect(bx + shift - Math.floor(halfW * 0.55), topY + 7, Math.floor(halfW * 0.5), 2);
+        ctx.fillRect(bx + shift - Math.floor(halfW * 0.55), topY + 6, Math.floor(halfW * 0.5), 2);
       }
 
       if (tr.marked) {
@@ -1048,6 +1066,21 @@ export class PixelRenderer {
         ctx.fillRect(bx - 2, GROUND_Y - 21 + bob, 4, 4);
         ctx.fillStyle = '#fff3b8';
         ctx.fillRect(bx - 1, GROUND_Y - 20 + bob, 2, 2);
+
+        if (tr.chopProgress > 0) {
+          const workers = w.villagers.filter((v) => v.role === 'builder' && v.targetId === tr.id && Math.abs(v.x - tr.x) < 26).length;
+          ctx.fillStyle = 'rgba(10,14,20,0.82)';
+          ctx.fillRect(bx - 12, GROUND_Y - 31, 24, 4);
+          ctx.fillStyle = '#7bd468';
+          ctx.fillRect(bx - 11, GROUND_Y - 30, Math.max(1, Math.round(22 * Math.min(1, tr.chopProgress))), 2);
+          if (workers > 1) {
+            ctx.fillStyle = '#ffe58a';
+            ctx.font = 'bold 6px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(`x${workers}`, bx, GROUND_Y - 33);
+            ctx.textAlign = 'left';
+          }
+        }
       }
     }
   }
@@ -1060,19 +1093,24 @@ export class PixelRenderer {
     for (const r of w.rocks) {
       if (r.mined) continue;
       const sx = Math.round(r.x - camX);
-      if (sx < -24 || sx > this.viewW + 24) continue;
+      if (sx < -28 || sx > this.viewW + 28) continue;
 
       const shake = r.hitShake > 0 ? Math.round(Math.sin(w.elapsed * 60) * 2) : 0;
       const bx = sx + shake;
-      const rw = r.variant === 0 ? 18 : r.variant === 1 ? 22 : 16;
-      const rh = r.variant === 0 ? 13 : r.variant === 1 ? 15 : 11;
+      const sz = r.size ?? (r.variant === 0 ? 'small' : r.variant === 1 ? 'medium' : 'large');
+      // Visually distinct Small (P), Medium (M), Large (G) rocks!
+      const rw = sz === 'small' ? 14 : sz === 'medium' ? 20 : 28;
+      const rh = sz === 'small' ? 10 : sz === 'medium' ? 15 : 22;
 
       ctx.fillStyle = rgbStr(stoneDark);
       ctx.fillRect(bx - Math.floor(rw / 2), GROUND_Y - rh + 3, rw, rh - 3);
       ctx.fillStyle = rgbStr(stoneMid);
       ctx.fillRect(bx - Math.floor(rw / 2) + 2, GROUND_Y - rh, rw - 5, rh - 2);
+      if (sz === 'large') {
+        ctx.fillRect(bx - Math.floor(rw / 2) + 5, GROUND_Y - rh - 3, rw - 11, 4);
+      }
       ctx.fillStyle = rgbStr(snow);
-      ctx.fillRect(bx - Math.floor(rw / 2) + 3, GROUND_Y - rh, rw - 7, 2);
+      ctx.fillRect(bx - Math.floor(rw / 2) + 3, GROUND_Y - rh - (sz === 'large' ? 3 : 0), rw - 7, 2);
       ctx.fillStyle = '#dce8f2';
       ctx.fillRect(bx + 1, GROUND_Y - Math.floor(rh * 0.55), 2, 2);
 
@@ -1084,6 +1122,21 @@ export class PixelRenderer {
         ctx.fillRect(bx - 2, GROUND_Y - rh - 9 + bob, 4, 4);
         ctx.fillStyle = '#fff3b8';
         ctx.fillRect(bx - 1, GROUND_Y - rh - 8 + bob, 2, 2);
+
+        if (r.mineProgress > 0) {
+          const workers = w.villagers.filter((v) => v.role === 'builder' && v.targetId === r.id && Math.abs(v.x - r.x) < 28).length;
+          ctx.fillStyle = 'rgba(10,14,20,0.82)';
+          ctx.fillRect(bx - 13, GROUND_Y - rh - 17, 26, 4);
+          ctx.fillStyle = '#a8c8e8';
+          ctx.fillRect(bx - 12, GROUND_Y - rh - 16, Math.max(1, Math.round(24 * Math.min(1, r.mineProgress))), 2);
+          if (workers > 1) {
+            ctx.fillStyle = '#ffe58a';
+            ctx.font = 'bold 6px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(`x${workers}`, bx, GROUND_Y - rh - 19);
+            ctx.textAlign = 'left';
+          }
+        }
       }
     }
   }
@@ -1172,7 +1225,7 @@ export class PixelRenderer {
 
   private drawHall(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     const sx = Math.round(w.hall.x - camX);
-    if (sx < -80 || sx > this.viewW + 80) return;
+    if (sx < -95 || sx > this.viewW + 95) return;
 
     const lvl = w.hall.level;
     const primary = w.crest.primaryColor;
@@ -1180,7 +1233,8 @@ export class PixelRenderer {
 
     if (lvl >= 1) {
       const wave = Math.round(Math.sin(w.elapsed * 4.5) * 1.5);
-      for (const fx of [-38, 38]) {
+      const flagOffset = lvl >= 6 ? 48 : lvl >= 3 ? 42 : 36;
+      for (const fx of [-flagOffset, flagOffset]) {
         ctx.fillStyle = '#5e4633';
         ctx.fillRect(sx + fx, GROUND_Y - 34, 2, 34);
         ctx.fillStyle = primary;
@@ -1193,30 +1247,65 @@ export class PixelRenderer {
     }
 
     if (lvl >= 2) {
-      const hallW = lvl === 3 ? 78 : 56;
-      const hallH = lvl === 3 ? 40 : 30;
-      ctx.fillStyle = '#4f3827';
+      const hallW = Math.min(92, 54 + (lvl - 2) * 5);
+      const hallH = Math.min(58, 30 + (lvl - 2) * 3.5);
+      const isStone = lvl >= 4;
+      const isIron = lvl >= 6;
+      const isAsgard = lvl >= 9;
+
+      // Flanking Castle turrets from Lv 4+
+      if (lvl >= 4) {
+        const turretH = hallH + (lvl >= 7 ? 16 : 10);
+        const turretW = 12;
+        for (const side of [-1, 1]) {
+          const tx = sx + side * Math.round(hallW / 2 + 2) - Math.floor(turretW / 2);
+          ctx.fillStyle = isIron ? '#455160' : '#5e6975';
+          ctx.fillRect(tx, GROUND_Y - turretH, turretW, turretH);
+          ctx.fillStyle = isAsgard ? '#efc462' : '#2f3945';
+          ctx.fillRect(tx - 1, GROUND_Y - turretH - 3, turretW + 2, 3);
+          for (let cx = 0; cx < turretW; cx += 4) {
+            ctx.fillStyle = isIron ? '#617082' : '#7b8794';
+            ctx.fillRect(tx + cx, GROUND_Y - turretH - 6, 3, 3);
+          }
+          // Glowing turret window
+          ctx.fillStyle = isAsgard ? '#7ef5ff' : '#ffae42';
+          ctx.fillRect(tx + 4, GROUND_Y - turretH + 7, 4, 5);
+        }
+      }
+
+      // Main keep body
+      ctx.fillStyle = isAsgard ? '#4d586b' : isIron ? '#3d4754' : isStone ? '#56616e' : '#4f3827';
       ctx.fillRect(sx - hallW / 2, GROUND_Y - hallH, hallW, hallH);
 
-      ctx.fillStyle = '#362419';
+      ctx.fillStyle = isStone ? '#333c47' : '#362419';
       for (let bx = -hallW / 2 + 6; bx < hallW / 2; bx += 12) {
         ctx.fillRect(sx + bx, GROUND_Y - hallH, 2, hallH);
       }
 
-      ctx.fillStyle = lvl === 3 ? '#2d3b4c' : '#3d464d';
+      // Roof / Spire
+      const roofPeak = 16 + Math.min(18, (lvl - 2) * 2.5);
+      ctx.fillStyle = isAsgard ? '#26344a' : isIron ? '#242e3b' : lvl >= 3 ? '#2d3b4c' : '#3d464d';
       ctx.beginPath();
       ctx.moveTo(sx - hallW / 2 - 6, GROUND_Y - hallH + 4);
-      ctx.lineTo(sx, GROUND_Y - hallH - (lvl === 3 ? 22 : 16));
+      ctx.lineTo(sx, GROUND_Y - hallH - roofPeak);
       ctx.lineTo(sx + hallW / 2 + 6, GROUND_Y - hallH + 4);
       ctx.closePath();
       ctx.fill();
 
-      ctx.fillStyle = secondary;
+      ctx.fillStyle = isAsgard ? '#ffe066' : secondary;
       ctx.fillRect(sx - hallW / 2 - 4, GROUND_Y - hallH + 3, hallW + 8, 2);
 
-      ctx.fillStyle = '#d4e6f2';
-      ctx.fillRect(sx - 6, GROUND_Y - hallH - (lvl === 3 ? 22 : 16), 12, 3);
+      // Snow or golden finial on roof peak
+      ctx.fillStyle = isAsgard ? '#ffe58a' : '#d4e6f2';
+      ctx.fillRect(sx - 6, GROUND_Y - hallH - roofPeak, 12, 3);
+      if (lvl === 10) {
+        ctx.fillStyle = '#ffe066';
+        ctx.fillRect(sx - 1, GROUND_Y - hallH - roofPeak - 8, 2, 8);
+        ctx.fillStyle = '#7ef5ff';
+        ctx.fillRect(sx - 2, GROUND_Y - hallH - roofPeak - 10, 4, 3);
+      }
 
+      // Banners & Emblem
       ctx.fillStyle = primary;
       ctx.fillRect(sx - 18, GROUND_Y - hallH + 6, 8, 15);
       ctx.fillRect(sx + 10, GROUND_Y - hallH + 6, 8, 15);
@@ -1226,18 +1315,20 @@ export class PixelRenderer {
 
       drawShieldEmblem(ctx, w.crest, sx, GROUND_Y - hallH - 2, 7);
 
+      // Warm castle entrance gate
       ctx.fillStyle = '#241710';
       ctx.fillRect(sx - 6, GROUND_Y - 16, 12, 16);
       ctx.fillStyle = '#ffae42';
       ctx.fillRect(sx - 4, GROUND_Y - 13, 8, 13);
 
-      if (lvl === 3) {
+      if (lvl >= 3) {
         for (const ox of [-26, 26]) {
           drawShieldEmblem(ctx, w.crest, sx + ox, GROUND_Y - hallH + 11, 4.5);
         }
       }
     }
 
+    // Campfire pit
     ctx.fillStyle = '#5a6470';
     ctx.fillRect(sx - 10, GROUND_Y - 3, 20, 3);
     ctx.fillStyle = '#3b281c';
@@ -1252,6 +1343,16 @@ export class PixelRenderer {
       ctx.fillRect(sx - 3, GROUND_Y - 10 - f2, 6, 6 + f2);
       ctx.fillStyle = '#fff2a6';
       ctx.fillRect(sx - 1, GROUND_Y - 8, 2, 4);
+
+      // Kingdom Level pill above Castle
+      const pillY = lvl >= 2 ? GROUND_Y - Math.min(58, 30 + (lvl - 2) * 3.5) - (16 + Math.min(18, (lvl - 2) * 2.5)) - 12 : GROUND_Y - 26;
+      ctx.fillStyle = 'rgba(8, 14, 24, 0.78)';
+      ctx.fillRect(sx - 15, pillY, 30, 8);
+      ctx.fillStyle = '#ffe58a';
+      ctx.font = 'bold 6px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`NV.${lvl}`, sx, pillY + 6);
+      ctx.textAlign = 'left';
     }
 
     if (w.hall.storedTaxCoins > 0) {
@@ -1263,10 +1364,231 @@ export class PixelRenderer {
     }
   }
 
+  private drawBanker(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    if (w.hall.level < 1) return;
+    const sx = Math.round(w.banker.x - camX);
+    if (sx < -32 || sx > this.viewW + 32) return;
+
+    // Banker's wooden vault stand with golden canopy
+    ctx.fillStyle = '#4a311f';
+    ctx.fillRect(sx - 11, GROUND_Y - 10, 22, 10);
+    ctx.fillStyle = '#d9a738';
+    ctx.fillRect(sx - 11, GROUND_Y - 10, 22, 2);
+    ctx.fillRect(sx - 1, GROUND_Y - 8, 2, 8);
+
+    // Banker NPC behind desk
+    const bob = Math.round(Math.sin(w.elapsed * 2.5) * 0.6);
+    ctx.fillStyle = '#2d4b3c';
+    ctx.fillRect(sx - 3, GROUND_Y - 17 + bob, 6, 7);
+    ctx.fillStyle = '#efc462';
+    ctx.fillRect(sx - 3, GROUND_Y - 13 + bob, 6, 1);
+    ctx.fillStyle = '#e5be9e';
+    ctx.fillRect(sx - 2, GROUND_Y - 21 + bob, 4, 4);
+    ctx.fillStyle = '#1f362b';
+    ctx.fillRect(sx - 3, GROUND_Y - 23 + bob, 6, 2);
+
+    // Coin stacks proportional to balance
+    const stacks = Math.min(5, Math.ceil(w.banker.balance / 10));
+    for (let i = 0; i < stacks; i++) {
+      ctx.fillStyle = '#f7d265';
+      ctx.fillRect(sx + 5 + (i % 2) * 3, GROUND_Y - 12 - Math.floor(i / 2) * 2, 2, 2);
+    }
+
+    // Balance & rate badge
+    const ratePct = getBankerDailyRatePct(w.hall.level);
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.8)';
+    ctx.fillRect(sx - 18, GROUND_Y - 33, 36, 8);
+    ctx.fillStyle = '#ffe58a';
+    ctx.font = 'bold 5.5px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${w.banker.balance}g·${ratePct}%`, sx, GROUND_Y - 27);
+    ctx.textAlign = 'left';
+  }
+
+  private drawForge(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    if (w.hall.level < 1 || !w.forge) return;
+    const sx = Math.round(w.forge.x - camX);
+    if (sx < -36 || sx > this.viewW + 36) return;
+
+    if (!w.forge.built) {
+      // Unbuilt stone foundation + anvil site
+      ctx.fillStyle = '#4c5764';
+      ctx.fillRect(sx - 14, GROUND_Y - 5, 28, 5);
+      ctx.fillStyle = '#6f7d8c';
+      ctx.fillRect(sx - 10, GROUND_Y - 8, 20, 3);
+      ctx.fillStyle = '#ff8f3b';
+      ctx.fillRect(sx - 2, GROUND_Y - 7, 4, 2);
+    } else {
+      // Stone furnace + chimney + glowing hearth + iron anvil
+      ctx.fillStyle = '#434d59';
+      ctx.fillRect(sx - 13, GROUND_Y - 22, 18, 22);
+      ctx.fillStyle = '#2e3640';
+      ctx.fillRect(sx - 9, GROUND_Y - 30, 8, 10);
+      ctx.fillStyle = '#5e6b7a';
+      ctx.fillRect(sx - 15, GROUND_Y - 24, 22, 3);
+
+      // Glowing furnace mouth
+      const glow = Math.floor(w.elapsed * 10) % 2;
+      ctx.fillStyle = w.forge.smelting ? '#ff6a1a' : '#c94c16';
+      ctx.fillRect(sx - 9, GROUND_Y - 12, 10, 9);
+      ctx.fillStyle = w.forge.smelting ? '#ffe066' : '#ff9b3d';
+      ctx.fillRect(sx - 7, GROUND_Y - 10 - glow, 6, 5 + glow);
+
+      // Anvil beside furnace
+      ctx.fillStyle = '#8b99a8';
+      ctx.fillRect(sx + 7, GROUND_Y - 9, 8, 3);
+      ctx.fillRect(sx + 9, GROUND_Y - 6, 4, 6);
+      ctx.fillStyle = '#cddbe8';
+      ctx.fillRect(sx + 7, GROUND_Y - 9, 8, 1);
+
+      if (w.forge.smelting) {
+        ctx.fillStyle = 'rgba(10,14,20,0.85)';
+        ctx.fillRect(sx - 13, GROUND_Y - 36, 26, 4);
+        ctx.fillStyle = '#ff9b52';
+        ctx.fillRect(sx - 12, GROUND_Y - 35, Math.max(1, Math.round(24 * w.forge.smeltProgress)), 2);
+      }
+    }
+
+    if (w.forge.underConstruction) {
+      ctx.fillStyle = 'rgba(10,14,20,0.82)';
+      ctx.fillRect(sx - 12, GROUND_Y - 28, 24, 4);
+      ctx.fillStyle = '#ff9b52';
+      ctx.fillRect(sx - 11, GROUND_Y - 27, Math.round(22 * w.forge.buildProgress), 2);
+    }
+  }
+
+  private drawIslandBuffs(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    if (w.hall.level < 1 || !w.islandBuffs.length) return;
+    for (const buff of w.islandBuffs) {
+      const sx = Math.round(buff.x - camX);
+      if (sx < -36 || sx > this.viewW + 36) continue;
+      const isCon = buff.kind === 'construction';
+      const accent = isCon ? '#7ef5ff' : '#ff9b52';
+      const pulse = 0.65 + 0.35 * Math.sin(w.elapsed * 3.5);
+
+      if (buff.active) {
+        ctx.fillStyle = isCon
+          ? `rgba(126, 245, 255, ${(0.18 * pulse).toFixed(2)})`
+          : `rgba(255, 155, 82, ${(0.2 * pulse).toFixed(2)})`;
+        ctx.beginPath();
+        ctx.arc(sx, GROUND_Y - 18, 18, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Carved stone pillar
+      ctx.fillStyle = '#3b4654';
+      ctx.fillRect(sx - 10, GROUND_Y - 4, 20, 4);
+      ctx.fillStyle = '#4e5c6e';
+      ctx.fillRect(sx - 6, GROUND_Y - 28, 12, 24);
+      ctx.fillStyle = '#68788c';
+      ctx.fillRect(sx - 5, GROUND_Y - 31, 10, 4);
+
+      // Rune symbol
+      ctx.fillStyle = buff.active ? accent : '#8da3b8';
+      ctx.fillRect(sx - 2, GROUND_Y - 23, 4, 10);
+      ctx.fillRect(sx - 4, GROUND_Y - 20, 8, 2);
+
+      // Plate
+      ctx.fillStyle = 'rgba(8, 14, 24, 0.8)';
+      ctx.fillRect(sx - 20, GROUND_Y - 41, 40, 8);
+      ctx.fillStyle = buff.active ? '#82e08a' : accent;
+      ctx.font = 'bold 5.5px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(isCon ? (buff.active ? 'OBRA ✓' : 'BUFF OBRA') : buff.active ? 'FORJA ✓' : 'BUFF FORJA', sx, GROUND_Y - 35);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  private drawTowers(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    if (w.hall.level < 1) return;
+    for (const tw of w.towers) {
+      const sx = Math.round(tw.x - camX);
+      if (sx < -32 || sx > this.viewW + 32) continue;
+
+      if (tw.destroyed) {
+        ctx.fillStyle = '#4a3221';
+        ctx.fillRect(sx - 7, GROUND_Y - 6, 5, 6);
+        ctx.fillRect(sx + 2, GROUND_Y - 4, 5, 4);
+        ctx.fillStyle = '#697482';
+        ctx.fillRect(sx - 4, GROUND_Y - 3, 8, 3);
+      } else if (tw.level === 0) {
+        // Subtle tower plot marker
+        ctx.fillStyle = '#4f4237';
+        ctx.fillRect(sx - 7, GROUND_Y - 3, 14, 3);
+        ctx.fillStyle = '#7a634c';
+        ctx.fillRect(sx - 5, GROUND_Y - 6, 2, 4);
+        ctx.fillRect(sx + 3, GROUND_Y - 6, 2, 4);
+      } else {
+        const h = getTowerHeight(tw.level);
+        const isStone = tw.level >= 3;
+        const isIron = tw.level >= 6;
+        const isAsgard = tw.level >= 9;
+        const bodyCol = tw.hitFlash > 0 ? '#ffffff' : isAsgard ? '#5a687d' : isIron ? '#455160' : isStone ? '#6d7885' : '#6b492c';
+        const darkCol = tw.hitFlash > 0 ? '#e8e8e8' : isIron ? '#2d3642' : isStone ? '#4a5461' : '#4a301d';
+
+        // Support stilts / stone shaft
+        ctx.fillStyle = bodyCol;
+        ctx.fillRect(sx - 7, GROUND_Y - h, 14, h);
+        ctx.fillStyle = darkCol;
+        ctx.fillRect(sx - 7, GROUND_Y - h, 2, h);
+        ctx.fillRect(sx + 5, GROUND_Y - h, 2, h);
+
+        // Platform deck & parapet
+        ctx.fillStyle = isAsgard ? '#efc462' : darkCol;
+        ctx.fillRect(sx - 10, GROUND_Y - h - 2, 20, 4);
+        ctx.fillStyle = bodyCol;
+        ctx.fillRect(sx - 10, GROUND_Y - h - 6, 3, 4);
+        ctx.fillRect(sx + 7, GROUND_Y - h - 6, 3, 4);
+
+        // Roof canopy on higher towers (Lv 4+)
+        if (tw.level >= 4) {
+          ctx.fillStyle = w.crest.primaryColor;
+          ctx.fillRect(sx - 10, GROUND_Y - h - 20, 20, 3);
+          ctx.fillStyle = isAsgard ? '#ffe066' : w.crest.secondaryColor;
+          ctx.fillRect(sx - 10, GROUND_Y - h - 18, 20, 1);
+          ctx.fillStyle = darkCol;
+          ctx.fillRect(sx - 9, GROUND_Y - h - 18, 2, 16);
+          ctx.fillRect(sx + 7, GROUND_Y - h - 18, 2, 16);
+        }
+
+        // Level & garrison badge
+        const cap = getTowerArcherCap(tw.level);
+        const occ = countArchersAssignedToTower(w, tw.id);
+        const badgeY = GROUND_Y - h - (tw.level >= 4 ? 28 : 15);
+        ctx.fillStyle = 'rgba(8, 14, 24, 0.76)';
+        ctx.fillRect(sx - 14, badgeY, 28, 7);
+        ctx.fillStyle = '#ffe58a';
+        ctx.font = '5.5px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`T${tw.level} ${occ}/${cap}`, sx, badgeY + 5.5);
+        ctx.textAlign = 'left';
+
+        if (tw.hp < tw.maxHp) {
+          const ratio = Math.max(0, tw.hp / tw.maxHp);
+          ctx.fillStyle = 'rgba(10,14,20,0.75)';
+          ctx.fillRect(sx - 10, badgeY - 4, 20, 3);
+          ctx.fillStyle = ratio > 0.4 ? '#6fd48c' : '#ff5e6c';
+          ctx.fillRect(sx - 9, badgeY - 3, Math.round(18 * ratio), 1);
+        }
+      }
+
+      if (tw.underConstruction) {
+        ctx.fillStyle = 'rgba(196, 152, 92, 0.75)';
+        ctx.fillRect(sx - 10, GROUND_Y - 24, 2, 24);
+        ctx.fillRect(sx + 8, GROUND_Y - 24, 2, 24);
+        ctx.fillStyle = 'rgba(10,14,20,0.82)';
+        ctx.fillRect(sx - 12, GROUND_Y - 31, 24, 4);
+        ctx.fillStyle = '#efc462';
+        ctx.fillRect(sx - 11, GROUND_Y - 30, Math.round(22 * tw.buildProgress), 2);
+      }
+    }
+  }
+
   private drawShops(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     if (w.hall.level < 1) return;
 
     for (const shop of w.shops) {
+      if (!isShopUnlocked(w, shop.kind)) continue;
       const sx = Math.round(shop.x - camX);
       if (sx < -32 || sx > this.viewW + 32) continue;
 
@@ -1313,10 +1635,10 @@ export class PixelRenderer {
   }
 
   private drawFarms(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
-    if (w.hall.level < 1) return;
+    if (!isFarmsUnlocked(w)) return;
     for (const farm of w.farms) {
       const sx = Math.round(farm.x - camX);
-      if (sx < -42 || sx > this.viewW + 42) continue;
+      if (sx < -44 || sx > this.viewW + 44) continue;
 
       if (farm.level === 0) {
         ctx.fillStyle = '#473628';
@@ -1325,10 +1647,10 @@ export class PixelRenderer {
         ctx.fillRect(sx - 8, GROUND_Y - 5, 2, 3);
         ctx.fillRect(sx + 6, GROUND_Y - 5, 2, 3);
       } else {
-        const span = farm.level === 3 ? 28 : farm.level === 2 ? 24 : 20;
+        const span = Math.min(34, 18 + farm.level * 2);
         ctx.fillStyle = '#4a3524';
         ctx.fillRect(sx - span, GROUND_Y - 3, span * 2, 3);
-        ctx.fillStyle = '#6b4c32';
+        ctx.fillStyle = farm.level >= 5 ? '#6d7885' : '#6b4c32';
         ctx.fillRect(sx - span, GROUND_Y - 10, 2, 10);
         ctx.fillRect(sx + span - 2, GROUND_Y - 10, 2, 10);
         ctx.fillRect(sx - span, GROUND_Y - 7, span * 2, 2);
@@ -1340,29 +1662,45 @@ export class PixelRenderer {
         }
 
         if (farm.level >= 2) {
-          ctx.fillStyle = '#5c412c';
-          ctx.fillRect(sx - 8, GROUND_Y - 18, 16, 15);
+          const barnH = Math.min(24, 14 + farm.level);
+          ctx.fillStyle = farm.level >= 6 ? '#53606e' : '#5c412c';
+          ctx.fillRect(sx - 9, GROUND_Y - barnH - 3, 18, barnH);
           ctx.fillStyle = w.crest.primaryColor;
-          ctx.fillRect(sx - 10, GROUND_Y - 21, 20, 4);
-        }
-        if (farm.level >= 3) {
-          ctx.fillStyle = w.crest.secondaryColor;
-          ctx.fillRect(sx - 10, GROUND_Y - 22, 20, 1);
-          ctx.fillStyle = '#ffae42';
-          ctx.fillRect(sx - 2, GROUND_Y - 12, 4, 5);
+          ctx.fillRect(sx - 11, GROUND_Y - barnH - 6, 22, 4);
+          if (farm.level >= 3) {
+            ctx.fillStyle = w.crest.secondaryColor;
+            ctx.fillRect(sx - 11, GROUND_Y - barnH - 7, 22, 1);
+            ctx.fillStyle = '#ffae42';
+            ctx.fillRect(sx - 2, GROUND_Y - 12, 4, 5);
+          }
+          // Grain silo at Lv 5+
+          if (farm.level >= 5) {
+            ctx.fillStyle = '#788694';
+            ctx.fillRect(sx + 10, GROUND_Y - barnH - 4, 6, barnH + 1);
+            ctx.fillStyle = '#efc462';
+            ctx.fillRect(sx + 10, GROUND_Y - barnH - 6, 6, 2);
+          }
         }
 
-        // Farmer capacity badge (0/5 .. 5/5)
+        // Farmer capacity & level badge (Nv.X · count/max)
+        const maxF = getFarmMaxFarmers(farm.level);
         const count = w.villagers.filter(
           (v) => v.role === 'producer' && v.assignedFarmId === farm.id && v.state !== 'embarked'
         ).length;
-        ctx.fillStyle = 'rgba(8, 14, 24, 0.72)';
-        ctx.fillRect(sx - 11, GROUND_Y - 28, 22, 7);
-        ctx.fillStyle = count >= MAX_FARMERS_PER_FARM ? '#ffe066' : '#a7e89b';
-        ctx.font = '6px monospace';
+        const badgeY = farm.level >= 2 ? GROUND_Y - Math.min(24, 14 + farm.level) - 16 : GROUND_Y - 26;
+        ctx.fillStyle = 'rgba(8, 14, 24, 0.78)';
+        ctx.fillRect(sx - 20, badgeY, 40, 8);
+        ctx.fillStyle = count >= maxF ? '#ffe066' : '#a7e89b';
+        ctx.font = '5.5px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(`${count}/${MAX_FARMERS_PER_FARM}`, sx, GROUND_Y - 22);
+        ctx.fillText(`F${farm.level} ${count}/${maxF}`, sx, badgeY + 6);
         ctx.textAlign = 'left';
+
+        // Stored coins pile visual
+        if (farm.storedCoins > 0) {
+          ctx.fillStyle = '#f7d265';
+          ctx.fillRect(sx - 14, GROUND_Y - 6, 4, 4);
+        }
       }
 
       if (farm.underConstruction) {
@@ -1713,20 +2051,20 @@ export class PixelRenderer {
     const getPos = (idx: number) => {
       const def = ISLAND_DEFINITIONS[idx];
       if (isPortrait) {
-        const col = idx % 2;
-        const row = Math.floor(idx / 2);
+        const col = idx % 3;
+        const row = Math.floor(idx / 3);
         return {
-          x: Math.round(this.viewW * (col === 0 ? 0.28 : 0.72)),
-          y: Math.round(chartTop + 20 + row * Math.min(48, (chartH - 28) / 3.2)),
+          x: Math.round(this.viewW * (col === 0 ? 0.2 : col === 1 ? 0.5 : 0.8)),
+          y: Math.round(chartTop + 20 + row * Math.min(44, (chartH - 28) / 2.6)),
         };
       }
       return {
-        x: Math.round(24 + def.mapX * (this.viewW - 48)),
+        x: Math.round(22 + def.mapX * (this.viewW - 44)),
         y: Math.round(chartTop + def.mapY * chartH),
       };
     };
 
-    // Dotted Nordic sea route connecting islands I -> VII
+    // Dotted Nordic sea route connecting islands I -> IX
     ctx.strokeStyle = 'rgba(239, 196, 98, 0.35)';
     ctx.setLineDash([3, 3]);
     ctx.beginPath();
@@ -1738,7 +2076,7 @@ export class PixelRenderer {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    const romans = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+    const romans = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX'];
 
     ISLAND_DEFINITIONS.forEach((def, idx) => {
       const pos = getPos(idx);
@@ -1752,7 +2090,7 @@ export class PixelRenderer {
         ctx.strokeStyle = '#ffe066';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, 17 + Math.sin(w.elapsed * 4) * 1.5, 0, Math.PI * 2);
+        ctx.arc(pos.x, pos.y, 16 + Math.sin(w.elapsed * 4) * 1.5, 0, Math.PI * 2);
         ctx.stroke();
         ctx.lineWidth = 1;
       }
@@ -1760,35 +2098,35 @@ export class PixelRenderer {
       // Island silhouette mound
       ctx.fillStyle = colonized ? '#2d5948' : '#1f2c3b';
       ctx.beginPath();
-      ctx.ellipse(pos.x, pos.y + 3, 14, 7, 0, 0, Math.PI * 2);
+      ctx.ellipse(pos.x, pos.y + 3, 13, 6.5, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = colonized ? '#51876a' : '#35485c';
       ctx.beginPath();
-      ctx.moveTo(pos.x - 10, pos.y + 3);
-      ctx.lineTo(pos.x, pos.y - 8);
-      ctx.lineTo(pos.x + 10, pos.y + 3);
+      ctx.moveTo(pos.x - 9, pos.y + 3);
+      ctx.lineTo(pos.x, pos.y - 7);
+      ctx.lineTo(pos.x + 9, pos.y + 3);
       ctx.closePath();
       ctx.fill();
 
       // Clan Flag on colonized islands + Golden Crown on current island
       if (colonized) {
         ctx.fillStyle = '#c4a478';
-        ctx.fillRect(pos.x + 2, pos.y - 14, 1, 10);
+        ctx.fillRect(pos.x + 2, pos.y - 13, 1, 9);
         ctx.fillStyle = w.crest.primaryColor;
-        ctx.fillRect(pos.x + 3, pos.y - 14, 6, 4);
+        ctx.fillRect(pos.x + 3, pos.y - 13, 6, 4);
         ctx.fillStyle = w.crest.secondaryColor;
-        ctx.fillRect(pos.x + 3, pos.y - 12, 6, 1);
+        ctx.fillRect(pos.x + 3, pos.y - 11, 6, 1);
       }
       if (isCurrent) {
-        this.drawCrownSprite(ctx, w, pos.x - 3, pos.y - 14);
+        this.drawCrownSprite(ctx, w, pos.x - 3, pos.y - 13);
       }
 
       // Roman numeral label
       ctx.fillStyle = isSelected ? '#ffe58a' : '#d6e5f2';
-      ctx.font = 'bold 7px monospace';
-      ctx.fillText(romans[idx], pos.x, pos.y + 17);
+      ctx.font = 'bold 6.5px monospace';
+      ctx.fillText(romans[idx] ?? String(def.id), pos.x, pos.y + 16);
 
-      this.addHit(`map_island_${def.id}`, pos.x - 18, pos.y - 18, 36, 38);
+      this.addHit(`map_island_${def.id}`, pos.x - 16, pos.y - 16, 32, 34);
     });
 
     // Bottom Island Details Card
@@ -1823,16 +2161,21 @@ export class PixelRenderer {
     ctx.fillStyle = '#c8dceb';
     ctx.font = '6.5px monospace';
     const godTxt = selDef.godId ? `Deus: ${GOD_DEFS[selDef.godId].name}` : 'Sem Deus';
-    const mountTxt = selDef.mountId ? ` · Montaria: ${MOUNT_DEFS[selDef.mountId].name[lang]}` : ' · Drakkar';
-    ctx.fillText(`${godTxt}${mountTxt}`, cardX + 10, cardY + 26);
+    const mountTxt = selDef.mountId ? ` · ${MOUNT_DEFS[selDef.mountId].name[lang]}` : '';
+    const lvTxt = ` · Reino Nv.${selDef.id === 1 ? 2 : Math.min(10, selDef.id + 1)}`;
+    ctx.fillText(`${godTxt}${mountTxt}${lvTxt}`, cardX + 10, cardY + 26);
 
     const diamStr =
       selDef.maxDiamonds > 0
         ? `◆ ${selProg?.diamondsCollected ?? 0}/${selDef.maxDiamonds}`
-        : '⛵ Drakkar (30 + 10)';
-    const dockStr = selDef.id > 1 ? (selProg?.dockBuilt ? ' · Porto OK' : ' · Porto 30g') : '';
+        : '⛵ Drakkar';
+    const buffStr =
+      selDef.id > 1
+        ? ` · Obra:${selProg?.constructionBuff ? '✓' : '○'} Forja:${selProg?.forgeBuff ? '✓' : '○'}`
+        : '';
+    const dockStr = selDef.id > 1 ? (selProg?.dockBuilt ? ' · Porto OK' : ' · Porto') : '';
     ctx.fillStyle = '#7ef5ff';
-    ctx.fillText(`${diamStr}${dockStr}`, cardX + 10, cardY + 38);
+    ctx.fillText(`${diamStr}${buffStr}${dockStr}`, cardX + 10, cardY + 38);
 
     // Action buttons: Sail (if in sail context & different island) + Close
     const canSailHere = w.worldMapContext === 'sail' && selDef.id !== w.currentIsland;
@@ -1883,9 +2226,28 @@ export class PixelRenderer {
         ctx.fillStyle = '#75828f';
         ctx.fillRect(sx - 6, GROUND_Y - 6, 12, 3);
       } else {
-        const h = wall.level === 1 ? 22 : wall.level === 2 ? 30 : 38;
-        const baseColor = wall.hitFlash > 0 ? '#ffffff' : wall.level === 3 ? '#6d7885' : '#69472c';
-        const darkColor = wall.hitFlash > 0 ? '#e8e8e8' : wall.level === 3 ? '#4a5461' : '#4a301d';
+        const h = getWallHeight(wall.level);
+        const isStone = wall.level >= 3;
+        const isIron = wall.level >= 6;
+        const isAsgard = wall.level >= 9;
+        const baseColor =
+          wall.hitFlash > 0
+            ? '#ffffff'
+            : isAsgard
+              ? '#5d6b80'
+              : isIron
+                ? '#455160'
+                : isStone
+                  ? '#6d7885'
+                  : '#69472c';
+        const darkColor =
+          wall.hitFlash > 0
+            ? '#e8e8e8'
+            : isIron
+              ? '#2b3440'
+              : isStone
+                ? '#4a5461'
+                : '#4a301d';
 
         ctx.fillStyle = baseColor;
         ctx.fillRect(sx - 8, GROUND_Y - h, 16, h);
@@ -1893,18 +2255,32 @@ export class PixelRenderer {
         ctx.fillRect(sx - 8, GROUND_Y - h, 3, h);
         ctx.fillRect(sx + 1, GROUND_Y - h, 2, h);
 
+        if (isIron) {
+          ctx.fillStyle = isAsgard ? '#efc462' : '#96a8ba';
+          ctx.fillRect(sx - 8, GROUND_Y - Math.floor(h * 0.3), 16, 2);
+          ctx.fillRect(sx - 8, GROUND_Y - Math.floor(h * 0.72), 16, 2);
+        }
+
         ctx.fillStyle = baseColor;
         for (let px = -7; px <= 5; px += 4) {
           ctx.fillRect(sx + px, GROUND_Y - h - 4, 3, 4);
         }
 
         if (wall.level >= 2) {
-          drawShieldEmblem(ctx, w.crest, sx, GROUND_Y - Math.floor(h * 0.58), 5.2);
+          drawShieldEmblem(ctx, w.crest, sx, GROUND_Y - Math.floor(h * 0.54), 5.0);
           const fl = Math.floor(w.elapsed * 10 + wall.id) % 2;
-          ctx.fillStyle = '#ff982b';
+          ctx.fillStyle = isAsgard ? '#7ef5ff' : '#ff982b';
           ctx.fillRect(sx - 1, GROUND_Y - h - 7 - fl, 3, 4 + fl);
-          ctx.fillStyle = '#fff099';
+          ctx.fillStyle = isAsgard ? '#e6feff' : '#fff099';
           ctx.fillRect(sx, GROUND_Y - h - 6, 1, 2);
+
+          ctx.fillStyle = 'rgba(8, 14, 24, 0.74)';
+          ctx.fillRect(sx - 7, GROUND_Y - 9, 14, 7);
+          ctx.fillStyle = '#ffe58a';
+          ctx.font = 'bold 5.5px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(`${wall.level}`, sx, GROUND_Y - 3.5);
+          ctx.textAlign = 'left';
         }
 
         if (wall.hp < wall.maxHp) {
@@ -1962,14 +2338,22 @@ export class PixelRenderer {
   }
 
   private drawSingleVillager(ctx: CanvasRenderingContext2D, w: WorldState, v: Villager, sx: number): void {
+    let baseY = GROUND_Y;
+    if (v.role === 'archer' && v.assignedTowerId) {
+      const tw = w.towers.find((item) => item.id === v.assignedTowerId && item.level > 0 && !item.destroyed);
+      if (tw && Math.abs(v.x - tw.x) < 11) {
+        baseY = GROUND_Y - getTowerHeight(tw.level) - 2;
+      }
+    }
+
     const walkBob = Math.abs(v.vx) > 4 ? Math.round(Math.abs(Math.sin(v.animTime)) * 1.5) : 0;
     const stride = Math.abs(v.vx) > 4 ? Math.round(Math.sin(v.animTime) * 2) : 0;
     const primary = w.crest.primaryColor;
     const secondary = w.crest.secondaryColor;
 
     ctx.fillStyle = '#2d2522';
-    ctx.fillRect(sx - 2 + stride, GROUND_Y - 4, 2, 4);
-    ctx.fillRect(sx + 1 - stride, GROUND_Y - 4, 2, 4);
+    ctx.fillRect(sx - 2 + stride, baseY - 4, 2, 4);
+    ctx.fillRect(sx + 1 - stride, baseY - 4, 2, 4);
 
     if (v.role === 'wanderer') ctx.fillStyle = '#6c5a4c';
     else if (v.role === 'peasant') ctx.fillStyle = '#9c866d';
@@ -1978,61 +2362,61 @@ export class PixelRenderer {
     else if (v.role === 'builder') ctx.fillStyle = '#4e5d6c';
     else ctx.fillStyle = '#5c734b';
 
-    ctx.fillRect(sx - 3, GROUND_Y - 11 - walkBob, 6, 7);
+    ctx.fillRect(sx - 3, baseY - 11 - walkBob, 6, 7);
 
     if (v.role !== 'wanderer' && v.role !== 'peasant') {
       ctx.fillStyle = secondary;
-      ctx.fillRect(sx - 3, GROUND_Y - 7 - walkBob, 6, 1);
+      ctx.fillRect(sx - 3, baseY - 7 - walkBob, 6, 1);
     }
 
     ctx.fillStyle = '#e5be9e';
-    ctx.fillRect(sx - 2, GROUND_Y - 15 - walkBob, 4, 4);
+    ctx.fillRect(sx - 2, baseY - 15 - walkBob, 4, 4);
 
     if (v.role === 'warrior') {
       ctx.fillStyle = '#9aa8b8';
-      ctx.fillRect(sx - 3, GROUND_Y - 17 - walkBob, 6, 3);
+      ctx.fillRect(sx - 3, baseY - 17 - walkBob, 6, 3);
       ctx.fillStyle = secondary;
-      ctx.fillRect(sx - 1, GROUND_Y - 16 - walkBob, 2, 1);
+      ctx.fillRect(sx - 1, baseY - 16 - walkBob, 2, 1);
       ctx.fillStyle = '#d4e2f0';
-      ctx.fillRect(sx + v.facing * 4, GROUND_Y - 16 - walkBob, 2, 7);
+      ctx.fillRect(sx + v.facing * 4, baseY - 16 - walkBob, 2, 7);
       ctx.fillStyle = primary;
-      ctx.fillRect(sx - v.facing * 4 - 1, GROUND_Y - 12 - walkBob, 4, 6);
+      ctx.fillRect(sx - v.facing * 4 - 1, baseY - 12 - walkBob, 4, 6);
       ctx.fillStyle = secondary;
-      ctx.fillRect(sx - v.facing * 4, GROUND_Y - 10 - walkBob, 2, 2);
+      ctx.fillRect(sx - v.facing * 4, baseY - 10 - walkBob, 2, 2);
     } else if (v.role === 'archer') {
       ctx.fillStyle = primary;
-      ctx.fillRect(sx - 3, GROUND_Y - 16 - walkBob, 6, 2);
+      ctx.fillRect(sx - 3, baseY - 16 - walkBob, 6, 2);
       ctx.fillStyle = '#c48d4e';
-      ctx.fillRect(sx + v.facing * 3, GROUND_Y - 13 - walkBob, 2, 7);
+      ctx.fillRect(sx + v.facing * 3, baseY - 13 - walkBob, 2, 7);
     } else if (v.role === 'builder') {
       ctx.fillStyle = primary;
-      ctx.fillRect(sx - 3, GROUND_Y - 16 - walkBob, 6, 2);
+      ctx.fillRect(sx - 3, baseY - 16 - walkBob, 6, 2);
       ctx.fillStyle = '#9aa8b8';
-      ctx.fillRect(sx + v.facing * 3, GROUND_Y - 14 - walkBob, 3, 2);
+      ctx.fillRect(sx + v.facing * 3, baseY - 14 - walkBob, 3, 2);
       ctx.fillStyle = '#8c6036';
-      ctx.fillRect(sx + v.facing * 3, GROUND_Y - 12 - walkBob, 1, 5);
+      ctx.fillRect(sx + v.facing * 3, baseY - 12 - walkBob, 1, 5);
     } else if (v.role === 'producer') {
       ctx.fillStyle = '#c9a66b';
-      ctx.fillRect(sx - 4, GROUND_Y - 16 - walkBob, 8, 2);
+      ctx.fillRect(sx - 4, baseY - 16 - walkBob, 8, 2);
       ctx.fillStyle = primary;
-      ctx.fillRect(sx - 2, GROUND_Y - 11 - walkBob, 4, 2);
+      ctx.fillRect(sx - 2, baseY - 11 - walkBob, 4, 2);
       ctx.fillStyle = '#7bd468';
-      ctx.fillRect(sx + v.facing * 3, GROUND_Y - 10 - walkBob, 2, 3);
+      ctx.fillRect(sx + v.facing * 3, baseY - 10 - walkBob, 2, 3);
     } else if (v.role === 'wanderer') {
       ctx.fillStyle = '#4a3d34';
-      ctx.fillRect(sx - 2, GROUND_Y - 16 - walkBob, 4, 2);
+      ctx.fillRect(sx - 2, baseY - 16 - walkBob, 4, 2);
     }
 
     if (v.carriedCoins > 0) {
       ctx.fillStyle = '#f7d265';
-      ctx.fillRect(sx - 1, GROUND_Y - 20 - walkBob, 3, 3);
+      ctx.fillRect(sx - 1, baseY - 20 - walkBob, 3, 3);
     }
 
     if (v.orderFlashTimer > 0) {
       ctx.fillStyle = secondary;
       ctx.font = 'bold 8px monospace';
       ctx.textAlign = 'center';
-      ctx.fillText(v.orderDir < 0 ? '◀' : '▶', sx, GROUND_Y - 22 - walkBob);
+      ctx.fillText(v.orderDir < 0 ? '◀' : '▶', sx, baseY - 22 - walkBob);
       ctx.textAlign = 'left';
     }
   }
@@ -2535,6 +2919,37 @@ export class PixelRenderer {
     ctx.globalAlpha = 1;
   }
 
+  private drawMaterialIcon(
+    ctx: CanvasRenderingContext2D,
+    kind: 'wood' | 'stone' | 'iron' | 'bank',
+    x: number,
+    y: number
+  ): void {
+    if (kind === 'wood') {
+      ctx.fillStyle = '#8a5a32';
+      ctx.fillRect(x, y + 1, 6, 4);
+      ctx.fillStyle = '#c48d4e';
+      ctx.fillRect(x, y + 1, 2, 4);
+      ctx.fillStyle = '#5c381c';
+      ctx.fillRect(x + 2, y + 2, 4, 1);
+    } else if (kind === 'stone') {
+      ctx.fillStyle = '#7e8c9c';
+      ctx.fillRect(x, y + 1, 6, 4);
+      ctx.fillStyle = '#b4c2d0';
+      ctx.fillRect(x + 1, y, 4, 3);
+    } else if (kind === 'iron') {
+      ctx.fillStyle = '#6f8296';
+      ctx.fillRect(x, y + 2, 6, 3);
+      ctx.fillStyle = '#d2e2f2';
+      ctx.fillRect(x + 1, y + 1, 4, 2);
+    } else {
+      ctx.fillStyle = '#d9a738';
+      ctx.fillRect(x, y + 1, 6, 4);
+      ctx.fillStyle = '#fff2a6';
+      ctx.fillRect(x + 1, y + 2, 4, 1);
+    }
+  }
+
   private drawFloatingPrompt(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     const pr = w.activePrompt;
     if (!pr) return;
@@ -2543,44 +2958,92 @@ export class PixelRenderer {
     const sy = Math.round(pr.y + this.worldOffsetY + bob);
 
     const isDiamond = pr.currency === 'diamond';
+    const isBanker = pr.targetType === 'banker';
+    const isBlocked = Boolean(pr.blockedReason);
+    const hasMats = Boolean(pr.woodCost || pr.stoneCost || pr.ironCost);
     const isLargeCost = pr.cost > 9;
     const slotStep = 10;
-    const slotsW = isLargeCost ? 78 : pr.cost * slotStep - 2;
-    const boxW = Math.max(slotsW + 18, pr.label.length * 4.7 + 14);
+    const slotsW = isBanker ? 86 : isBlocked ? 110 : isLargeCost ? 78 : pr.cost * slotStep - 2;
+
+    const matItems: Array<{ kind: 'wood' | 'stone' | 'iron'; need: number; have: number }> = [];
+    if (pr.woodCost && pr.woodCost > 0) matItems.push({ kind: 'wood', need: pr.woodCost, have: w.resources.wood });
+    if (pr.stoneCost && pr.stoneCost > 0) matItems.push({ kind: 'stone', need: pr.stoneCost, have: w.resources.stone });
+    if (pr.ironCost && pr.ironCost > 0) matItems.push({ kind: 'iron', need: pr.ironCost, have: w.resources.iron });
+    const matsW = matItems.length * 30;
+
+    const textW = Math.max(
+      pr.label.length * 4.7 + 14,
+      isBlocked && pr.blockedReason ? pr.blockedReason.length * 4.0 + 14 : 0
+    );
+    const boxW = Math.max(slotsW + 18, matsW + 12, textW);
+    const boxH = isBanker ? (pr.canWithdraw ? 40 : 28) : hasMats ? 36 : 26;
     const bx = Math.max(8, Math.min(this.viewW - boxW - 8, Math.round(sx - boxW / 2)));
+    const topY = sy - boxH + 5;
 
-    this.addHit('prompt_coin_slot', bx - 8, sy - 26, boxW + 16, 40);
+    this.addHit('prompt_coin_slot', bx - 6, topY - 4, boxW + 12, isBanker && pr.canWithdraw ? 24 : boxH + 8);
 
-    ctx.fillStyle = 'rgba(8, 14, 24, 0.9)';
-    ctx.fillRect(bx, sy - 21, boxW, 26);
-    ctx.strokeStyle = isDiamond ? 'rgba(126, 245, 255, 0.9)' : 'rgba(239, 196, 98, 0.85)';
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.92)';
+    ctx.fillRect(bx, topY, boxW, boxH);
+    ctx.strokeStyle = isBlocked
+      ? 'rgba(255, 138, 101, 0.9)'
+      : isDiamond
+        ? 'rgba(126, 245, 255, 0.9)'
+        : 'rgba(239, 196, 98, 0.85)';
     ctx.lineWidth = 1;
-    ctx.strokeRect(bx + 0.5, sy - 20.5, boxW - 1, 25);
+    ctx.strokeRect(bx + 0.5, topY + 0.5, boxW - 1, boxH - 1);
 
-    ctx.fillStyle = isDiamond ? '#b5fbff' : '#e6eef7';
-    ctx.font = '7px monospace';
+    ctx.fillStyle = isBlocked ? '#ffab91' : isDiamond ? '#b5fbff' : '#e6eef7';
+    ctx.font = 'bold 6.5px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(pr.label, bx + boxW / 2, sy - 12);
+    ctx.fillText(pr.label, bx + boxW / 2, topY + 9);
 
+    if (isBlocked && pr.blockedReason) {
+      ctx.fillStyle = '#ffe0b2';
+      ctx.font = '5.8px monospace';
+      ctx.fillText(pr.blockedReason, bx + boxW / 2, topY + 19);
+      ctx.textAlign = 'left';
+      return;
+    }
+
+    if (isBanker) {
+      ctx.fillStyle = '#ffe58a';
+      ctx.font = '6px monospace';
+      ctx.fillText(`Cofre: ${pr.bankBalance ?? 0}g · Depositar [↓/Espaço]`, bx + boxW / 2, topY + 19);
+      if (pr.canWithdraw) {
+        const wBtnW = Math.min(boxW - 14, 78);
+        const wBtnX = Math.round(bx + (boxW - wBtnW) / 2);
+        const wBtnY = topY + 24;
+        ctx.fillStyle = '#1f362b';
+        ctx.fillRect(wBtnX, wBtnY, wBtnW, 12);
+        ctx.strokeStyle = '#82e08a';
+        ctx.strokeRect(wBtnX + 0.5, wBtnY + 0.5, wBtnW - 1, 11);
+        ctx.fillStyle = '#a7f0ad';
+        ctx.font = 'bold 6px monospace';
+        ctx.fillText(`${t('bank_withdraw')} (+5g) [W/↑]`, bx + boxW / 2, wBtnY + 8.5);
+        this.addHit('prompt_bank_withdraw', wBtnX - 4, wBtnY - 2, wBtnW + 8, 16);
+      }
+      ctx.textAlign = 'left';
+      return;
+    }
+
+    const coinRowY = topY + 14;
     if (isLargeCost) {
-      // Compact coin icon + progress bar + paid/cost readout (for 10g / 12g / 16g / 30g structures!)
       const barW = 46;
       const barX = Math.round(bx + boxW / 2 - barW / 2 - 12);
-      const barY = sy - 6;
       ctx.fillStyle = '#f7d265';
-      ctx.fillRect(barX - 9, barY - 1, 6, 6);
+      ctx.fillRect(barX - 9, coinRowY - 1, 6, 6);
       ctx.fillStyle = '#fff5bd';
-      ctx.fillRect(barX - 8, barY, 2, 2);
+      ctx.fillRect(barX - 8, coinRowY, 2, 2);
 
       ctx.fillStyle = 'rgba(247, 210, 101, 0.18)';
-      ctx.fillRect(barX, barY, barW, 5);
+      ctx.fillRect(barX, coinRowY, barW, 5);
       ctx.fillStyle = '#f7d265';
-      ctx.fillRect(barX, barY, Math.round(barW * Math.min(1, (pr.paid + pr.pending) / pr.cost)), 5);
+      ctx.fillRect(barX, coinRowY, Math.round(barW * Math.min(1, (pr.paid + pr.pending) / pr.cost)), 5);
 
       ctx.textAlign = 'left';
       ctx.fillStyle = '#ffe58a';
       ctx.font = 'bold 7px monospace';
-      ctx.fillText(`${pr.paid}/${pr.cost}`, barX + barW + 4, barY + 5);
+      ctx.fillText(`${pr.paid}/${pr.cost}`, barX + barW + 4, coinRowY + 5);
     } else {
       const startX = Math.round(bx + boxW / 2 - slotsW / 2);
       const fullCol = isDiamond ? '#7ef5ff' : '#f7d265';
@@ -2589,23 +3052,38 @@ export class PixelRenderer {
       const emptyCol = isDiamond ? 'rgba(126, 245, 255, 0.2)' : 'rgba(247, 210, 101, 0.2)';
       for (let i = 0; i < pr.cost; i++) {
         const cx = startX + i * slotStep;
-        const cy = sy - 7;
         if (i < pr.paid) {
           ctx.fillStyle = fullCol;
-          ctx.fillRect(cx, cy, 7, 7);
+          ctx.fillRect(cx, coinRowY, 7, 7);
           ctx.fillStyle = shineCol;
-          ctx.fillRect(cx + 1, cy + 1, 2, 2);
+          ctx.fillRect(cx + 1, coinRowY + 1, 2, 2);
         } else if (i < pr.paid + pr.pending) {
           ctx.fillStyle = pendingCol;
-          ctx.fillRect(cx, cy, 7, 7);
+          ctx.fillRect(cx, coinRowY, 7, 7);
           ctx.strokeStyle = shineCol;
-          ctx.strokeRect(cx + 0.5, cy + 0.5, 6, 6);
+          ctx.strokeRect(cx + 0.5, coinRowY + 0.5, 6, 6);
         } else {
           ctx.fillStyle = emptyCol;
-          ctx.fillRect(cx, cy, 7, 7);
+          ctx.fillRect(cx, coinRowY, 7, 7);
           ctx.strokeStyle = fullCol;
-          ctx.strokeRect(cx + 0.5, cy + 0.5, 6, 6);
+          ctx.strokeRect(cx + 0.5, coinRowY + 0.5, 6, 6);
         }
+      }
+    }
+
+    // Material requirements row (Wood / Stone / Iron)
+    if (matItems.length > 0) {
+      const itemW = 30;
+      const totalMatW = matItems.length * itemW;
+      let mx = Math.round(bx + (boxW - totalMatW) / 2);
+      const my = topY + 25;
+      ctx.textAlign = 'left';
+      ctx.font = 'bold 6px monospace';
+      for (const item of matItems) {
+        this.drawMaterialIcon(ctx, item.kind, mx, my);
+        ctx.fillStyle = item.have >= item.need ? '#a7f0ad' : '#ff7b7b';
+        ctx.fillText(`${item.need}`, mx + 8, my + 5);
+        mx += itemW;
       }
     }
     ctx.textAlign = 'left';
@@ -2681,7 +3159,7 @@ export class PixelRenderer {
     const archers = countRole('archer');
     const producers = countRole('producer');
 
-    // Top-left Clan Crest + Day badge + 6m Day / 6m Night bar
+    // Top-left Clan Crest + Day badge + Day/Night bar
     ctx.fillStyle = 'rgba(8, 14, 24, 0.8)';
     ctx.fillRect(6, 5, 76, 26);
     ctx.strokeStyle = w.isBloodMoon ? 'rgba(255, 94, 108, 0.7)' : 'rgba(205, 224, 242, 0.25)';
@@ -2721,7 +3199,6 @@ export class PixelRenderer {
     ctx.fillText(`${monarch.coins}`, goldX + 16, 21);
 
     if (showDiamonds) {
-      // Cyan diamond gem icon + count
       const dx = goldX + 43;
       ctx.fillStyle = '#7ef5ff';
       ctx.fillRect(dx, 14, 6, 6);
@@ -2732,8 +3209,54 @@ export class PixelRenderer {
       ctx.fillText(`${monarch.diamonds}`, dx + 9, 21);
     }
 
-    // Active God blessing & Night Threat mini-pills below Top-Left Day box
+    // Compact Wood / Stone / Iron / Banker strip below Top-Right pouch
+    const showIron = w.resources.iron > 0 || w.currentIsland >= 2;
+    const showBank = w.banker.balance > 0;
+    const resStripW = 60 + (showIron ? 28 : 0) + (showBank ? 32 : 0);
+    const resStripX = this.viewW - resStripW - 6;
+    const resStripY = isNarrow ? 65 : 34;
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.82)';
+    ctx.fillRect(resStripX, resStripY, resStripW, 13);
+    ctx.strokeStyle = 'rgba(195, 215, 236, 0.25)';
+    ctx.strokeRect(resStripX + 0.5, resStripY + 0.5, resStripW - 1, 12);
+
+    let rx = resStripX + 4;
+    ctx.font = 'bold 6.5px monospace';
+    this.drawMaterialIcon(ctx, 'wood', rx, resStripY + 4);
+    ctx.fillStyle = '#e3b578';
+    ctx.fillText(`${w.resources.wood}`, rx + 8, resStripY + 9);
+    rx += 28;
+
+    this.drawMaterialIcon(ctx, 'stone', rx, resStripY + 4);
+    ctx.fillStyle = '#cbd8e6';
+    ctx.fillText(`${w.resources.stone}`, rx + 8, resStripY + 9);
+    rx += 28;
+
+    if (showIron) {
+      this.drawMaterialIcon(ctx, 'iron', rx, resStripY + 4);
+      ctx.fillStyle = '#9ecfff';
+      ctx.fillText(`${w.resources.iron}`, rx + 8, resStripY + 9);
+      rx += 28;
+    }
+
+    if (showBank) {
+      this.drawMaterialIcon(ctx, 'bank', rx, resStripY + 4);
+      ctx.fillStyle = '#ffe58a';
+      ctx.fillText(`${w.banker.balance}`, rx + 8, resStripY + 9);
+    }
+
+    // Active Kingdom Lv, God blessing & Night Threat mini-pills below Top-Left Day box
     let subY = isNarrow ? 65 : 34;
+    const maxK = getIslandMaxKingdomLevel(w);
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.8)';
+    ctx.fillRect(6, subY, 76, 12);
+    ctx.strokeStyle = 'rgba(239, 196, 98, 0.35)';
+    ctx.strokeRect(6.5, subY + 0.5, 75, 11);
+    ctx.fillStyle = '#ffe58a';
+    ctx.font = 'bold 6px monospace';
+    ctx.fillText(`♛ REINO ${w.hall.level}/${maxK}`, 10, subY + 8);
+    subY += 14;
+
     if (w.activeGod) {
       const god = GOD_DEFS[w.activeGod];
       ctx.fillStyle = 'rgba(8, 14, 24, 0.82)';

@@ -5,19 +5,24 @@ import {
   GROUND_Y,
   LOGICAL_WIDTH,
   WORLD_WIDTH,
+  type ArcherTower,
+  type BankerState,
   type BoatState,
   type CharacterAppearance,
   type Chest,
   type CrestConfig,
   type DockState,
   type FarmPlot,
+  type ForgeState,
   type GodShrine,
   type Hall,
+  type IslandBuffAltar,
   type IslandProgress,
   type IslandSnapshot,
   type Monarch,
   type MountShrine,
   type Portal,
+  type ResourceSize,
   type Rock,
   type RunePuzzle,
   type ToolShop,
@@ -52,6 +57,66 @@ export function saveDayHalfMinutes(minutes: number): void {
   }
 }
 
+export function sizeFromVariant(variant: 0 | 1 | 2): ResourceSize {
+  if (variant === 0) return 'small';
+  if (variant === 1) return 'medium';
+  return 'large';
+}
+
+export function heightForTreeSize(size: ResourceSize, randVal = 0.5): number {
+  if (size === 'small') return 34 + Math.floor(randVal * 6);
+  if (size === 'medium') return 48 + Math.floor(randVal * 8);
+  return 64 + Math.floor(randVal * 10);
+}
+
+export function createDefaultTowers(uid: () => number): ArcherTower[] {
+  const specs: Array<{ x: number; side: -1 | 1; tier: 'inner' | 'outer' }> = [
+    { x: CENTER_X - 256, side: -1, tier: 'inner' },
+    { x: CENTER_X + 256, side: 1, tier: 'inner' },
+    { x: CENTER_X - 558, side: -1, tier: 'outer' },
+    { x: CENTER_X + 558, side: 1, tier: 'outer' },
+  ];
+  return specs.map((s) => ({
+    id: uid(),
+    x: s.x,
+    side: s.side,
+    tier: s.tier,
+    level: 0,
+    destroyed: false,
+    previousLevel: 0,
+    hp: 0,
+    maxHp: 0,
+    underConstruction: false,
+    buildProgress: 0,
+    targetLevel: 0,
+    coinsPaid: 0,
+    hitFlash: 0,
+  }));
+}
+
+export function createDefaultIslandBuffs(islandId: number): IslandBuffAltar[] {
+  if (islandId < 2) return [];
+  return [
+    { kind: 'construction', x: CENTER_X - 495, active: false, coinsPaid: 0 },
+    { kind: 'forge', x: CENTER_X + 518, active: false, coinsPaid: 0 },
+  ];
+}
+
+export function createDefaultForge(islandId: number): ForgeState | null {
+  if (islandId < 2) return null;
+  return {
+    x: CENTER_X - 68,
+    built: false,
+    coinsPaid: 0,
+    underConstruction: false,
+    buildProgress: 0,
+    smelting: false,
+    smeltProgress: 0,
+    smeltCoinsPaid: 0,
+    smeltQueue: 0,
+  };
+}
+
 export function generateIslandSnapshot(
   islandId: number,
   uid: () => number,
@@ -59,42 +124,49 @@ export function generateIslandSnapshot(
 ): IslandSnapshot {
   const def = getIslandDef(islandId);
 
-  // 4 Tool Shops — ALL start with stock: 0 (player decides with their 10 starting coins!)
+  // 4 Tool Shops — Hammer & Bow unlock at Kingdom Lv 1; Seed at Lv 2; Sword at Island 3+ after Thor!
   const shops: ToolShop[] = [
-    { id: uid(), kind: 'sword', x: CENTER_X - 134, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
-    { id: uid(), kind: 'bow', x: CENTER_X - 80, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
-    { id: uid(), kind: 'hammer', x: CENTER_X + 80, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
-    { id: uid(), kind: 'seed', x: CENTER_X + 134, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
+    { id: uid(), kind: 'sword', x: CENTER_X - 156, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
+    { id: uid(), kind: 'bow', x: CENTER_X - 110, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
+    { id: uid(), kind: 'hammer', x: CENTER_X + 110, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
+    { id: uid(), kind: 'seed', x: CENTER_X + 156, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
   ];
 
-  // 2 Farm plots (each holds up to 5 farmers!)
+  // 2 Farm plots (unlock at Kingdom Lv 2; scale Lv 1..10 with Hall level!)
   const farms: FarmPlot[] = [
     {
       id: uid(),
-      x: CENTER_X - 196,
+      x: CENTER_X - 208,
       side: -1,
       level: 0,
       underConstruction: false,
       buildProgress: 0,
       coinsPaid: 0,
       cropProgress: 0,
+      storedFood: 0,
+      storedCoins: 0,
     },
     {
       id: uid(),
-      x: CENTER_X + 196,
+      x: CENTER_X + 208,
       side: 1,
       level: 0,
       underConstruction: false,
       buildProgress: 0,
       coinsPaid: 0,
       cropProgress: 0,
+      storedFood: 0,
+      storedCoins: 0,
     },
   ];
+
+  // 4 Archer Towers positioned right behind inner & outer walls!
+  const towers: ArcherTower[] = createDefaultTowers(uid);
 
   const walls: Wall[] = [
     {
       id: uid(),
-      x: CENTER_X - 270,
+      x: CENTER_X - 284,
       side: -1,
       tier: 'inner',
       level: 0,
@@ -110,7 +182,7 @@ export function generateIslandSnapshot(
     },
     {
       id: uid(),
-      x: CENTER_X + 270,
+      x: CENTER_X + 284,
       side: 1,
       tier: 'inner',
       level: 0,
@@ -126,7 +198,7 @@ export function generateIslandSnapshot(
     },
     {
       id: uid(),
-      x: CENTER_X - 575,
+      x: CENTER_X - 588,
       side: -1,
       tier: 'outer',
       level: 0,
@@ -142,7 +214,7 @@ export function generateIslandSnapshot(
     },
     {
       id: uid(),
-      x: CENTER_X + 575,
+      x: CENTER_X + 588,
       side: 1,
       tier: 'outer',
       level: 0,
@@ -158,12 +230,15 @@ export function generateIslandSnapshot(
     },
   ];
 
-  // Harbor Cove on the East side (Boat on Island 1 needs 30 coins to build; Islands 2..7 arrive with boat ashore and need 30-coin Dock!)
-  const boatX = CENTER_X + 355;
+  const forge = createDefaultForge(islandId);
+  const islandBuffs = createDefaultIslandBuffs(islandId);
+
+  // Harbor Cove on the East side (Boat on Island 1 needs 30 coins to build; Islands 2..9 arrive with boat ashore and need Dock!)
+  const boatX = CENTER_X + 365;
   const boat: BoatState = {
     x: boatX,
     bellX: boatX - 30,
-    built: islandId > 1, // Already built the Drakkar on Island 1 to get here!
+    built: islandId > 1,
     coinsPaid: islandId > 1 ? 30 : 0,
     buildProgress: islandId > 1 ? 1 : 0,
     underConstruction: false,
@@ -178,7 +253,7 @@ export function generateIslandSnapshot(
   const dock: DockState = {
     x: boatX + 42,
     required: islandId > 1,
-    built: islandId === 1, // Island 1 only has the boat; new islands require building the 30-coin Dock!
+    built: islandId === 1,
     coinsPaid: 0,
     underConstruction: false,
     buildProgress: islandId === 1 ? 1 : 0,
@@ -186,7 +261,7 @@ export function generateIslandSnapshot(
 
   const camps: VagrantCamp[] = [
     { id: uid(), x: CENTER_X - 425, spawnTimer: 16, active: true },
-    { id: uid(), x: CENTER_X + 485, spawnTimer: 16, active: true },
+    { id: uid(), x: CENTER_X + 475, spawnTimer: 16, active: true },
     { id: uid(), x: CENTER_X - 820, spawnTimer: 22, active: true },
     { id: uid(), x: CENTER_X + 820, spawnTimer: 22, active: true },
   ];
@@ -203,29 +278,29 @@ export function generateIslandSnapshot(
       }
     : null;
 
-  // Special Mount Shrine (strictly 1 per island 2..7, none on Island 1)
+  // Special Mount Shrine
   const mountShrine: MountShrine | null = def.mountId
     ? {
         mountId: def.mountId,
-        x: CENTER_X + 615,
+        x: CENTER_X + 640,
         unlocked: false,
         diamondsPaid: 0,
         coinsPaid: 0,
       }
     : null;
 
-  // Island Rune Puzzle / Secret (on Islands 2..7: awards +2 Diamonds + 4 Gold)
+  // Island Rune Puzzle / Secret (on Islands 2..9: awards +2 Diamonds + 4 Gold)
   const puzzle: RunePuzzle | null =
     def.maxDiamonds > 0
       ? {
-          x: CENTER_X - 620,
+          x: CENTER_X - 640,
           solved: false,
           coinsPaid: 0,
           diamondReward: 2,
         }
       : null;
 
-  // Chests: max 5 diamonds total per island (0 on Island 1; on Islands 2..7: 2+1=3 in chests + 2 in rune puzzle = 5 max!)
+  // Chests: max 5 diamonds total per island (0 on Island 1; on Islands 2..9: 2+1=3 in chests + 2 in rune puzzle = 5 max!)
   const chests: Chest[] = [
     {
       id: uid(),
@@ -278,31 +353,37 @@ export function generateIslandSnapshot(
   };
 
   const reservedZones = [
-    { x: CENTER_X, r: 315 },
+    { x: CENTER_X, r: 320 },
     { x: boatX, r: 68 },
     { x: dock.x, r: 46 },
     ...(godShrine ? [{ x: godShrine.x, r: 42 }] : []),
     ...(mountShrine ? [{ x: mountShrine.x, r: 42 }] : []),
     ...(puzzle ? [{ x: puzzle.x, r: 42 }] : []),
-    ...walls.map((w) => ({ x: w.x, r: 44 })),
-    ...camps.map((c) => ({ x: c.x, r: 54 })),
+    ...islandBuffs.map((b) => ({ x: b.x, r: 34 })),
+    ...towers.map((tw) => ({ x: tw.x, r: 24 })),
+    ...walls.map((w) => ({ x: w.x, r: 40 })),
+    ...camps.map((c) => ({ x: c.x, r: 52 })),
     ...chests.map((c) => ({ x: c.x, r: 34 })),
     ...portals.map((p) => ({ x: p.x, r: 95 })),
   ];
 
-  const rockPositions = [
-    CENTER_X - 318,
-    CENTER_X + 430,
-    CENTER_X - 510,
-    CENTER_X + 668,
-    CENTER_X - 672,
-    CENTER_X - 910,
-    CENTER_X + 910,
+  // Rocks with 3 sizes: small (5 stone / 30s), medium (7 stone / 45s), large (15 stone / 90s)
+  const rockSpecs: Array<{ x: number; variant: 0 | 1 | 2 }> = [
+    { x: CENTER_X - 325, variant: 0 },
+    { x: CENTER_X + 435, variant: 1 },
+    { x: CENTER_X - 462, variant: 1 },
+    { x: CENTER_X + 686, variant: 2 },
+    { x: CENTER_X - 686, variant: 2 },
+    { x: CENTER_X - 885, variant: 0 },
+    { x: CENTER_X + 885, variant: 1 },
+    { x: CENTER_X - 990, variant: 2 },
+    { x: CENTER_X + 990, variant: 0 },
   ];
-  const rocks: Rock[] = rockPositions.map((rx, idx) => ({
+  const rocks: Rock[] = rockSpecs.map((spec) => ({
     id: uid(),
-    x: rx,
-    variant: (idx % 3) as 0 | 1 | 2,
+    x: spec.x,
+    variant: spec.variant,
+    size: sizeFromVariant(spec.variant),
     marked: false,
     mined: false,
     mineProgress: 0,
@@ -311,16 +392,20 @@ export function generateIslandSnapshot(
 
   const rockReserved = rocks.map((r) => ({ x: r.x, r: 22 }));
   const trees: Tree[] = [];
-  for (let x = 320; x <= WORLD_WIDTH - 320; x += 28 + Math.floor(rand() * 18)) {
+  for (let x = 320; x <= WORLD_WIDTH - 320; x += 30 + Math.floor(rand() * 18)) {
     const blocked =
       reservedZones.some((z) => Math.abs(x - z.x) < z.r) ||
       rockReserved.some((z) => Math.abs(x - z.x) < z.r);
     if (blocked) continue;
+    const roll = rand();
+    const variant: 0 | 1 | 2 = roll < 0.36 ? 0 : roll < 0.72 ? 1 : 2;
+    const size = sizeFromVariant(variant);
     trees.push({
       id: uid(),
       x,
-      variant: Math.floor(rand() * 3) as 0 | 1 | 2,
-      height: 44 + Math.floor(rand() * 24),
+      variant,
+      size,
+      height: heightForTreeSize(size, rand()),
       marked: false,
       chopped: false,
       chopProgress: 0,
@@ -347,6 +432,7 @@ export function generateIslandSnapshot(
         targetId: null,
         homeCampId: camp.id,
         assignedFarmId: null,
+        assignedTowerId: null,
         side: camp.x < CENTER_X ? -1 : 1,
         actionTimer: 1 + rand() * 3,
         animTime: rand() * 5,
@@ -368,6 +454,7 @@ export function generateIslandSnapshot(
       state: 'idle',
       homeCampId: null,
       assignedFarmId: null,
+      assignedTowerId: null,
       side: idx % 2 === 0 ? -1 : 1,
       actionTimer: 0,
       carriedCoins: 0,
@@ -386,9 +473,12 @@ export function generateIslandSnapshot(
 
   return {
     hall,
+    forge,
     shops,
     walls,
+    towers,
     farms,
+    islandBuffs,
     boat,
     dock,
     godShrine,
@@ -400,6 +490,10 @@ export function generateIslandSnapshot(
     chests,
     portals,
     villagers,
+    rockRegrowQueue: 0,
+    rockRegrowTimer: 0,
+    treeRegrowQueue: 0,
+    treeRegrowTimer: 0,
   };
 }
 
@@ -475,7 +569,16 @@ export function createInitialWorld(
     diamondsCollected: 0,
     godUnlocked: false,
     mountUnlocked: false,
+    constructionBuff: false,
+    forgeBuff: false,
   }));
+
+  const banker: BankerState = {
+    x: CENTER_X + 68,
+    balance: 0,
+    interestFraction: 0,
+    lastDayYield: 0,
+  };
 
   const wildlife: Wildlife[] = [
     { id: uid(), kind: 'rabbit', x: CENTER_X - 210, y: GROUND_Y, vx: 0, facing: 1, hp: 8, aiTimer: 1.2, animTime: 0 },
@@ -516,6 +619,7 @@ export function createInitialWorld(
     islands,
     unlockedGods: [],
     activeGod: null,
+    thorActivated: false,
     unlockedMounts: ['starter'],
     day: 1,
     dayHalfMinutes: getSavedDayHalfMinutes(),
@@ -530,12 +634,13 @@ export function createInitialWorld(
     resources: {
       gold: monarch.coins,
       diamonds: 0,
-      wood: 0,
-      stone: 0,
+      wood: 4,
+      stone: 2,
       iron: 0,
       food: 0,
     },
     monarchs: [monarch],
+    banker,
     ...island1,
     enemies: [],
     coins: [],

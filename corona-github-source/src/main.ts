@@ -31,9 +31,11 @@ import {
   stepWorld,
   triggerCoinDrop,
   triggerMountPower,
+  withdrawFromBanker,
 } from './systems/simulation';
 import { type CommandMode, type InputState, type WorldState } from './types';
 import { createInitialWorld, saveDayHalfMinutes } from './world/initWorld';
+import { ISLAND_DEFINITIONS } from './world/islands';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d');
@@ -443,6 +445,10 @@ function handleCanvasHit(hitId: string): boolean {
       triggerCoinDrop(world);
       return true;
     }
+    if (hitId === 'prompt_bank_withdraw') {
+      withdrawFromBanker(world);
+      return true;
+    }
     if (hitId === 'hud_mount_power') {
       triggerMountPower(world);
       return true;
@@ -530,7 +536,7 @@ function handleCanvasHit(hitId: string): boolean {
   if (world.mode === 'world_map') {
     if (hitId.startsWith('map_island_')) {
       const id = Number(hitId.replace('map_island_', ''));
-      if (id >= 1 && id <= 7) {
+      if (id >= 1 && id <= ISLAND_DEFINITIONS.length) {
         renderer.selectedMapIsland = id;
         sound.playCoinDrop();
       }
@@ -881,6 +887,9 @@ window.addEventListener('keydown', (e) => {
   if (code === 'KeyS' || code === 'ArrowDown' || code === 'Space') {
     if (!input.drop) input.dropJustPressed = true;
     input.drop = true;
+  }
+  if ((code === 'KeyW' || code === 'ArrowUp' || code === 'KeyE') && !e.repeat) {
+    withdrawFromBanker(world);
   }
 
   if (code === 'KeyZ') input.cmdZ = true;

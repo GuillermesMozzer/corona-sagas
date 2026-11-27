@@ -9,8 +9,9 @@ import {
   DOCK_BUILD_COST,
   GROUND_Y,
   MAX_CREW_PER_CLASS,
-  MAX_FARMERS_PER_FARM,
+  MAX_KINGDOM_LEVEL,
   WORLD_WIDTH,
+  type ArcherTower,
   type Coin,
   type CommandMode,
   type Enemy,
@@ -21,43 +22,281 @@ import {
   type Monarch,
   type Particle,
   type PromptTargetType,
+  type ResourceCost,
+  type ResourceSize,
+  type ToolShopKind,
   type Villager,
   type VillagerRole,
   type Wall,
   type WorldState,
 } from '../types';
-import { generateIslandSnapshot } from '../world/initWorld';
+import { generateIslandSnapshot, heightForTreeSize, sizeFromVariant } from '../world/initWorld';
 import { getIslandDef } from '../world/islands';
 import { GOD_DEFS, MOUNT_DEFS } from '../world/mountsAndGods';
 
-export function getHallUpgradeCost(level: number): number {
-  if (level === 0) return 2;
-  if (level === 1) return 5;
-  if (level === 2) return 9;
-  return 0;
+export interface RockHarvestSpec {
+  stone: number;
+  time: number; // seconds for 1 builder
+  coins: number;
+  sizeKey: 'size_s' | 'size_m' | 'size_l';
 }
 
-export function getWallUpgradeCost(level: number, hallLevel: number, destroyed: boolean): number {
-  if (destroyed) return 1;
-  if (level === 0) return 2;
-  if (level === 1) return 4;
-  if (level === 2 && hallLevel >= 2) return 6;
-  return 0;
+export interface TreeHarvestSpec {
+  wood: number;
+  time: number; // seconds for 1 builder
+  coins: number;
+  sizeKey: 'size_s' | 'size_m' | 'size_l';
 }
 
-export function getFarmUpgradeCost(level: number): number {
-  if (level === 0) return 3;
-  if (level === 1) return 5;
-  if (level === 2) return 8;
-  return 0;
+export function getRockSpec(size: ResourceSize): RockHarvestSpec {
+  if (size === 'small') return { stone: 5, time: 30, coins: 2, sizeKey: 'size_s' };
+  if (size === 'medium') return { stone: 7, time: 45, coins: 3, sizeKey: 'size_m' };
+  return { stone: 15, time: 90, coins: 5, sizeKey: 'size_l' };
+}
+
+export function getTreeSpec(size: ResourceSize): TreeHarvestSpec {
+  if (size === 'small') return { wood: 4, time: 20, coins: 2, sizeKey: 'size_s' };
+  if (size === 'medium') return { wood: 7, time: 35, coins: 3, sizeKey: 'size_m' };
+  return { wood: 12, time: 60, coins: 4, sizeKey: 'size_l' };
+}
+
+export function getBankerDailyRatePct(hallLevel: number): number {
+  if (hallLevel <= 0) return 0;
+  return Math.max(1, Math.min(MAX_KINGDOM_LEVEL, hallLevel));
+}
+
+export function isConstructionBuffActive(w: WorldState): boolean {
+  return w.islandBuffs.some((b) => b.kind === 'construction' && b.active);
+}
+
+export function isForgeBuffActive(w: WorldState): boolean {
+  return w.islandBuffs.some((b) => b.kind === 'forge' && b.active);
+}
+
+export function getIslandMaxKingdomLevel(w: WorldState): number {
+  if (w.currentIsland <= 1) return 2;
+  let unlockedTiers = 0;
+  for (const isl of w.islands) {
+    if (isl.id < 2) continue;
+    const isCur = isl.id === w.currentIsland;
+    const hasCon = isCur ? isConstructionBuffActive(w) : Boolean(isl.constructionBuff);
+    const hasFrg = isCur ? isForgeBuffActive(w) : Boolean(isl.forgeBuff);
+    if (hasCon && hasFrg) unlockedTiers += 1;
+  }
+  return Math.min(MAX_KINGDOM_LEVEL, 2 + unlockedTiers);
+}
+
+export function isShopUnlocked(w: WorldState, kind: ToolShopKind): boolean {
+  if (w.hall.level < 1) return false;
+  if (kind === 'hammer' || kind === 'bow') return true;
+  if (kind === 'seed') return w.hall.level >= 2;
+  if (kind === 'sword') return w.currentIsland >= 3 && w.thorActivated;
+  return false;
+}
+
+export function isFarmsUnlocked(w: WorldState): boolean {
+  return w.hall.level >= 2;
+}
+
+export function getFarmMaxFarmers(level: number): number {
+  if (level <= 0) return 0;
+  return 2 + Math.min(MAX_KINGDOM_LEVEL, level); // Lv1: 3 .. Lv10: 12
+}
+
+export function getFarmStorageCap(level: number): number {
+  if (level <= 0) return 0;
+  return Math.min(MAX_KINGDOM_LEVEL, level) * 12; // Lv1: 12 .. Lv10: 120
+}
+
+export function getTowerArcherCap(level: number): number {
+  if (level <= 0) return 0;
+  return Math.min(4, 1 + Math.floor((level - 1) / 3)); // Lv1-3: 1, Lv4-6: 2, Lv7-9: 3, Lv10: 4
+}
+
+export function getTowerHeight(level: number): number {
+  if (level <= 0) return 0;
+  return 26 + Math.min(MAX_KINGDOM_LEVEL, level) * 4; // 30px at Lv1 -> 66px at Lv10
+}
+
+export function getWallHeight(level: number): number {
+  if (level <= 0) return 0;
+  return 20 + Math.min(MAX_KINGDOM_LEVEL, level) * 3; // 23px at Lv1 -> 50px at Lv10
+}
+
+export function getHallUpgradeResourceCost(level: number, currentIsland: number): ResourceCost {
+  if (level >= MAX_KINGDOM_LEVEL) return { coins: 0, wood: 0, stone: 0, iron: 0 };
+  const target = level + 1;
+  if (target === 1) return { coins: 2, wood: 0, stone: 0, iron: 0 };
+  if (target === 2) return { coins: 5, wood: 6, stone: 5, iron: 0 };
+  const needsIron = currentIsland >= 2 || target >= 3;
+  return {
+    coins: 5 + target * 3,
+    wood: 4 + target * 3,
+    stone: 4 + target * 3,
+    iron: needsIron ? (target - 2) * 3 : 0,
+  };
+}
+
+export function getHallUpgradeCost(level: number, currentIsland = 1): number {
+  return getHallUpgradeResourceCost(level, currentIsland).coins;
+}
+
+export function getWallUpgradeResourceCost(
+  level: number,
+  hallLevel: number,
+  destroyed: boolean,
+  previousLevel: number,
+  currentIsland: number
+): ResourceCost {
+  if (destroyed) {
+    const prev = Math.max(1, previousLevel);
+    const needsIron = currentIsland >= 2 && hallLevel >= 3 && prev >= 3;
+    return {
+      coins: 1 + Math.floor(prev / 2),
+      wood: Math.max(1, prev),
+      stone: Math.max(1, prev),
+      iron: needsIron ? Math.max(1, prev - 2) : 0,
+    };
+  }
+  const target = level + 1;
+  if (target > hallLevel || target > MAX_KINGDOM_LEVEL) {
+    return { coins: 0, wood: 0, stone: 0, iron: 0 };
+  }
+  if (target === 1) return { coins: 2, wood: 2, stone: 1, iron: 0 };
+  if (target === 2) return { coins: 4, wood: 4, stone: 3, iron: 0 };
+  const needsIron = currentIsland >= 2 && hallLevel >= 3 && target >= 3;
+  return {
+    coins: 2 + target * 2,
+    wood: target * 2 + 1,
+    stone: target * 2 + 2,
+    iron: needsIron ? (target - 2) * 2 : 0,
+  };
+}
+
+export function getTowerUpgradeResourceCost(
+  level: number,
+  hallLevel: number,
+  destroyed: boolean,
+  previousLevel: number,
+  currentIsland: number
+): ResourceCost {
+  if (destroyed) {
+    const prev = Math.max(1, previousLevel);
+    const needsIron = currentIsland >= 2 && hallLevel >= 3 && prev >= 3;
+    return {
+      coins: 2 + Math.floor(prev / 2),
+      wood: Math.max(2, prev + 1),
+      stone: Math.max(1, prev),
+      iron: needsIron ? Math.max(1, prev - 2) : 0,
+    };
+  }
+  const target = level + 1;
+  if (target > hallLevel || target > MAX_KINGDOM_LEVEL) {
+    return { coins: 0, wood: 0, stone: 0, iron: 0 };
+  }
+  if (target === 1) return { coins: 3, wood: 3, stone: 2, iron: 0 };
+  if (target === 2) return { coins: 5, wood: 5, stone: 4, iron: 0 };
+  const needsIron = currentIsland >= 2 && hallLevel >= 3 && target >= 3;
+  return {
+    coins: 3 + target * 2,
+    wood: target * 2 + 2,
+    stone: target * 2 + 1,
+    iron: needsIron ? (target - 2) * 2 : 0,
+  };
+}
+
+export function getFarmUpgradeResourceCost(
+  level: number,
+  hallLevel: number,
+  currentIsland: number
+): ResourceCost {
+  const target = level + 1;
+  if (hallLevel < 2 || target > hallLevel || target > MAX_KINGDOM_LEVEL) {
+    return { coins: 0, wood: 0, stone: 0, iron: 0 };
+  }
+  if (target === 1) return { coins: 3, wood: 4, stone: 2, iron: 0 };
+  if (target === 2) return { coins: 5, wood: 6, stone: 4, iron: 0 };
+  const needsIron = currentIsland >= 2 && hallLevel >= 3 && target >= 3;
+  return {
+    coins: 2 + target * 2,
+    wood: 3 + target * 2,
+    stone: 2 + target * 2,
+    iron: needsIron ? target - 2 : 0,
+  };
+}
+
+export function getForgeBuildResourceCost(): ResourceCost {
+  return { coins: 6, wood: 8, stone: 8, iron: 0 };
+}
+
+export function getForgeSmeltResourceCost(): ResourceCost {
+  return { coins: 1, wood: 3, stone: 3, iron: 0 };
+}
+
+export function getForgeIronOutput(w: WorldState): number {
+  return 2 + (isForgeBuffActive(w) ? 1 : 0) + (w.hall.level >= 5 ? 1 : 0) + (w.hall.level >= 8 ? 1 : 0);
+}
+
+export function getIslandBuffResourceCost(kind: 'construction' | 'forge', islandId: number): ResourceCost {
+  const tier = Math.max(1, islandId - 1);
+  if (kind === 'construction') {
+    return {
+      coins: 5 + tier * 2,
+      wood: 6 + tier * 3,
+      stone: 6 + tier * 3,
+      iron: islandId >= 3 ? (tier - 1) * 2 : 0,
+    };
+  }
+  return {
+    coins: 5 + tier * 2,
+    wood: 5 + tier * 2,
+    stone: 7 + tier * 3,
+    iron: islandId >= 3 ? (tier - 1) * 2 : 0,
+  };
+}
+
+export function getBoatBuildResourceCost(): ResourceCost {
+  return { coins: BOAT_BUILD_COST, wood: 10, stone: 5, iron: 0 };
+}
+
+export function getDockBuildResourceCost(): ResourceCost {
+  return { coins: DOCK_BUILD_COST, wood: 12, stone: 10, iron: 2 };
 }
 
 export function getWallMaxHp(level: number, odinBlessed = false): number {
-  let base = 0;
-  if (level === 1) base = 70;
-  else if (level === 2) base = 150;
-  else if (level === 3) base = 280;
+  if (level <= 0) return 0;
+  const lv = Math.min(MAX_KINGDOM_LEVEL, level);
+  const base = Math.round(50 + lv * 35 + lv * lv * 15); // Lv1: 100, Lv2: 180, Lv3: 290 .. Lv10: 1900
   return odinBlessed ? Math.round(base * 1.4) : base;
+}
+
+export function getTowerMaxHp(level: number, odinBlessed = false): number {
+  if (level <= 0) return 0;
+  const lv = Math.min(MAX_KINGDOM_LEVEL, level);
+  const base = Math.round(60 + lv * 32 + lv * lv * 10); // Lv1: 102 .. Lv10: 1380
+  return odinBlessed ? Math.round(base * 1.4) : base;
+}
+
+function hasRequiredMaterials(w: WorldState, cost: ResourceCost): boolean {
+  return (
+    w.resources.wood >= cost.wood &&
+    w.resources.stone >= cost.stone &&
+    w.resources.iron >= cost.iron
+  );
+}
+
+function consumeMaterials(w: WorldState, cost: ResourceCost): void {
+  w.resources.wood = Math.max(0, w.resources.wood - cost.wood);
+  w.resources.stone = Math.max(0, w.resources.stone - cost.stone);
+  w.resources.iron = Math.max(0, w.resources.iron - cost.iron);
+}
+
+function formatMissingMaterials(w: WorldState, cost: ResourceCost): string {
+  const missing: string[] = [];
+  if (w.resources.wood < cost.wood) missing.push(`${cost.wood - w.resources.wood} Madeira`);
+  if (w.resources.stone < cost.stone) missing.push(`${cost.stone - w.resources.stone} Pedra`);
+  if (w.resources.iron < cost.iron) missing.push(`${cost.iron - w.resources.iron} Ferro`);
+  return missing.join(' · ');
 }
 
 export function computeThreatLevel(w: WorldState): number {
@@ -172,6 +411,11 @@ function syncCurrentIslandProgress(w: WorldState): void {
   entry.wallsBuilt = w.walls.filter((wall) => wall.level > 0 && !wall.destroyed).length;
   entry.godUnlocked = Boolean(w.godShrine?.unlocked);
   entry.mountUnlocked = Boolean(w.mountShrine?.unlocked);
+  entry.constructionBuff = isConstructionBuffActive(w);
+  entry.forgeBuff = isForgeBuffActive(w);
+  if (w.monarchs[0]) {
+    w.monarchs[0].maxCoins = Math.max(30, 30 + Math.max(0, w.hall.level - 1) * 5);
+  }
 }
 
 export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
@@ -198,9 +442,12 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     };
     curProgress.snapshot = {
       hall: { ...w.hall },
+      forge: w.forge ? { ...w.forge } : null,
       shops: w.shops.map((s) => ({ ...s })),
       walls: w.walls.map((wall) => ({ ...wall })),
+      towers: w.towers.map((tw) => ({ ...tw })),
       farms: w.farms.map((f) => ({ ...f })),
+      islandBuffs: w.islandBuffs.map((b) => ({ ...b })),
       boat: savedBoat,
       dock: { ...w.dock },
       godShrine: w.godShrine ? { ...w.godShrine } : null,
@@ -212,6 +459,10 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
       chests: w.chests.map((c) => ({ ...c })),
       portals: w.portals.map((p) => ({ ...p })),
       villagers: stayingVillagers.map((v) => ({ ...v })),
+      rockRegrowQueue: w.rockRegrowQueue,
+      rockRegrowTimer: w.rockRegrowTimer,
+      treeRegrowQueue: w.treeRegrowQueue,
+      treeRegrowTimer: w.treeRegrowTimer,
     };
   }
 
@@ -224,9 +475,12 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
   if (nextSnap) {
     // Restore colonized island and disembark crew!
     w.hall = { ...nextSnap.hall };
+    w.forge = nextSnap.forge ? { ...nextSnap.forge } : null;
     w.shops = nextSnap.shops.map((s) => ({ ...s }));
     w.walls = nextSnap.walls.map((wall) => ({ ...wall }));
+    w.towers = (nextSnap.towers ?? []).map((tw) => ({ ...tw }));
     w.farms = nextSnap.farms.map((f) => ({ ...f }));
+    w.islandBuffs = (nextSnap.islandBuffs ?? []).map((b) => ({ ...b }));
     w.boat = {
       ...nextSnap.boat,
       built: true,
@@ -247,6 +501,10 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     w.chests = nextSnap.chests.map((c) => ({ ...c }));
     w.portals = nextSnap.portals.map((p) => ({ ...p }));
     w.villagers = nextSnap.villagers.map((v) => ({ ...v }));
+    w.rockRegrowQueue = nextSnap.rockRegrowQueue ?? 0;
+    w.rockRegrowTimer = nextSnap.rockRegrowTimer ?? 0;
+    w.treeRegrowQueue = nextSnap.treeRegrowQueue ?? 0;
+    w.treeRegrowTimer = nextSnap.treeRegrowTimer ?? 0;
     embarkedCrew.forEach((member, idx) => {
       w.villagers.push({
         ...member,
@@ -256,16 +514,20 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
         vx: 0,
         state: 'idle',
         assignedFarmId: null,
+        assignedTowerId: null,
         side: idx % 2 === 0 ? -1 : 1,
       });
     });
   } else {
-    // Fresh unexplored island! Boat arrives ashore; Dock (30 coins) must be built!
+    // Fresh unexplored island! Boat arrives ashore; Dock must be built!
     const fresh = generateIslandSnapshot(targetIslandId, () => uid(w), embarkedCrew);
     w.hall = fresh.hall;
+    w.forge = fresh.forge;
     w.shops = fresh.shops;
     w.walls = fresh.walls;
+    w.towers = fresh.towers;
     w.farms = fresh.farms;
+    w.islandBuffs = fresh.islandBuffs;
     w.boat = fresh.boat;
     w.dock = fresh.dock;
     w.godShrine = fresh.godShrine;
@@ -277,6 +539,10 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     w.chests = fresh.chests;
     w.portals = fresh.portals;
     w.villagers = fresh.villagers;
+    w.rockRegrowQueue = fresh.rockRegrowQueue;
+    w.rockRegrowTimer = fresh.rockRegrowTimer;
+    w.treeRegrowQueue = fresh.treeRegrowQueue;
+    w.treeRegrowTimer = fresh.treeRegrowTimer;
   }
 
   // Clear transient entities and spawn Monarch beside the arrived Drakkar!
@@ -301,6 +567,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     monarch.flyTimer = 0;
     monarch.flyY = 0;
     monarch.roarTimer = 0;
+    monarch.maxCoins = Math.max(30, 30 + Math.max(0, w.hall.level - 1) * 5);
     monarch.cameraX = Math.max(0, Math.min(WORLD_WIDTH - w.viewWidth, monarch.x - w.viewWidth / 2));
   }
 
@@ -312,7 +579,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
   showBanner(
     w,
     def.name[lang],
-    w.dock.built ? def.subtitle[lang] : 'Construa o Porto (30 moedas) para navegar livremente entre ilhas!',
+    w.dock.built ? def.subtitle[lang] : 'Construa o Porto (30🪙 + Madeira/Pedra/Ferro) e ative os Buffs da ilha!',
     w.crest.secondaryColor
   );
   syncCurrentIslandProgress(w);
@@ -343,6 +610,36 @@ function countFarmersAssignedToFarm(w: WorldState, farmId: number): number {
     }
   }
   return c;
+}
+
+export function countArchersAssignedToTower(w: WorldState, towerId: number): number {
+  let c = 0;
+  for (const v of w.villagers) {
+    if (v.role === 'archer' && v.assignedTowerId === towerId && v.state !== 'embarked' && v.state !== 'boarding') {
+      c++;
+    }
+  }
+  return c;
+}
+
+export function withdrawFromBanker(w: WorldState): boolean {
+  const m = w.monarchs[0];
+  if (!m || w.mode !== 'playing' || w.hall.level < 1) return false;
+  if (Math.abs(m.x - w.banker.x) > 46) return false;
+  if (w.banker.balance <= 0) return false;
+  const room = m.maxCoins - m.coins;
+  if (room <= 0) {
+    showBanner(w, 'BOLSA CHEIA', `Sua bolsa comporta até ${m.maxCoins} moedas!`, '#ffe066');
+    return false;
+  }
+  const take = Math.min(5, w.banker.balance, room);
+  w.banker.balance -= take;
+  m.coins += take;
+  w.resources.gold = m.coins;
+  sound.playCoinPickup();
+  spawnBurst(w, w.banker.x, GROUND_Y - 18, 8, '#ffe066', 'spark', 40);
+  saveCampaign(w);
+  return true;
 }
 
 function ringShipBell(w: WorldState): void {
@@ -391,32 +688,129 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
   let best: FloatingPrompt | null = null;
   let bestDist = 36;
 
-  // 1. Hall / Campfire
+  // 1. Hall / Castle (Lv 0 -> 10, capped by Island 1 = Lv 2 and +1 per next island with Construction+Forge buffs!)
   const hallDist = Math.abs(m.x - w.hall.x);
-  const hallCost = getHallUpgradeCost(w.hall.level);
-  if (hallCost > 0 && hallDist < 34 && hallDist < bestDist) {
+  if (w.hall.level < MAX_KINGDOM_LEVEL && hallDist < 34 && hallDist < bestDist) {
+    const maxAllowed = getIslandMaxKingdomLevel(w);
+    const resCost = getHallUpgradeResourceCost(w.hall.level, w.currentIsland);
     const pending = countPendingFlyingCoins(w, 'hall', 0);
-    if (w.hall.coinsPaid + pending < hallCost) {
+    if (w.hall.level >= maxAllowed) {
       bestDist = hallDist;
-      const labels = [t('prompt_light_fire'), t('prompt_build_hall'), t('prompt_jarl_hall')];
+      let reason = 'Navegue para a próxima ilha!';
+      if (w.currentIsland === 1) {
+        reason = 'Ilha I: máx Nv.2 · Zarpe no Drakkar!';
+      } else if (!isConstructionBuffActive(w) || !isForgeBuffActive(w)) {
+        reason = 'Ative Buffs Construção e Forja nesta ilha!';
+      }
       best = {
         x: w.hall.x,
-        y: GROUND_Y - (w.hall.level === 0 ? 30 : 56),
-        label: labels[w.hall.level] ?? t('prompt_jarl_hall'),
-        cost: hallCost,
+        y: GROUND_Y - (w.hall.level === 0 ? 30 : 58),
+        label: `REINO NV.${w.hall.level}/${maxAllowed}`,
+        cost: 0,
+        paid: 0,
+        pending: 0,
+        blockedReason: reason,
+        targetType: 'hall',
+        targetId: 0,
+      };
+    } else if (resCost.coins > 0 && w.hall.coinsPaid + pending < resCost.coins) {
+      bestDist = hallDist;
+      const nextLv = w.hall.level + 1;
+      const label =
+        w.hall.level === 0
+          ? t('prompt_light_fire')
+          : `${t('prompt_jarl_hall')} Nv.${nextLv}`;
+      best = {
+        x: w.hall.x,
+        y: GROUND_Y - (w.hall.level === 0 ? 30 : 58),
+        label,
+        cost: resCost.coins,
         paid: w.hall.coinsPaid,
         pending,
+        woodCost: resCost.wood,
+        stoneCost: resCost.stone,
+        ironCost: resCost.iron,
         targetType: 'hall',
         targetId: 0,
       };
     }
   }
 
-  // 2. Tool Shops (4 classes: sword, bow, hammer, seed — start EMPTY until player buys!)
+  // 1b. Castle Banker (accepts ALL coins & yields 1%..10%/day depending on Kingdom level!)
+  if (w.hall.level >= 1) {
+    const bankDist = Math.abs(m.x - w.banker.x);
+    if (bankDist < 26 && bankDist < bestDist) {
+      const ratePct = getBankerDailyRatePct(w.hall.level);
+      bestDist = bankDist;
+      best = {
+        x: w.banker.x,
+        y: GROUND_Y - 40,
+        label: `${t('prompt_banker')} (+${ratePct}%/dia)`,
+        cost: 1,
+        paid: 0,
+        pending: 0,
+        canWithdraw: w.banker.balance > 0,
+        bankBalance: w.banker.balance,
+        bankRatePct: ratePct,
+        targetType: 'banker',
+        targetId: 0,
+      };
+    }
+  }
+
+  // 1c. Forge (Island 2+: Build with wood+stone, then smelt wood+stone -> Iron!)
+  if (w.hall.level >= 1 && w.forge) {
+    const forgeDist = Math.abs(m.x - w.forge.x);
+    if (forgeDist < 26 && forgeDist < bestDist) {
+      if (!w.forge.built && !w.forge.underConstruction) {
+        const fCost = getForgeBuildResourceCost();
+        const pending = countPendingFlyingCoins(w, 'forge_build', 0);
+        if (w.forge.coinsPaid + pending < fCost.coins) {
+          bestDist = forgeDist;
+          best = {
+            x: w.forge.x,
+            y: GROUND_Y - 42,
+            label: t('prompt_forge_build'),
+            cost: fCost.coins,
+            paid: w.forge.coinsPaid,
+            pending,
+            woodCost: fCost.wood,
+            stoneCost: fCost.stone,
+            ironCost: fCost.iron,
+            targetType: 'forge_build',
+            targetId: 0,
+          };
+        }
+      } else if (w.forge.built && w.forge.smeltQueue < 5) {
+        const sCost = getForgeSmeltResourceCost();
+        const pending = countPendingFlyingCoins(w, 'forge_smelt', 0);
+        if (w.forge.smeltCoinsPaid + pending < sCost.coins) {
+          const outIron = getForgeIronOutput(w);
+          bestDist = forgeDist;
+          best = {
+            x: w.forge.x,
+            y: GROUND_Y - 42,
+            label: `${t('prompt_forge_smelt')} (+${outIron})`,
+            cost: sCost.coins,
+            paid: w.forge.smeltCoinsPaid,
+            pending,
+            woodCost: sCost.wood,
+            stoneCost: sCost.stone,
+            ironCost: 0,
+            targetType: 'forge_smelt',
+            targetId: 0,
+          };
+        }
+      }
+    }
+  }
+
+  // 2. Tool Shops (Hammer & Bow at Lv 1; Seed at Lv 2; Sword on Island 3+ after Thor!)
   if (w.hall.level >= 1) {
     for (const shop of w.shops) {
+      if (!isShopUnlocked(w, shop.kind)) continue;
       const d = Math.abs(m.x - shop.x);
-      if (d < 24 && d < bestDist && shop.stock < shop.maxStock) {
+      if (d < 22 && d < bestDist && shop.stock < shop.maxStock) {
         const pending = countPendingFlyingCoins(w, 'shop', shop.id);
         const shopCost = shop.kind === 'sword' ? 3 : 2;
         if (shop.coinsPaid + pending < shopCost) {
@@ -442,24 +836,30 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
     }
   }
 
-  // 3. Farms (Lv0 -> Lv1 -> Lv2 -> Lv3, max 5 farmers each)
-  if (w.hall.level >= 1) {
+  // 3. Farms (Unlocked at Kingdom Lv >= 2; scales Lv 1..10 matching Kingdom level!)
+  if (isFarmsUnlocked(w)) {
     for (const farm of w.farms) {
       if (farm.underConstruction) continue;
-      const cost = getFarmUpgradeCost(farm.level);
-      if (cost <= 0) continue;
+      const fCost = getFarmUpgradeResourceCost(farm.level, w.hall.level, w.currentIsland);
+      if (fCost.coins <= 0) continue;
       const d = Math.abs(m.x - farm.x);
-      if (d < 28 && d < bestDist) {
+      if (d < 26 && d < bestDist) {
         const pending = countPendingFlyingCoins(w, 'farm', farm.id);
-        if (farm.coinsPaid + pending < cost) {
+        if (farm.coinsPaid + pending < fCost.coins) {
           bestDist = d;
           best = {
             x: farm.x,
-            y: GROUND_Y - 36,
-            label: farm.level === 0 ? t('prompt_farm_build') : t('prompt_farm_upgrade'),
-            cost,
+            y: GROUND_Y - 40,
+            label:
+              farm.level === 0
+                ? t('prompt_farm_build')
+                : `${t('prompt_farm_upgrade')} Nv.${farm.level + 1}`,
+            cost: fCost.coins,
             paid: farm.coinsPaid,
             pending,
+            woodCost: fCost.wood,
+            stoneCost: fCost.stone,
+            ironCost: fCost.iron,
             targetType: 'farm',
             targetId: farm.id,
           };
@@ -468,20 +868,97 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
     }
   }
 
-  // 4. Dock Construction (30 coins on Islands 2..7 before sailing again!)
+  // 3b. Archer Towers (Lv 1..10 matching Kingdom level!)
+  if (w.hall.level >= 1) {
+    for (const tower of w.towers) {
+      if (tower.underConstruction) continue;
+      const tCost = getTowerUpgradeResourceCost(
+        tower.level,
+        w.hall.level,
+        tower.destroyed,
+        tower.previousLevel,
+        w.currentIsland
+      );
+      if (tCost.coins <= 0) continue;
+      const d = Math.abs(m.x - tower.x);
+      if (d < 24 && d < bestDist) {
+        const pending = countPendingFlyingCoins(w, 'tower', tower.id);
+        if (tower.coinsPaid + pending < tCost.coins) {
+          bestDist = d;
+          const label = tower.destroyed
+            ? t('prompt_tower_reform')
+            : tower.level === 0
+              ? t('prompt_tower_build')
+              : `${t('prompt_tower_upgrade')} Nv.${tower.level + 1}`;
+          best = {
+            x: tower.x,
+            y: GROUND_Y - Math.max(34, getTowerHeight(tower.level) + 12),
+            label,
+            cost: tCost.coins,
+            paid: tower.coinsPaid,
+            pending,
+            woodCost: tCost.wood,
+            stoneCost: tCost.stone,
+            ironCost: tCost.iron,
+            targetType: 'tower',
+            targetId: tower.id,
+          };
+        }
+      }
+    }
+  }
+
+  // 3c. Island Construction & Forge Buff Altars (Islands 2..9)
+  if (w.hall.level >= 1) {
+    for (const buff of w.islandBuffs) {
+      if (buff.active) continue;
+      const d = Math.abs(m.x - buff.x);
+      if (d < 28 && d < bestDist) {
+        const bCost = getIslandBuffResourceCost(buff.kind, w.currentIsland);
+        const targetType: PromptTargetType =
+          buff.kind === 'construction' ? 'buff_construction' : 'buff_forge';
+        const pending = countPendingFlyingCoins(w, targetType, 0);
+        if (buff.coinsPaid + pending < bCost.coins) {
+          bestDist = d;
+          best = {
+            x: buff.x,
+            y: GROUND_Y - 46,
+            label:
+              buff.kind === 'construction'
+                ? t('prompt_buff_construction')
+                : t('prompt_buff_forge'),
+            cost: bCost.coins,
+            paid: buff.coinsPaid,
+            pending,
+            woodCost: bCost.wood,
+            stoneCost: bCost.stone,
+            ironCost: bCost.iron,
+            targetType,
+            targetId: 0,
+          };
+        }
+      }
+    }
+  }
+
+  // 4. Dock Construction (on Islands 2..9 before sailing again!)
   if (w.hall.level >= 1 && w.dock.required && !w.dock.built && !w.dock.underConstruction) {
     const d = Math.abs(m.x - w.dock.x);
     if (d < 34 && d < bestDist) {
+      const dockCost = getDockBuildResourceCost();
       const pending = countPendingFlyingCoins(w, 'dock_build', 0);
-      if (w.dock.coinsPaid + pending < DOCK_BUILD_COST) {
+      if (w.dock.coinsPaid + pending < dockCost.coins) {
         bestDist = d;
         best = {
           x: w.dock.x,
-          y: GROUND_Y - 38,
+          y: GROUND_Y - 40,
           label: t('prompt_dock_build'),
-          cost: DOCK_BUILD_COST,
+          cost: dockCost.coins,
           paid: w.dock.coinsPaid,
           pending,
+          woodCost: dockCost.wood,
+          stoneCost: dockCost.stone,
+          ironCost: dockCost.iron,
           targetType: 'dock_build',
           targetId: 0,
         };
@@ -489,20 +966,24 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
     }
   }
 
-  // 5. Drakkar Boat: Build (30 coins on Island 1) OR Sail (10 coins once built & dock ready)
+  // 5. Drakkar Boat: Build (Island 1) OR Sail (10 coins once built & dock ready)
   if (w.hall.level >= 1) {
     const boatDist = Math.abs(m.x - w.boat.x);
     if (!w.boat.built && !w.boat.underConstruction && boatDist < 34 && boatDist < bestDist) {
+      const boatCost = getBoatBuildResourceCost();
       const pending = countPendingFlyingCoins(w, 'boat_build', 0);
-      if (w.boat.coinsPaid + pending < BOAT_BUILD_COST) {
+      if (w.boat.coinsPaid + pending < boatCost.coins) {
         bestDist = boatDist;
         best = {
           x: w.boat.x,
-          y: GROUND_Y - 46,
+          y: GROUND_Y - 48,
           label: t('prompt_boat_build'),
-          cost: BOAT_BUILD_COST,
+          cost: boatCost.coins,
           paid: w.boat.coinsPaid,
           pending,
+          woodCost: boatCost.wood,
+          stoneCost: boatCost.stone,
+          ironCost: boatCost.iron,
           targetType: 'boat_build',
           targetId: 0,
         };
@@ -546,31 +1027,38 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
     }
   }
 
-  // 7. Walls
+  // 7. Walls (Lv 1..10 matching Kingdom level!)
   if (w.hall.level >= 1) {
     for (const wall of w.walls) {
       if (wall.underConstruction) continue;
-      const cost = getWallUpgradeCost(wall.level, w.hall.level, wall.destroyed);
-      if (cost <= 0) continue;
+      const wCost = getWallUpgradeResourceCost(
+        wall.level,
+        w.hall.level,
+        wall.destroyed,
+        wall.previousLevel,
+        w.currentIsland
+      );
+      if (wCost.coins <= 0) continue;
       const d = Math.abs(m.x - wall.x);
-      if (d < 30 && d < bestDist) {
+      if (d < 26 && d < bestDist) {
         const pending = countPendingFlyingCoins(w, 'wall', wall.id);
-        if (wall.coinsPaid + pending < cost) {
+        if (wall.coinsPaid + pending < wCost.coins) {
           bestDist = d;
           const label = wall.destroyed
             ? t('prompt_wall_reform')
             : wall.level === 0
               ? t('prompt_wall_build')
-              : wall.level === 1
-                ? t('prompt_wall_upgrade')
-                : t('prompt_wall_bastion');
+              : `${t('prompt_wall_upgrade')} Nv.${wall.level + 1}`;
           best = {
             x: wall.x,
-            y: GROUND_Y - (wall.level === 0 ? 28 : 48),
+            y: GROUND_Y - Math.max(30, getWallHeight(wall.level) + 12),
             label,
-            cost,
+            cost: wCost.coins,
             paid: wall.coinsPaid,
             pending,
+            woodCost: wCost.wood,
+            stoneCost: wCost.stone,
+            ironCost: wCost.iron,
             targetType: 'wall',
             targetId: wall.id,
           };
@@ -619,7 +1107,7 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
     }
   }
 
-  // 7c. Special Mount Shrine (1 per island 2..7: Diamonds to unlock -> Coins to tame/mount!)
+  // 7c. Special Mount Shrine
   if (w.mountShrine) {
     const d = Math.abs(m.x - w.mountShrine.x);
     if (d < 30 && d < bestDist) {
@@ -703,18 +1191,19 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
     }
   }
 
-  // 9. Rocks
+  // 9. Rocks (3 sizes: P +5 / 30s, M +7 / 45s, G +15 / 90s)
   for (const rock of w.rocks) {
     if (rock.mined || rock.marked) continue;
     const d = Math.abs(m.x - rock.x);
     if (d < 26 && d < bestDist) {
       const pending = countPendingFlyingCoins(w, 'rock', rock.id);
       if (pending < 1) {
+        const spec = getRockSpec(rock.size ?? sizeFromVariant(rock.variant));
         bestDist = d;
         best = {
           x: rock.x,
-          y: GROUND_Y - 26,
-          label: t('prompt_rock'),
+          y: GROUND_Y - 28,
+          label: `${t('prompt_rock')} ${t(spec.sizeKey)} (+${spec.stone} · ${spec.time}s)`,
           cost: 1,
           paid: 0,
           pending,
@@ -725,18 +1214,19 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
     }
   }
 
-  // 10. Trees
+  // 10. Trees (3 sizes: P +4 / 20s, M +7 / 35s, G +12 / 60s)
   for (const tree of w.trees) {
     if (tree.chopped || tree.marked) continue;
     const d = Math.abs(m.x - tree.x);
     if (d < 26 && d < bestDist) {
       const pending = countPendingFlyingCoins(w, 'tree', tree.id);
       if (pending < 1) {
+        const spec = getTreeSpec(tree.size ?? sizeFromVariant(tree.variant));
         bestDist = d;
         best = {
           x: tree.x,
           y: GROUND_Y - 46,
-          label: t('prompt_tree'),
+          label: `${t('prompt_tree')} ${t(spec.sizeKey)} (+${spec.wood} · ${spec.time}s)`,
           cost: 1,
           paid: 0,
           pending,
@@ -751,8 +1241,7 @@ function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt | null {
 }
 
 function getSlotWorldPos(prompt: FloatingPrompt, slotIndex: number): { x: number; y: number } {
-  if (prompt.cost > 9) {
-    // Compact progress prompt for 10/30-coin structures: coin flies right into center coin slot!
+  if (prompt.cost > 9 || prompt.targetType === 'banker') {
     return { x: prompt.x, y: prompt.y - 4 };
   }
   const slotStep = 10;
@@ -768,29 +1257,62 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
   sound.playCoinSlot();
   spawnBurst(w, fc.targetX, fc.targetY, 6, fc.currency === 'diamond' ? '#7ef5ff' : '#ffe066', 'spark', 28);
 
+  if (fc.targetType === 'banker') {
+    w.banker.balance += 1;
+    spawnBurst(w, w.banker.x, GROUND_Y - 18, 5, '#ffe066', 'spark', 24);
+    return;
+  }
+
   if (fc.targetType === 'hall') {
+    const resCost = getHallUpgradeResourceCost(w.hall.level, w.currentIsland);
+    const maxAllowed = getIslandMaxKingdomLevel(w);
+    if (w.hall.level >= maxAllowed || resCost.coins <= 0) return;
     w.hall.coinsPaid += 1;
-    const cost = getHallUpgradeCost(w.hall.level);
-    if (cost > 0 && w.hall.coinsPaid >= cost) {
+    if (w.hall.coinsPaid >= resCost.coins) {
+      if (!hasRequiredMaterials(w, resCost)) {
+        // Refund coin if materials changed mid-flight
+        w.hall.coinsPaid = Math.max(0, w.hall.coinsPaid - 1);
+        if (w.monarchs[0]) {
+          w.monarchs[0].coins = Math.min(w.monarchs[0].maxCoins, w.monarchs[0].coins + 1);
+          w.resources.gold = w.monarchs[0].coins;
+        }
+        showBanner(w, 'RECURSOS INSUFICIENTES', `Falta: ${formatMissingMaterials(w, resCost)}`, '#ff8a65');
+        return;
+      }
+      consumeMaterials(w, resCost);
       w.hall.coinsPaid = 0;
       w.hall.level += 1;
       sound.playBuildComplete();
-      spawnBurst(w, w.hall.x, GROUND_Y - 22, 18, '#ffba52', 'ember', 55);
+      spawnBurst(w, w.hall.x, GROUND_Y - 26, 20, '#ffba52', 'ember', 60);
       if (w.hall.level === 1) {
-        // STRICT RULE: Shops unlock EMPTY (stock = 0) — player spends their coins to forge tools!
+        // Only Hammer and Bow unlock automatically at Kingdom Level 1!
         for (const shop of w.shops) {
-          shop.built = true;
+          if (shop.kind === 'hammer' || shop.kind === 'bow') shop.built = true;
         }
         showBanner(
           w,
-          'FOGUEIRA ACESA',
-          'Forje Martelos, Espadas, Arcos ou Sementes e contrate errantes!',
+          'REINO NV.1 — FOGUEIRA ACESA',
+          'Tendas de Martelo e Arco + Banqueiro (1%/dia) liberados!',
           w.crest.secondaryColor
         );
       } else if (w.hall.level === 2) {
-        showBanner(w, 'SALÃO DE MADEIRA ERGUIDO', 'Tributo diário ativo e Bastiões liberados!');
-      } else if (w.hall.level === 3) {
-        showBanner(w, 'SALÃO DO JARL', 'As cores do seu clã dominam o norte!');
+        for (const shop of w.shops) {
+          if (shop.kind === 'seed') shop.built = true;
+        }
+        showBanner(
+          w,
+          'REINO NV.2 — SALÃO DE MADEIRA',
+          'Fazendas e Tenda de Sementes liberadas! Banqueiro rende 2%/dia!',
+          w.crest.secondaryColor
+        );
+      } else {
+        const rate = getBankerDailyRatePct(w.hall.level);
+        showBanner(
+          w,
+          `REINO EVOLUÍDO PARA NV.${w.hall.level}!`,
+          `Muros, Torres e Fazendas até Nv.${w.hall.level} · Banqueiro rende ${rate}%/dia!`,
+          '#ffe066'
+        );
       }
       syncCurrentIslandProgress(w);
       saveCampaign(w);
@@ -798,9 +1320,102 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
     return;
   }
 
+  if (fc.targetType === 'forge_build' && w.forge && !w.forge.built && !w.forge.underConstruction) {
+    const fCost = getForgeBuildResourceCost();
+    w.forge.coinsPaid += 1;
+    if (w.forge.coinsPaid >= fCost.coins) {
+      if (!hasRequiredMaterials(w, fCost)) {
+        w.forge.coinsPaid = Math.max(0, w.forge.coinsPaid - 1);
+        if (w.monarchs[0]) {
+          w.monarchs[0].coins = Math.min(w.monarchs[0].maxCoins, w.monarchs[0].coins + 1);
+          w.resources.gold = w.monarchs[0].coins;
+        }
+        showBanner(w, 'RECURSOS INSUFICIENTES', `Falta: ${formatMissingMaterials(w, fCost)}`, '#ff8a65');
+        return;
+      }
+      consumeMaterials(w, fCost);
+      w.forge.coinsPaid = 0;
+      w.forge.underConstruction = true;
+      w.forge.buildProgress = 0;
+      sound.playHammer();
+      showBanner(w, 'FORJA EM CONSTRUÇÃO!', 'Construtores erguendo a Forja de Ferro!', '#ff9b52');
+    }
+    return;
+  }
+
+  if (fc.targetType === 'forge_smelt' && w.forge && w.forge.built) {
+    const sCost = getForgeSmeltResourceCost();
+    w.forge.smeltCoinsPaid += 1;
+    if (w.forge.smeltCoinsPaid >= sCost.coins) {
+      if (!hasRequiredMaterials(w, sCost)) {
+        w.forge.smeltCoinsPaid = Math.max(0, w.forge.smeltCoinsPaid - 1);
+        if (w.monarchs[0]) {
+          w.monarchs[0].coins = Math.min(w.monarchs[0].maxCoins, w.monarchs[0].coins + 1);
+          w.resources.gold = w.monarchs[0].coins;
+        }
+        showBanner(w, 'RECURSOS INSUFICIENTES', `Falta: ${formatMissingMaterials(w, sCost)}`, '#ff8a65');
+        return;
+      }
+      consumeMaterials(w, sCost);
+      w.forge.smeltCoinsPaid = 0;
+      w.forge.smeltQueue += 1;
+      w.forge.smelting = true;
+      sound.playHammer();
+      spawnBurst(w, w.forge.x, GROUND_Y - 18, 10, '#ff8f3b', 'ember', 40);
+    }
+    return;
+  }
+
+  if (fc.targetType === 'buff_construction' || fc.targetType === 'buff_forge') {
+    const kind = fc.targetType === 'buff_construction' ? 'construction' : 'forge';
+    const buff = w.islandBuffs.find((b) => b.kind === kind);
+    if (buff && !buff.active) {
+      const bCost = getIslandBuffResourceCost(kind, w.currentIsland);
+      buff.coinsPaid += 1;
+      if (buff.coinsPaid >= bCost.coins) {
+        if (!hasRequiredMaterials(w, bCost)) {
+          buff.coinsPaid = Math.max(0, buff.coinsPaid - 1);
+          if (w.monarchs[0]) {
+            w.monarchs[0].coins = Math.min(w.monarchs[0].maxCoins, w.monarchs[0].coins + 1);
+            w.resources.gold = w.monarchs[0].coins;
+          }
+          showBanner(w, 'RECURSOS INSUFICIENTES', `Falta: ${formatMissingMaterials(w, bCost)}`, '#ff8a65');
+          return;
+        }
+        consumeMaterials(w, bCost);
+        buff.coinsPaid = 0;
+        buff.active = true;
+        sound.playHorn(false);
+        spawnBurst(w, buff.x, GROUND_Y - 24, 24, kind === 'construction' ? '#7ef5ff' : '#ff9b52', 'spark', 70);
+        syncCurrentIslandProgress(w);
+        const bothActive = isConstructionBuffActive(w) && isForgeBuffActive(w);
+        const newCap = getIslandMaxKingdomLevel(w);
+        if (bothActive) {
+          showBanner(
+            w,
+            `REINO NV.${newCap} DESBLOQUEADO!`,
+            'Buffs de Construção e Forja ativos — evolua seu Castelo e construções!',
+            '#ffe066'
+          );
+        } else {
+          showBanner(
+            w,
+            kind === 'construction' ? 'BUFF DE CONSTRUÇÃO ATIVO!' : 'BUFF DE FORJA ATIVO!',
+            kind === 'construction'
+              ? 'Obras e coleta +35% mais rápidas! Ative o Buff de Forja para evoluir o Reino.'
+              : 'Forja produz +1 Ferro extra! Ative o Buff de Construção para evoluir o Reino.',
+            kind === 'construction' ? '#7ef5ff' : '#ff9b52'
+          );
+        }
+        saveCampaign(w);
+      }
+    }
+    return;
+  }
+
   if (fc.targetType === 'shop') {
     const shop = w.shops.find((s) => s.id === fc.targetId);
-    if (shop && shop.stock < shop.maxStock) {
+    if (shop && isShopUnlocked(w, shop.kind) && shop.stock < shop.maxStock) {
       const shopCost = shop.kind === 'sword' ? 3 : 2;
       shop.coinsPaid += 1;
       if (shop.coinsPaid >= shopCost) {
@@ -816,10 +1431,20 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
 
   if (fc.targetType === 'farm') {
     const farm = w.farms.find((f) => f.id === fc.targetId);
-    if (farm && !farm.underConstruction) {
-      const cost = getFarmUpgradeCost(farm.level);
+    if (farm && !farm.underConstruction && isFarmsUnlocked(w)) {
+      const fCost = getFarmUpgradeResourceCost(farm.level, w.hall.level, w.currentIsland);
       farm.coinsPaid += 1;
-      if (cost > 0 && farm.coinsPaid >= cost) {
+      if (fCost.coins > 0 && farm.coinsPaid >= fCost.coins) {
+        if (!hasRequiredMaterials(w, fCost)) {
+          farm.coinsPaid = Math.max(0, farm.coinsPaid - 1);
+          if (w.monarchs[0]) {
+            w.monarchs[0].coins = Math.min(w.monarchs[0].maxCoins, w.monarchs[0].coins + 1);
+            w.resources.gold = w.monarchs[0].coins;
+          }
+          showBanner(w, 'RECURSOS INSUFICIENTES', `Falta: ${formatMissingMaterials(w, fCost)}`, '#ff8a65');
+          return;
+        }
+        consumeMaterials(w, fCost);
         farm.coinsPaid = 0;
         farm.underConstruction = true;
         farm.buildProgress = 0;
@@ -829,11 +1454,58 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
     return;
   }
 
+  if (fc.targetType === 'tower') {
+    const tower = w.towers.find((tw) => tw.id === fc.targetId);
+    if (tower && !tower.underConstruction) {
+      const tCost = getTowerUpgradeResourceCost(
+        tower.level,
+        w.hall.level,
+        tower.destroyed,
+        tower.previousLevel,
+        w.currentIsland
+      );
+      tower.coinsPaid += 1;
+      if (tCost.coins > 0 && tower.coinsPaid >= tCost.coins) {
+        if (!hasRequiredMaterials(w, tCost)) {
+          tower.coinsPaid = Math.max(0, tower.coinsPaid - 1);
+          if (w.monarchs[0]) {
+            w.monarchs[0].coins = Math.min(w.monarchs[0].maxCoins, w.monarchs[0].coins + 1);
+            w.resources.gold = w.monarchs[0].coins;
+          }
+          showBanner(w, 'RECURSOS INSUFICIENTES', `Falta: ${formatMissingMaterials(w, tCost)}`, '#ff8a65');
+          return;
+        }
+        consumeMaterials(w, tCost);
+        tower.coinsPaid = 0;
+        tower.underConstruction = true;
+        tower.buildProgress = 0;
+        tower.targetLevel = tower.destroyed ? Math.max(1, tower.previousLevel) : tower.level + 1;
+        sound.playHammer();
+        const hasBuilders = w.villagers.some((v) => v.role === 'builder');
+        if (!hasBuilders) {
+          showBanner(w, 'CONSTRUTOR NECESSÁRIO', 'Contrate um errante e forje um Martelo!', '#8fd3ff');
+        }
+      }
+    }
+    return;
+  }
+
   if (fc.targetType === 'boat_build') {
     if (!w.boat.built && !w.boat.underConstruction) {
-      w.boat.coinsPaid = Math.min(BOAT_BUILD_COST, w.boat.coinsPaid + 1);
-      w.boat.buildProgress = Math.min(0.85, (w.boat.coinsPaid / BOAT_BUILD_COST) * 0.85);
-      if (w.boat.coinsPaid >= BOAT_BUILD_COST) {
+      const boatCost = getBoatBuildResourceCost();
+      w.boat.coinsPaid = Math.min(boatCost.coins, w.boat.coinsPaid + 1);
+      w.boat.buildProgress = Math.min(0.85, (w.boat.coinsPaid / boatCost.coins) * 0.85);
+      if (w.boat.coinsPaid >= boatCost.coins) {
+        if (!hasRequiredMaterials(w, boatCost)) {
+          w.boat.coinsPaid = Math.max(0, w.boat.coinsPaid - 1);
+          if (w.monarchs[0]) {
+            w.monarchs[0].coins = Math.min(w.monarchs[0].maxCoins, w.monarchs[0].coins + 1);
+            w.resources.gold = w.monarchs[0].coins;
+          }
+          showBanner(w, 'RECURSOS INSUFICIENTES', `Falta: ${formatMissingMaterials(w, boatCost)}`, '#ff8a65');
+          return;
+        }
+        consumeMaterials(w, boatCost);
         w.boat.underConstruction = true;
         sound.playHammer();
         showBanner(w, 'CASCO DO DRAKKAR PAGO!', 'Seus construtores estão finalizando o barco!', '#efc462');
@@ -844,9 +1516,20 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
 
   if (fc.targetType === 'dock_build') {
     if (w.dock.required && !w.dock.built && !w.dock.underConstruction) {
-      w.dock.coinsPaid = Math.min(DOCK_BUILD_COST, w.dock.coinsPaid + 1);
-      w.dock.buildProgress = Math.min(0.85, (w.dock.coinsPaid / DOCK_BUILD_COST) * 0.85);
-      if (w.dock.coinsPaid >= DOCK_BUILD_COST) {
+      const dockCost = getDockBuildResourceCost();
+      w.dock.coinsPaid = Math.min(dockCost.coins, w.dock.coinsPaid + 1);
+      w.dock.buildProgress = Math.min(0.85, (w.dock.coinsPaid / dockCost.coins) * 0.85);
+      if (w.dock.coinsPaid >= dockCost.coins) {
+        if (!hasRequiredMaterials(w, dockCost)) {
+          w.dock.coinsPaid = Math.max(0, w.dock.coinsPaid - 1);
+          if (w.monarchs[0]) {
+            w.monarchs[0].coins = Math.min(w.monarchs[0].maxCoins, w.monarchs[0].coins + 1);
+            w.resources.gold = w.monarchs[0].coins;
+          }
+          showBanner(w, 'RECURSOS INSUFICIENTES', `Falta: ${formatMissingMaterials(w, dockCost)}`, '#ff8a65');
+          return;
+        }
+        consumeMaterials(w, dockCost);
         w.dock.underConstruction = true;
         sound.playHammer();
         showBanner(w, 'PORTO PAGO!', 'Seus construtores estão erguendo o cais!', '#efc462');
@@ -899,7 +1582,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         w.godShrine.coinsPaid = 0;
         w.godShrine.blessed = true;
         w.activeGod = godDef.id;
-        // Apply immediate retroactive boosts for Odin (walls +40% HP) and Thor (warriors +35% HP)
+        // Apply immediate retroactive boosts for Odin (walls & towers +40% HP) and Thor (warriors + Sword Tents!)
         if (godDef.id === 'odin') {
           for (const wall of w.walls) {
             if (wall.level > 0 && !wall.destroyed) {
@@ -908,7 +1591,18 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
               wall.maxHp = newMax;
             }
           }
+          for (const tower of w.towers) {
+            if (tower.level > 0 && !tower.destroyed) {
+              const newMax = getTowerMaxHp(tower.level, true);
+              tower.hp += Math.max(0, newMax - tower.maxHp);
+              tower.maxHp = newMax;
+            }
+          }
         } else if (godDef.id === 'thor') {
+          w.thorActivated = true;
+          for (const shop of w.shops) {
+            if (shop.kind === 'sword') shop.built = true;
+          }
           for (const v of w.villagers) {
             if (v.role === 'warrior') {
               v.maxHp = 86;
@@ -918,10 +1612,11 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         }
         sound.playHorn(false);
         spawnBurst(w, w.godShrine.x, GROUND_Y - 30, 26, godDef.color, 'spark', 75);
+        const extraNote = godDef.id === 'thor' ? ' · Tenda de Espadas desbloqueada!' : '';
         showBanner(
           w,
           `${godDef.name.toUpperCase()} INVOCADO!`,
-          `${godDef.title[lang]} — ${godDef.buffDesc[lang]}`,
+          `${godDef.title[lang]} — ${godDef.buffDesc[lang]}${extraNote}`,
           godDef.color
         );
         syncCurrentIslandProgress(w);
@@ -1012,9 +1707,25 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
   if (fc.targetType === 'wall') {
     const wall = w.walls.find((item) => item.id === fc.targetId);
     if (wall && !wall.underConstruction) {
-      const cost = getWallUpgradeCost(wall.level, w.hall.level, wall.destroyed);
+      const wCost = getWallUpgradeResourceCost(
+        wall.level,
+        w.hall.level,
+        wall.destroyed,
+        wall.previousLevel,
+        w.currentIsland
+      );
       wall.coinsPaid += 1;
-      if (cost > 0 && wall.coinsPaid >= cost) {
+      if (wCost.coins > 0 && wall.coinsPaid >= wCost.coins) {
+        if (!hasRequiredMaterials(w, wCost)) {
+          wall.coinsPaid = Math.max(0, wall.coinsPaid - 1);
+          if (w.monarchs[0]) {
+            w.monarchs[0].coins = Math.min(w.monarchs[0].maxCoins, w.monarchs[0].coins + 1);
+            w.resources.gold = w.monarchs[0].coins;
+          }
+          showBanner(w, 'RECURSOS INSUFICIENTES', `Falta: ${formatMissingMaterials(w, wCost)}`, '#ff8a65');
+          return;
+        }
+        consumeMaterials(w, wCost);
         wall.coinsPaid = 0;
         wall.underConstruction = true;
         wall.buildProgress = 0;
@@ -1053,6 +1764,36 @@ function handleCoinDrop(w: WorldState, m: Monarch): void {
   if (m.dropCooldown > 0) return;
 
   const prompt = w.activePrompt;
+
+  // Prevent wasting coins on a locked Kingdom upgrade prompt
+  if (prompt && prompt.blockedReason) {
+    m.dropCooldown = 0.55;
+    sound.playHit();
+    showBanner(w, prompt.label, prompt.blockedReason, '#ff9b52');
+    return;
+  }
+
+  // Prevent wasting coins when required wood/stone/iron are missing
+  if (prompt && (prompt.woodCost || prompt.stoneCost || prompt.ironCost)) {
+    const matCost: ResourceCost = {
+      coins: prompt.cost,
+      wood: prompt.woodCost ?? 0,
+      stone: prompt.stoneCost ?? 0,
+      iron: prompt.ironCost ?? 0,
+    };
+    if (!hasRequiredMaterials(w, matCost)) {
+      m.dropCooldown = 0.5;
+      sound.playHit();
+      showBanner(
+        w,
+        'RECURSOS INSUFICIENTES',
+        `Falta: ${formatMissingMaterials(w, matCost)}`,
+        '#ff8a65'
+      );
+      return;
+    }
+  }
+
   const needsDiamond = Boolean(prompt && prompt.currency === 'diamond');
 
   if (needsDiamond && prompt) {
@@ -1091,11 +1832,11 @@ function handleCoinDrop(w: WorldState, m: Monarch): void {
 
   m.coins -= 1;
   w.resources.gold = m.coins;
-  m.dropCooldown = 0.16;
+  m.dropCooldown = prompt?.targetType === 'banker' ? 0.09 : 0.16;
   sound.playCoinDrop();
 
   if (prompt && prompt.targetType !== 'wanderer') {
-    const nextSlotIndex = Math.min(prompt.cost - 1, prompt.paid + prompt.pending);
+    const nextSlotIndex = Math.min(Math.max(0, prompt.cost - 1), prompt.paid + prompt.pending);
     const slotPos = getSlotWorldPos(prompt, nextSlotIndex);
     w.flyingCoins.push({
       id: uid(w),
@@ -1104,7 +1845,7 @@ function handleCoinDrop(w: WorldState, m: Monarch): void {
       targetX: slotPos.x,
       targetY: slotPos.y,
       progress: 0,
-      duration: 0.3,
+      duration: prompt.targetType === 'banker' ? 0.22 : 0.3,
       currency: 'coin',
       targetType: prompt.targetType,
       targetId: prompt.targetId,
@@ -1155,6 +1896,7 @@ export function issueUnitCommand(w: WorldState, mode: CommandMode, targetSide: -
     const chosen = candidates[0];
     chosen.side = targetSide;
     chosen.assignedFarmId = null;
+    chosen.assignedTowerId = null;
     chosen.orderFlashTimer = 1.8;
     chosen.orderDir = targetSide;
     chosen.actionTimer = 0;
@@ -1517,6 +2259,18 @@ function updateMonarch(w: WorldState, m: Monarch, input: InputState, dt: number)
     spawnBurst(w, w.hall.x, GROUND_Y - 22, 6, '#f7d265', 'spark', 32);
   }
 
+  // Collect stored farm coins when riding past built farms!
+  for (const farm of w.farms) {
+    if (farm.level >= 1 && farm.storedCoins > 0 && Math.abs(m.x - farm.x) < 26 && m.coins < m.maxCoins) {
+      const take = Math.min(farm.storedCoins, m.maxCoins - m.coins);
+      farm.storedCoins -= take;
+      m.coins += take;
+      w.resources.gold = m.coins;
+      sound.playCoinPickup();
+      spawnBurst(w, farm.x, GROUND_Y - 16, 6, '#f7d265', 'spark', 28);
+    }
+  }
+
   // Crown physics
   if (!m.hasCrown && m.crownStolenByEnemyId === null) {
     if (!m.crownGrounded) {
@@ -1560,6 +2314,88 @@ function updateFlyingCoins(w: WorldState, dt: number): void {
     if (fc.progress >= 1) {
       w.flyingCoins.splice(i, 1);
       applyFlyingCoinArrival(w, fc);
+    }
+  }
+}
+
+function updateForgeAndRegrowth(w: WorldState, dt: number): void {
+  // 1. Forge smelting queue (Stone + Wood -> Iron)
+  if (w.forge && w.forge.built && w.forge.smeltQueue > 0) {
+    w.forge.smelting = true;
+    const forgeBuffSpeed = isForgeBuffActive(w) ? 1.35 : 1.0;
+    w.forge.smeltProgress += (dt / 3.2) * forgeBuffSpeed;
+    if (Math.random() < dt * 8) {
+      spawnParticle(w, {
+        x: w.forge.x + (Math.random() - 0.5) * 10,
+        y: GROUND_Y - 18,
+        vx: (Math.random() - 0.5) * 14,
+        vy: -18 - Math.random() * 18,
+        size: Math.random() > 0.5 ? 2 : 1,
+        color: Math.random() > 0.4 ? '#ff8f3b' : '#ffe066',
+        alpha: 0.9,
+        life: 0.5,
+        maxLife: 0.5,
+        kind: 'ember',
+      });
+    }
+    if (w.forge.smeltProgress >= 1) {
+      w.forge.smeltProgress = 0;
+      w.forge.smeltQueue = Math.max(0, w.forge.smeltQueue - 1);
+      w.forge.smelting = w.forge.smeltQueue > 0;
+      const produced = getForgeIronOutput(w);
+      w.resources.iron += produced;
+      sound.playBuildComplete();
+      spawnBurst(w, w.forge.x, GROUND_Y - 18, 12, '#b8d0e6', 'spark', 45);
+      showBanner(w, 'FERRO FORJADO!', `+${produced} Ferro adicionado ao estoque!`, '#b8d0e6');
+    }
+  }
+
+  // 2. Gradual Rock sprouting (starts Day 3, 1 by 1 slowly!)
+  if (w.rockRegrowQueue > 0) {
+    w.rockRegrowTimer -= dt;
+    if (w.rockRegrowTimer <= 0) {
+      w.rockRegrowTimer = 22 + Math.random() * 14;
+      const minedRocks = w.rocks.filter((r) => r.mined);
+      if (minedRocks.length > 0) {
+        const pick = minedRocks[Math.floor(Math.random() * minedRocks.length)];
+        const variant = Math.floor(Math.random() * 3) as 0 | 1 | 2;
+        pick.variant = variant;
+        pick.size = sizeFromVariant(variant);
+        pick.mined = false;
+        pick.marked = false;
+        pick.mineProgress = 0;
+        pick.hitShake = 0.2;
+        w.rockRegrowQueue -= 1;
+        spawnBurst(w, pick.x, GROUND_Y - 8, 8, '#bcc9d6', 'stone', 32);
+      } else {
+        w.rockRegrowQueue = 0;
+      }
+    }
+  }
+
+  // 3. Gradual Tree sprouting (every 5 days, little by little!)
+  if (w.treeRegrowQueue > 0) {
+    w.treeRegrowTimer -= dt;
+    if (w.treeRegrowTimer <= 0) {
+      w.treeRegrowTimer = 18 + Math.random() * 14;
+      const choppedTrees = w.trees.filter((tr) => tr.chopped);
+      if (choppedTrees.length > 0) {
+        const pick = choppedTrees[Math.floor(Math.random() * choppedTrees.length)];
+        const roll = Math.random();
+        const variant: 0 | 1 | 2 = roll < 0.5 ? 0 : roll < 0.85 ? 1 : 2;
+        const size = sizeFromVariant(variant);
+        pick.variant = variant;
+        pick.size = size;
+        pick.height = heightForTreeSize(size, Math.random());
+        pick.chopped = false;
+        pick.marked = false;
+        pick.chopProgress = 0;
+        pick.hitShake = 0.2;
+        w.treeRegrowQueue -= 1;
+        spawnBurst(w, pick.x, GROUND_Y - 14, 8, '#69946b', 'leaf', 30);
+      } else {
+        w.treeRegrowQueue = 0;
+      }
     }
   }
 }
@@ -1630,22 +2466,38 @@ function updateDayNightAndWaves(w: WorldState, dt: number): void {
     w.threatLevel = computeThreatLevel(w);
     sound.playHorn(false);
 
-    // Passive Hall tribute
-    if (w.hall.level >= 2) {
-      const tribute = w.hall.level === 2 ? 3 : 6;
-      w.hall.storedTaxCoins = Math.min(40, w.hall.storedTaxCoins + tribute);
+    // 1. BANKER DAILY INTEREST (1% to 10% per day depending on Kingdom level!)
+    let bankInterest = 0;
+    if (w.hall.level >= 1 && w.banker.balance > 0) {
+      const ratePct = getBankerDailyRatePct(w.hall.level);
+      w.banker.interestFraction += w.banker.balance * (ratePct / 100);
+      bankInterest = Math.floor(w.banker.interestFraction);
+      w.banker.interestFraction -= bankInterest;
+      w.banker.balance += bankInterest;
+      w.banker.lastDayYield = bankInterest;
+    } else {
+      w.banker.lastDayYield = 0;
     }
 
-    // DAILY FARM COIN GENERATION: depends on Farm size (level), Farmer count (up to 5), and Freya (+50%)!
+    // 2. Passive Hall tribute (scales with Kingdom level Lv 2..10)
+    if (w.hall.level >= 2) {
+      const tribute = Math.min(20, 1 + w.hall.level * 2);
+      w.hall.storedTaxCoins = Math.min(80, w.hall.storedTaxCoins + tribute);
+    }
+
+    // 3. DAILY FARM GENERATION: scales with Farm level (1..10), farmer count (2+level), storage cap & Freya (+50%)!
     const freyaMult = w.activeGod === 'freya' ? 1.5 : 1.0;
     let farmCoinsGenerated = 0;
     for (const farm of w.farms) {
       if (farm.level <= 0) continue;
-      const farmersHere = Math.min(MAX_FARMERS_PER_FARM, countFarmersAssignedToFarm(w, farm.id));
+      const maxFarmers = getFarmMaxFarmers(farm.level);
+      const farmersHere = Math.min(maxFarmers, countFarmersAssignedToFarm(w, farm.id));
       if (farmersHere <= 0) continue;
-      const yieldCoins = Math.round(farmersHere * (1 + farm.level) * freyaMult);
+      const yieldCoins = Math.round(farmersHere * (1 + farm.level * 0.85) * freyaMult);
+      const storageCap = getFarmStorageCap(farm.level);
       farmCoinsGenerated += yieldCoins;
-      for (let c = 0; c < Math.min(12, yieldCoins); c++) {
+      const groundDrop = Math.min(8, yieldCoins);
+      for (let c = 0; c < groundDrop; c++) {
         spawnCoin(
           w,
           farm.x + (Math.random() - 0.5) * 28,
@@ -1656,9 +2508,30 @@ function updateDayNightAndWaves(w: WorldState, dt: number): void {
           0.2
         );
       }
-      // Deposit any excess directly into Hall treasury so nothing is lost
-      if (yieldCoins > 12) {
-        w.hall.storedTaxCoins = Math.min(60, w.hall.storedTaxCoins + (yieldCoins - 12));
+      const remainder = yieldCoins - groundDrop;
+      if (remainder > 0) {
+        farm.storedCoins = Math.min(storageCap, farm.storedCoins + remainder);
+      }
+      farm.storedFood = Math.min(storageCap, farm.storedFood + farmersHere * farm.level);
+    }
+
+    // 4. GRADUAL RESOURCE REGROWTH:
+    // Rocks begin sprouting from Day 3 onward, little by little (1-2 per day)
+    if (w.day >= 3) {
+      const minedCount = w.rocks.filter((r) => r.mined).length;
+      if (minedCount > 0) {
+        const toAdd = minedCount >= 5 ? 2 : 1;
+        w.rockRegrowQueue = Math.min(minedCount, w.rockRegrowQueue + toAdd);
+        if (w.rockRegrowTimer <= 0) w.rockRegrowTimer = 10 + Math.random() * 10;
+      }
+    }
+    // Trees sprout every 5 days, little by little (2-3 every 5 days)
+    if (w.day % 5 === 0) {
+      const choppedCount = w.trees.filter((tr) => tr.chopped).length;
+      if (choppedCount > 0) {
+        const toAdd = Math.min(3, choppedCount);
+        w.treeRegrowQueue = Math.min(choppedCount, w.treeRegrowQueue + toAdd);
+        if (w.treeRegrowTimer <= 0) w.treeRegrowTimer = 12 + Math.random() * 10;
       }
     }
 
@@ -1684,6 +2557,7 @@ function updateDayNightAndWaves(w: WorldState, dt: number): void {
           targetId: null,
           homeCampId: camp.id,
           assignedFarmId: null,
+          assignedTowerId: null,
           side: camp.x < CENTER_X ? -1 : 1,
           actionTimer: 2,
           animTime: 0,
@@ -1694,14 +2568,16 @@ function updateDayNightAndWaves(w: WorldState, dt: number): void {
       }
     }
 
-    const farmNote =
-      farmCoinsGenerated > 0 ? ` · Fazendas renderam +${farmCoinsGenerated} ouro!` : '';
+    const notes: string[] = [];
+    if (bankInterest > 0) notes.push(`Banco +${bankInterest}🪙 (${getBankerDailyRatePct(w.hall.level)}%)`);
+    if (farmCoinsGenerated > 0) notes.push(`Fazendas +${farmCoinsGenerated}🪙`);
+    const extraNotes = notes.length > 0 ? ` · ${notes.join(' · ')}` : '';
     showBanner(
       w,
       w.isBloodMoon ? `${t('day_short')} ${w.day} — LUA DE SANGUE` : `${t('day_short')} ${w.day} · ${t('threat_lbl')} ${w.threatLevel}`,
       w.isBloodMoon
-        ? `Ameaça Nv.${w.threatLevel} à noite! Reforce muros e tropas${farmNote}`
-        : `Dia de ${w.dayHalfMinutes} min${farmNote}`,
+        ? `Ameaça Nv.${w.threatLevel} à noite! Reforce muros e torres${extraNotes}`
+        : `Reino Nv.${w.hall.level}${extraNotes || ` · Dia de ${w.dayHalfMinutes} min`}`,
       w.isBloodMoon ? '#ff6b6b' : w.crest.secondaryColor
     );
     syncCurrentIslandProgress(w);
@@ -1923,10 +2799,10 @@ function updateVillagers(w: WorldState, dt: number): void {
       continue;
     }
 
-    // --- PEASANT (only gets profession AFTER picking up a stocked tool/seed; also sweeps coins to Hall!) ---
+    // --- PEASANT (only gets profession AFTER picking up an unlocked stocked tool/seed; also sweeps coins to Hall!) ---
     if (v.role === 'peasant') {
       const stockedShop = w.shops
-        .filter((s) => s.stock > 0)
+        .filter((s) => isShopUnlocked(w, s.kind) && s.stock > 0)
         .sort((a, b) => Math.abs(a.x - v.x) - Math.abs(b.x - v.x))[0];
 
       if (stockedShop) {
@@ -1975,27 +2851,24 @@ function updateVillagers(w: WorldState, dt: number): void {
       continue;
     }
 
-    // --- BUILDER (walls, boat, dock, farms, trees, rocks, then sweeps loose coins to Hall!) ---
+    // --- BUILDER (walls, towers, forge, boat, dock, farms, proportional multi-builder rocks/trees, then sweeps coins!) ---
     if (v.role === 'builder') {
       const sideScore = (wx: number) => ((wx < CENTER_X ? -1 : 1) === v.side ? 0 : 1200);
       const odinMult = w.activeGod === 'odin' ? 1.5 : 1.0;
+      const buildBuffMult = isConstructionBuffActive(w) ? 1.35 : 1.0;
+      const workMult = odinMult * buildBuffMult;
 
       // Priority 1: Walls under construction or ruined
       const buildWall = w.walls
-        .filter((wall) => wall.underConstruction || wall.destroyed)
+        .filter((wall) => wall.underConstruction)
         .sort((a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x)))[0];
 
       if (buildWall && (!isEveningOrNight || Math.abs(buildWall.x - CENTER_X) < 340)) {
         v.state = 'working';
-        const standX = buildWall.x - buildWall.side * 12;
+        const standX = buildWall.x - buildWall.side * (12 + (v.id % 3) * 3);
         if (moveToward(v, standX, 52, dt)) {
           v.facing = buildWall.side;
-          if (buildWall.destroyed && !buildWall.underConstruction) {
-            buildWall.underConstruction = true;
-            buildWall.buildProgress = 0;
-            buildWall.targetLevel = Math.max(1, buildWall.previousLevel);
-          }
-          buildWall.buildProgress += dt * 0.34 * odinMult;
+          buildWall.buildProgress += dt * 0.34 * workMult;
           if (v.actionTimer <= 0) {
             v.actionTimer = 0.42;
             sound.playHammer();
@@ -2017,12 +2890,73 @@ function updateVillagers(w: WorldState, dt: number): void {
         continue;
       }
 
-      // Priority 2: Boat Construction (once 30 coins paid) OR Dock Construction (once 30 coins paid)
+      // Priority 1b: Archer Towers under construction
+      const buildTower = w.towers
+        .filter((tw) => tw.underConstruction)
+        .sort((a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x)))[0];
+
+      if (buildTower && (!isEveningOrNight || Math.abs(buildTower.x - CENTER_X) < 340)) {
+        v.state = 'working';
+        const standX = buildTower.x - buildTower.side * (12 + (v.id % 3) * 3);
+        if (moveToward(v, standX, 52, dt)) {
+          v.facing = buildTower.side;
+          buildTower.buildProgress += dt * 0.3 * workMult;
+          if (v.actionTimer <= 0) {
+            v.actionTimer = 0.42;
+            sound.playHammer();
+            spawnBurst(w, buildTower.x, GROUND_Y - 18, 4, '#c7935b', 'wood', 28);
+          }
+          if (buildTower.buildProgress >= 1) {
+            buildTower.underConstruction = false;
+            buildTower.destroyed = false;
+            buildTower.buildProgress = 0;
+            buildTower.level = Math.max(1, buildTower.targetLevel);
+            buildTower.previousLevel = buildTower.level;
+            buildTower.maxHp = getTowerMaxHp(buildTower.level, w.activeGod === 'odin');
+            buildTower.hp = buildTower.maxHp;
+            sound.playBuildComplete();
+            spawnBurst(w, buildTower.x, GROUND_Y - 26, 14, '#f0c66c', 'spark', 45);
+          }
+        }
+        continue;
+      }
+
+      // Priority 1c: Forge under construction (Island 2+)
+      if (w.forge && w.forge.underConstruction && !w.forge.built) {
+        v.state = 'working';
+        const standX = w.forge.x - 12 + (v.id % 3) * 4;
+        if (moveToward(v, standX, 52, dt)) {
+          v.facing = w.forge.x >= v.x ? 1 : -1;
+          w.forge.buildProgress += dt * 0.28 * workMult;
+          if (v.actionTimer <= 0) {
+            v.actionTimer = 0.42;
+            sound.playHammer();
+            spawnBurst(w, w.forge.x, GROUND_Y - 14, 4, '#bcc9d6', 'stone', 26);
+          }
+          if (w.forge.buildProgress >= 1) {
+            w.forge.buildProgress = 1;
+            w.forge.underConstruction = false;
+            w.forge.built = true;
+            sound.playBuildComplete();
+            spawnBurst(w, w.forge.x, GROUND_Y - 20, 16, '#ff9b52', 'ember', 50);
+            showBanner(
+              w,
+              'FORJA PRONTA!',
+              'Transforme Madeira + Pedra em Ferro para evoluir o Reino!',
+              '#ff9b52'
+            );
+            saveCampaign(w);
+          }
+        }
+        continue;
+      }
+
+      // Priority 2: Boat Construction OR Dock Construction
       if (w.boat.underConstruction && !w.boat.built && !isEveningOrNight) {
         v.state = 'working';
         if (moveToward(v, w.boat.x - 16, 52, dt)) {
           v.facing = 1;
-          w.boat.buildProgress += dt * 0.2 * odinMult;
+          w.boat.buildProgress += dt * 0.2 * workMult;
           if (v.actionTimer <= 0) {
             v.actionTimer = 0.4;
             sound.playHammer();
@@ -2046,7 +2980,7 @@ function updateVillagers(w: WorldState, dt: number): void {
         v.state = 'working';
         if (moveToward(v, w.dock.x - 14, 52, dt)) {
           v.facing = 1;
-          w.dock.buildProgress += dt * 0.22 * odinMult;
+          w.dock.buildProgress += dt * 0.22 * workMult;
           if (v.actionTimer <= 0) {
             v.actionTimer = 0.4;
             sound.playHammer();
@@ -2074,7 +3008,7 @@ function updateVillagers(w: WorldState, dt: number): void {
         v.state = 'working';
         if (moveToward(v, buildFarm.x - buildFarm.side * 10, 50, dt)) {
           v.facing = buildFarm.side;
-          buildFarm.buildProgress += dt * 0.36 * odinMult;
+          buildFarm.buildProgress += dt * 0.36 * workMult;
           if (v.actionTimer <= 0) {
             v.actionTimer = 0.45;
             sound.playHammer();
@@ -2091,7 +3025,7 @@ function updateVillagers(w: WorldState, dt: number): void {
         continue;
       }
 
-      // Priority 4: Repair damaged walls
+      // Priority 4: Repair damaged walls & towers
       const damagedWall = w.walls
         .filter((wall) => wall.level > 0 && !wall.destroyed && wall.hp < wall.maxHp)
         .sort((a, b) => sideScore(a.x) + (a.hp / a.maxHp) * 100 - (sideScore(b.x) + (b.hp / b.maxHp) * 100))[0];
@@ -2100,7 +3034,7 @@ function updateVillagers(w: WorldState, dt: number): void {
         const standX = damagedWall.x - damagedWall.side * 12;
         if (moveToward(v, standX, 48, dt)) {
           v.facing = damagedWall.side;
-          damagedWall.hp = Math.min(damagedWall.maxHp, damagedWall.hp + dt * 18 * odinMult);
+          damagedWall.hp = Math.min(damagedWall.maxHp, damagedWall.hp + dt * 22 * workMult);
           if (v.actionTimer <= 0) {
             v.actionTimer = 0.5;
             sound.playHammer();
@@ -2110,26 +3044,52 @@ function updateVillagers(w: WorldState, dt: number): void {
         continue;
       }
 
-      // Priority 5: Chop marked trees & break marked rocks (daytime)
+      const damagedTower = w.towers
+        .filter((tw) => tw.level > 0 && !tw.destroyed && tw.hp < tw.maxHp)
+        .sort((a, b) => sideScore(a.x) + (a.hp / a.maxHp) * 100 - (sideScore(b.x) + (b.hp / b.maxHp) * 100))[0];
+      if (damagedTower && (!isEveningOrNight || Math.abs(damagedTower.x - CENTER_X) < 350)) {
+        v.state = 'working';
+        const standX = damagedTower.x - damagedTower.side * 12;
+        if (moveToward(v, standX, 48, dt)) {
+          v.facing = damagedTower.side;
+          damagedTower.hp = Math.min(damagedTower.maxHp, damagedTower.hp + dt * 22 * workMult);
+          if (v.actionTimer <= 0) {
+            v.actionTimer = 0.5;
+            sound.playHammer();
+            spawnBurst(w, damagedTower.x, GROUND_Y - 14, 3, '#c7935b', 'wood', 22);
+          }
+        }
+        continue;
+      }
+
+      // Priority 5: Break marked rocks & chop marked trees (daytime, automatic multi-builder proportional speedup!)
       if (!isEveningOrNight) {
-        const markedTree = w.trees
-          .filter((tr) => tr.marked && !tr.chopped)
-          .sort((a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x)))[0];
-        const markedRock = w.rocks
-          .filter((r) => r.marked && !r.mined)
-          .sort((a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x)))[0];
+        // Count how many builders are already targeting each rock/tree so idle builders spread first, then pile on proportionally!
+        const markedRocks = w.rocks.filter((r) => r.marked && !r.mined);
+        const markedTrees = w.trees.filter((tr) => tr.marked && !tr.chopped);
+
+        const markedRock = markedRocks.sort(
+          (a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x))
+        )[0];
+        const markedTree = markedTrees.sort(
+          (a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x))
+        )[0];
 
         const treeDist = markedTree ? sideScore(markedTree.x) + Math.abs(markedTree.x - v.x) : Infinity;
         const rockDist = markedRock ? sideScore(markedRock.x) + Math.abs(markedRock.x - v.x) : Infinity;
 
         if (markedRock && rockDist <= treeDist) {
           v.state = 'working';
-          const standX = markedRock.x + (markedRock.x < CENTER_X ? 12 : -12);
+          v.targetId = markedRock.id;
+          const spreadOffset = ((v.id % 3) - 1) * 4;
+          const standX = markedRock.x + (markedRock.x < CENTER_X ? 12 : -12) + spreadOffset;
           if (moveToward(v, standX, 48, dt)) {
             v.facing = markedRock.x < v.x ? -1 : 1;
-            markedRock.mineProgress += dt * 0.4 * odinMult;
+            const spec = getRockSpec(markedRock.size ?? sizeFromVariant(markedRock.variant));
+            // Exact proportional rate: 1 builder takes spec.time seconds; N builders take spec.time / N seconds!
+            markedRock.mineProgress += (dt / spec.time) * workMult;
             if (v.actionTimer <= 0) {
-              v.actionTimer = 0.45;
+              v.actionTimer = 0.52;
               markedRock.hitShake = 0.16;
               sound.playHammer();
               spawnBurst(w, markedRock.x, GROUND_Y - 8, 4, '#a6b5c4', 'stone', 32);
@@ -2137,11 +3097,14 @@ function updateVillagers(w: WorldState, dt: number): void {
             if (markedRock.mineProgress >= 1) {
               markedRock.mined = true;
               markedRock.marked = false;
-              w.resources.stone += 2;
+              markedRock.mineProgress = 0;
+              w.resources.stone += spec.stone;
               sound.playBuildComplete();
-              spawnBurst(w, markedRock.x, GROUND_Y - 10, 12, '#bcc9d6', 'stone', 48);
-              spawnCoin(w, markedRock.x - 4, GROUND_Y - 10, -20, -68, false, 0.25);
-              spawnCoin(w, markedRock.x + 4, GROUND_Y - 10, 20, -75, false, 0.25);
+              spawnBurst(w, markedRock.x, GROUND_Y - 10, 14, '#bcc9d6', 'stone', 50);
+              for (let c = 0; c < spec.coins; c++) {
+                const vx = ((c - (spec.coins - 1) / 2) * 18) + (Math.random() - 0.5) * 10;
+                spawnCoin(w, markedRock.x, GROUND_Y - 10, vx, -64 - Math.random() * 18, false, 0.25);
+              }
             }
           }
           continue;
@@ -2149,12 +3112,16 @@ function updateVillagers(w: WorldState, dt: number): void {
 
         if (markedTree) {
           v.state = 'working';
-          const standX = markedTree.x + (markedTree.x < CENTER_X ? 11 : -11);
+          v.targetId = markedTree.id;
+          const spreadOffset = ((v.id % 3) - 1) * 4;
+          const standX = markedTree.x + (markedTree.x < CENTER_X ? 11 : -11) + spreadOffset;
           if (moveToward(v, standX, 48, dt)) {
             v.facing = markedTree.x < v.x ? -1 : 1;
-            markedTree.chopProgress += dt * 0.42 * odinMult;
+            const spec = getTreeSpec(markedTree.size ?? sizeFromVariant(markedTree.variant));
+            // Exact proportional rate: 1 builder takes spec.time seconds; N builders take spec.time / N seconds!
+            markedTree.chopProgress += (dt / spec.time) * workMult;
             if (v.actionTimer <= 0) {
-              v.actionTimer = 0.45;
+              v.actionTimer = 0.52;
               markedTree.hitShake = 0.16;
               sound.playHammer();
               spawnBurst(w, markedTree.x, GROUND_Y - 12, 4, '#b8834b', 'wood', 30);
@@ -2162,20 +3129,26 @@ function updateVillagers(w: WorldState, dt: number): void {
             if (markedTree.chopProgress >= 1) {
               markedTree.chopped = true;
               markedTree.marked = false;
-              w.resources.wood += 2;
+              markedTree.chopProgress = 0;
+              w.resources.wood += spec.wood;
               sound.playBuildComplete();
-              spawnBurst(w, markedTree.x, GROUND_Y - 22, 12, '#69946b', 'leaf', 45);
-              spawnCoin(w, markedTree.x - 4, GROUND_Y - 14, -18, -65, false, 0.25);
-              spawnCoin(w, markedTree.x + 4, GROUND_Y - 14, 18, -72, false, 0.25);
+              spawnBurst(w, markedTree.x, GROUND_Y - 22, 14, '#69946b', 'leaf', 48);
+              for (let c = 0; c < spec.coins; c++) {
+                const vx = ((c - (spec.coins - 1) / 2) * 16) + (Math.random() - 0.5) * 10;
+                spawnCoin(w, markedTree.x, GROUND_Y - 14, vx, -62 - Math.random() * 18, false, 0.25);
+              }
             }
           }
           continue;
         }
 
+        v.targetId = null;
+
         // Priority 6 (AFTER finishing tasks): Sweep map for loose coins and deposit at central Hall!
         if (trySweepCoinsToHall(w, v, dt)) continue;
       }
 
+      v.targetId = null;
       v.state = isEveningOrNight ? 'fleeing' : 'idle';
       const anchor = CENTER_X + v.side * 95;
       if (Math.abs(v.x - anchor) > 65) {
@@ -2236,15 +3209,43 @@ function updateVillagers(w: WorldState, dt: number): void {
       continue;
     }
 
-    // --- ARCHER (hunts, shoots ground & aerial Hel Crows!) ---
+    // --- ARCHER (hunts, garrisons Archer Towers for range/dmg boost, shoots ground & aerial Hel Crows!) ---
     if (v.role === 'archer') {
       const defWall = getOuterDefensiveWall(w, v.side);
-      const defensePostX = defWall
-        ? defWall.x - v.side * (12 + (v.id % 3) * 8)
-        : CENTER_X + v.side * (75 + (v.id % 3) * 14);
+
+      // Check/assign Archer Tower on this side during evening/night or when enemies exist
+      let myTower: ArcherTower | null =
+        w.towers.find((tw) => tw.id === v.assignedTowerId && tw.level > 0 && !tw.destroyed && tw.side === v.side) ?? null;
+      if (!myTower && (isEveningOrNight || w.enemies.length > 0)) {
+        const candidateTowers = w.towers
+          .filter(
+            (tw) =>
+              tw.side === v.side &&
+              tw.level > 0 &&
+              !tw.destroyed &&
+              countArchersAssignedToTower(w, tw.id) < getTowerArcherCap(tw.level)
+          )
+          .sort((a, b) => Math.abs(b.x - CENTER_X) - Math.abs(a.x - CENTER_X));
+        myTower = candidateTowers[0] ?? null;
+        v.assignedTowerId = myTower ? myTower.id : null;
+      } else if (!isEveningOrNight && w.enemies.length === 0) {
+        v.assignedTowerId = null;
+        myTower = null;
+      }
+
+      const perchedOnTower = Boolean(myTower && Math.abs(v.x - myTower.x) < 10);
+      const arrowRange = perchedOnTower && myTower ? 200 + myTower.level * 12 : 185;
+      const arrowDmg = perchedOnTower && myTower ? 11 + myTower.level * 2 : 11;
+      const arrowOriginY = perchedOnTower && myTower ? GROUND_Y - getTowerHeight(myTower.level) - 6 : GROUND_Y - 14;
+
+      const defensePostX = myTower
+        ? myTower.x + ((v.id % 3) - 1) * 3
+        : defWall
+          ? defWall.x - v.side * (12 + (v.id % 3) * 8)
+          : CENTER_X + v.side * (75 + (v.id % 3) * 14);
 
       let targetEnemy: Enemy | null = null;
-      let enemyDist = 185;
+      let enemyDist = arrowRange;
       for (const e of w.enemies) {
         const d = Math.abs(e.x - v.x);
         if (d < enemyDist) {
@@ -2255,15 +3256,17 @@ function updateVillagers(w: WorldState, dt: number): void {
 
       if (targetEnemy) {
         v.state = 'defending';
-        if (defWall && ((v.side === -1 && v.x < defWall.x + 8) || (v.side === 1 && v.x > defWall.x - 8))) {
+        if (myTower && !perchedOnTower) {
+          moveToward(v, defensePostX, 58, dt);
+        } else if (!myTower && defWall && ((v.side === -1 && v.x < defWall.x + 8) || (v.side === 1 && v.x > defWall.x - 8))) {
           moveToward(v, defensePostX, 56, dt);
         } else {
           v.vx = 0;
           v.facing = targetEnemy.x >= v.x ? 1 : -1;
           if (v.actionTimer <= 0) {
-            v.actionTimer = 0.86 + Math.random() * 0.22;
+            v.actionTimer = Math.max(0.55, 0.86 - (perchedOnTower && myTower ? myTower.level * 0.025 : 0)) + Math.random() * 0.18;
             const aimY = targetEnemy.kind === 'hel_crow' ? targetEnemy.y - 4 : GROUND_Y - 10;
-            fireArrow(w, v.x, GROUND_Y - 14, targetEnemy.x + targetEnemy.vx * 0.22, aimY, 11);
+            fireArrow(w, v.x, arrowOriginY, targetEnemy.x + targetEnemy.vx * 0.22, aimY, arrowDmg);
           }
         }
         continue;
@@ -2321,7 +3324,7 @@ function updateVillagers(w: WorldState, dt: number): void {
       continue;
     }
 
-    // --- PRODUCER (Farmers: up to 5 per farm, daily coin yield + daytime harvest!) ---
+    // --- PRODUCER (Farmers: capacity scales 2+level up to 12, storage cap scales level*12 up to 120!) ---
     if (v.role === 'producer') {
       if (isEveningOrNight) {
         v.state = 'fleeing';
@@ -2329,14 +3332,13 @@ function updateVillagers(w: WorldState, dt: number): void {
         continue;
       }
 
-      // Assign to a built farm on preferred side with capacity < 5 (or any built farm with capacity < 5)
       let myFarm = w.farms.find((f) => f.id === v.assignedFarmId && f.level >= 1) ?? null;
       if (!myFarm) {
         const preferred = w.farms.find(
-          (f) => f.side === v.side && f.level >= 1 && countFarmersAssignedToFarm(w, f.id) < MAX_FARMERS_PER_FARM
+          (f) => f.side === v.side && f.level >= 1 && countFarmersAssignedToFarm(w, f.id) < getFarmMaxFarmers(f.level)
         );
         const fallback = w.farms.find(
-          (f) => f.level >= 1 && countFarmersAssignedToFarm(w, f.id) < MAX_FARMERS_PER_FARM
+          (f) => f.level >= 1 && countFarmersAssignedToFarm(w, f.id) < getFarmMaxFarmers(f.level)
         );
         myFarm = preferred ?? fallback ?? null;
         v.assignedFarmId = myFarm ? myFarm.id : null;
@@ -2347,11 +3349,19 @@ function updateVillagers(w: WorldState, dt: number): void {
       if (moveToward(v, workX, 44, dt)) {
         if (myFarm && myFarm.level >= 1) {
           const freyaSpeed = w.activeGod === 'freya' ? 1.5 : 1.0;
-          myFarm.cropProgress += dt * (0.04 + myFarm.level * 0.025) * freyaSpeed;
+          const cap = getFarmStorageCap(myFarm.level);
+          myFarm.cropProgress += dt * (0.038 + myFarm.level * 0.018) * freyaSpeed;
           if (myFarm.cropProgress >= 1) {
             myFarm.cropProgress = 0;
-            w.resources.food += myFarm.level;
-            v.carriedCoins = Math.min(6, v.carriedCoins + myFarm.level);
+            const foodGain = Math.max(1, myFarm.level);
+            const coinGain = Math.max(1, Math.ceil(myFarm.level * 0.7));
+            w.resources.food += foodGain;
+            myFarm.storedFood = Math.min(cap, myFarm.storedFood + foodGain);
+            if (v.carriedCoins < 6) {
+              v.carriedCoins = Math.min(6, v.carriedCoins + coinGain);
+            } else {
+              myFarm.storedCoins = Math.min(cap, myFarm.storedCoins + coinGain);
+            }
             sound.playCoinPickup();
             spawnBurst(w, myFarm.x, GROUND_Y - 12, 8, '#f7d265', 'spark', 32);
           }
@@ -2557,7 +3567,45 @@ function updateEnemies(w: WorldState, dt: number): void {
           blockingWall.maxHp = 0;
           w.screenShake = 0.25;
           spawnBurst(w, blockingWall.x, GROUND_Y - 16, 16, '#b57b42', 'wood', 58);
-          showBanner(w, 'MURALHA DESTRUÍDA!', 'Envie Construtores para reformá-la!', '#ff6b6b');
+          showBanner(w, 'MURALHA DESTRUÍDA!', 'Pague moedas e recursos para reformá-la!', '#ff6b6b');
+        }
+      }
+      continue;
+    }
+
+    // Archer Towers also block & absorb damage if outer wall fell!
+    let blockingTower: ArcherTower | null = null;
+    for (const tw of w.towers) {
+      if (tw.level <= 0 || tw.destroyed || tw.hp <= 0) continue;
+      const dist = (tw.x - e.x) * dirToCenter;
+      if (dist > 0 && dist < 16) {
+        blockingTower = tw;
+        break;
+      }
+    }
+
+    if (blockingTower) {
+      e.vx = 0;
+      e.facing = dirToCenter;
+      if (e.attackCooldown <= 0) {
+        e.attackCooldown = e.kind === 'frost_troll' ? 1.4 : e.kind === 'draugr_brute' ? 1.1 : 0.85;
+        const dmg = e.kind === 'frost_troll' ? 30 : e.kind === 'draugr_brute' ? 16 : 7;
+        blockingTower.hp -= dmg;
+        blockingTower.hitFlash = 0.14;
+        sound.playHit();
+        spawnBurst(w, blockingTower.x - dirToCenter * 4, GROUND_Y - 16, 5, '#c48f58', 'wood', 30);
+        if (blockingTower.hp <= 0) {
+          blockingTower.hp = 0;
+          blockingTower.previousLevel = Math.max(1, blockingTower.level);
+          blockingTower.level = 0;
+          blockingTower.destroyed = true;
+          blockingTower.maxHp = 0;
+          for (const v of w.villagers) {
+            if (v.assignedTowerId === blockingTower.id) v.assignedTowerId = null;
+          }
+          w.screenShake = 0.25;
+          spawnBurst(w, blockingTower.x, GROUND_Y - 18, 16, '#b57b42', 'wood', 58);
+          showBanner(w, 'TORRE DE ARQUEIROS DESTRUÍDA!', 'Pague moedas e recursos para reformá-la!', '#ff6b6b');
         }
       }
       continue;
@@ -2589,11 +3637,17 @@ function updateEnemies(w: WorldState, dt: number): void {
 
     for (const v of w.villagers) {
       if (v.role === 'wanderer' || v.role === 'warrior' || v.state === 'embarked') continue;
+      // Archers perched atop a standing tower are safe from ground melee!
+      if (v.role === 'archer' && v.assignedTowerId) {
+        const tw = w.towers.find((item) => item.id === v.assignedTowerId && item.level > 0 && !item.destroyed);
+        if (tw && Math.abs(v.x - tw.x) < 12) continue;
+      }
       if (Math.abs(v.x - e.x) < 12 && e.attackCooldown <= 0) {
         e.attackCooldown = 1.0;
         if (v.role === 'archer' || v.role === 'builder' || v.role === 'producer') {
           v.role = 'peasant';
           v.assignedFarmId = null;
+          v.assignedTowerId = null;
           e.stolenLoot = 'coin';
           e.retreating = true;
           sound.playHit();
@@ -2827,6 +3881,7 @@ function updateParticlesAndAmbience(w: WorldState, dt: number): void {
   for (const tr of w.trees) tr.hitShake = Math.max(0, tr.hitShake - dt);
   for (const r of w.rocks) r.hitShake = Math.max(0, r.hitShake - dt);
   for (const wall of w.walls) wall.hitFlash = Math.max(0, wall.hitFlash - dt);
+  for (const tw of w.towers) tw.hitFlash = Math.max(0, tw.hitFlash - dt);
 }
 
 function updateFireTrailsAndLightning(w: WorldState, dt: number): void {
@@ -3082,6 +4137,7 @@ export function stepWorld(w: WorldState, input: InputState, dt: number): void {
   if (monarch) updateMonarch(w, monarch, input, dt);
 
   updateFlyingCoins(w, dt);
+  updateForgeAndRegrowth(w, dt);
   updateFireTrailsAndLightning(w, dt);
   updateDayNightAndWaves(w, dt);
   updateTutorial(w, dt);

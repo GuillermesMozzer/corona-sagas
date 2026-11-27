@@ -4,12 +4,23 @@ export const GROUND_Y = 210;
 export const WATER_Y = 216;
 export const WORLD_WIDTH = 2800;
 export const CENTER_X = 1400;
-export const MAX_FARMERS_PER_FARM = 5;
+export const MAX_KINGDOM_LEVEL = 10;
+export const TOTAL_ISLANDS = 9;
+export const MAX_FARMERS_PER_FARM = 5; // Base reference; actual cap scales with farm level (2 + level)
 export const BOAT_BUILD_COST = 30;
 export const BOAT_SAIL_COST = 10;
 export const DOCK_BUILD_COST = 30;
 export const BELL_COST = 1;
 export const MAX_CREW_PER_CLASS = 4;
+
+export type ResourceSize = 'small' | 'medium' | 'large';
+
+export interface ResourceCost {
+  coins: number;
+  wood: number;
+  stone: number;
+  iron: number;
+}
 
 export type GameMode =
   | 'login'
@@ -122,6 +133,7 @@ export interface Villager {
   targetId: number | null;
   homeCampId: number | null;
   assignedFarmId: number | null;
+  assignedTowerId?: number | null;
   side: -1 | 1;
   actionTimer: number;
   animTime: number;
@@ -136,6 +148,23 @@ export interface Wall {
   side: -1 | 1;
   tier: 'inner' | 'outer';
   level: number;
+  destroyed: boolean;
+  previousLevel: number;
+  hp: number;
+  maxHp: number;
+  underConstruction: boolean;
+  buildProgress: number;
+  targetLevel: number;
+  coinsPaid: number;
+  hitFlash: number;
+}
+
+export interface ArcherTower {
+  id: number;
+  x: number;
+  side: -1 | 1;
+  tier: 'inner' | 'outer';
+  level: number; // 0 = unbuilt plot, 1..10 matches Kingdom level
   destroyed: boolean;
   previousLevel: number;
   hp: number;
@@ -163,19 +192,47 @@ export interface FarmPlot {
   id: number;
   x: number;
   side: -1 | 1;
-  level: number; // 0 = unbuilt, 1 = small, 2 = medium, 3 = grand Nordic farm
+  level: number; // 0 = unbuilt, 1..10 matches Kingdom level (unlocked at Hall Lv >= 2)
   underConstruction: boolean;
   buildProgress: number;
   coinsPaid: number;
   cropProgress: number;
+  storedFood: number;
+  storedCoins: number;
 }
 
 export interface Hall {
   x: number;
-  level: number; // 0 = unlit campfire, 1 = lit campfire, 2 = wooden hall, 3 = jarl mead hall
+  level: number; // 0 = unlit campfire, 1..10 = Kingdom levels (max 2 on Island 1, +1 per next island)
   coinsPaid: number;
   taxTimer: number;
   storedTaxCoins: number; // Treasury coins deposited by workers & daily tribute!
+}
+
+export interface BankerState {
+  x: number;
+  balance: number;
+  interestFraction: number;
+  lastDayYield: number;
+}
+
+export interface ForgeState {
+  x: number;
+  built: boolean;
+  coinsPaid: number;
+  underConstruction: boolean;
+  buildProgress: number;
+  smelting: boolean;
+  smeltProgress: number;
+  smeltCoinsPaid: number;
+  smeltQueue: number;
+}
+
+export interface IslandBuffAltar {
+  kind: 'construction' | 'forge';
+  x: number;
+  active: boolean;
+  coinsPaid: number;
 }
 
 export interface BoatState {
@@ -195,7 +252,7 @@ export interface BoatState {
 
 export interface DockState {
   x: number;
-  required: boolean; // False on Island 1 (starts with boat), true on Islands 2..7!
+  required: boolean; // False on Island 1 (starts with boat), true on Islands 2..9!
   built: boolean;
   coinsPaid: number; // 0..30 to construct port on new islands
   underConstruction: boolean;
@@ -213,6 +270,8 @@ export interface IslandProgress {
   diamondsCollected: number;
   godUnlocked: boolean;
   mountUnlocked: boolean;
+  constructionBuff: boolean;
+  forgeBuff: boolean;
   snapshot?: IslandSnapshot;
 }
 
@@ -256,9 +315,12 @@ export interface LightningBolt {
 
 export interface IslandSnapshot {
   hall: Hall;
+  forge: ForgeState | null;
   shops: ToolShop[];
   walls: Wall[];
+  towers: ArcherTower[];
   farms: FarmPlot[];
+  islandBuffs: IslandBuffAltar[];
   boat: BoatState;
   dock: DockState;
   godShrine: GodShrine | null;
@@ -270,6 +332,10 @@ export interface IslandSnapshot {
   chests: Chest[];
   portals: Portal[];
   villagers: Villager[];
+  rockRegrowQueue: number;
+  rockRegrowTimer: number;
+  treeRegrowQueue: number;
+  treeRegrowTimer: number;
 }
 
 export interface VagrantCamp {
@@ -283,6 +349,7 @@ export interface Tree {
   id: number;
   x: number;
   variant: 0 | 1 | 2;
+  size: ResourceSize;
   height: number;
   marked: boolean;
   chopped: boolean;
@@ -295,6 +362,7 @@ export interface Rock {
   id: number;
   x: number;
   variant: 0 | 1 | 2;
+  size: ResourceSize;
   marked: boolean;
   mined: boolean;
   mineProgress: number;
@@ -358,9 +426,15 @@ export interface Coin {
 
 export type PromptTargetType =
   | 'hall'
+  | 'banker'
+  | 'forge_build'
+  | 'forge_smelt'
   | 'shop'
   | 'wall'
+  | 'tower'
   | 'farm'
+  | 'buff_construction'
+  | 'buff_forge'
   | 'tree'
   | 'rock'
   | 'wanderer'
@@ -431,6 +505,13 @@ export interface FloatingPrompt {
   paid: number;
   pending: number;
   currency?: 'coin' | 'diamond';
+  woodCost?: number;
+  stoneCost?: number;
+  ironCost?: number;
+  blockedReason?: string;
+  canWithdraw?: boolean;
+  bankBalance?: number;
+  bankRatePct?: number;
   targetType: PromptTargetType;
   targetId: number;
 }
@@ -512,6 +593,7 @@ export interface WorldState {
   islands: IslandProgress[];
   unlockedGods: GodId[];
   activeGod: GodId | null;
+  thorActivated: boolean;
   unlockedMounts: MountId[];
   day: number;
   dayHalfMinutes: number;
@@ -526,9 +608,13 @@ export interface WorldState {
   resources: Resources;
   monarchs: Monarch[];
   hall: Hall;
+  banker: BankerState;
+  forge: ForgeState | null;
   shops: ToolShop[];
   walls: Wall[];
+  towers: ArcherTower[];
   farms: FarmPlot[];
+  islandBuffs: IslandBuffAltar[];
   boat: BoatState;
   dock: DockState;
   godShrine: GodShrine | null;
@@ -537,6 +623,10 @@ export interface WorldState {
   camps: VagrantCamp[];
   trees: Tree[];
   rocks: Rock[];
+  rockRegrowQueue: number;
+  rockRegrowTimer: number;
+  treeRegrowQueue: number;
+  treeRegrowTimer: number;
   chests: Chest[];
   portals: Portal[];
   villagers: Villager[];
