@@ -50,11 +50,15 @@ import {
   adminUnbanCommunityPlayer,
   coopState,
   fetchCommunityBans,
+  getMicInputVolume,
+  getVoiceOutVolume,
   guestSyncCoopFrame,
   hostCloseCoopRoom,
   hostKickCoopPlayer,
   hostOpenCoopRoom,
   hostSyncCoopWorld,
+  isMicInputEnabled,
+  isVoiceOutEnabled,
   joinCoopRoomAsGuest,
   leaveCoopAsGuest,
   reportAndBanCoopPlayer,
@@ -62,8 +66,12 @@ import {
   sendCoopChatMessage,
   setCoopChatOpen,
   setGuestForceExitHandler,
+  setMicInputVolume,
+  setVoiceOutVolume,
   subscribeCoop,
   toggleCoopMicrophone,
+  toggleMicInput,
+  toggleVoiceOut,
   validateCoopJoinCode,
   type CommunityBanRecord,
   type CoopMember,
@@ -197,6 +205,18 @@ const btnSfxVolDown = document.getElementById('btn-sfx-vol-down') as HTMLButtonE
 const btnSfxVolUp = document.getElementById('btn-sfx-vol-up') as HTMLButtonElement | null;
 const sfxVolBars = document.getElementById('sfx-vol-bars') as HTMLDivElement | null;
 const valSfxVol = document.getElementById('val-sfx-vol');
+const btnVoiceOut = document.getElementById('menu-voice-out') as HTMLButtonElement | null;
+const btnVoiceOutDown = document.getElementById('btn-voice-out-down') as HTMLButtonElement | null;
+const btnVoiceOutUp = document.getElementById('btn-voice-out-up') as HTMLButtonElement | null;
+const voiceOutBars = document.getElementById('voice-out-bars') as HTMLDivElement | null;
+const valVoiceOut = document.getElementById('val-voice-out');
+const lblVoiceOut = document.getElementById('lbl-voice-out');
+const btnMicVol = document.getElementById('menu-mic-vol') as HTMLButtonElement | null;
+const btnMicVolDown = document.getElementById('btn-mic-vol-down') as HTMLButtonElement | null;
+const btnMicVolUp = document.getElementById('btn-mic-vol-up') as HTMLButtonElement | null;
+const micVolBars = document.getElementById('mic-vol-bars') as HTMLDivElement | null;
+const valMicVol = document.getElementById('val-mic-vol');
+const lblMicVol = document.getElementById('lbl-mic-vol');
 const btnZoomOut = document.getElementById('btn-zoom-out') as HTMLButtonElement | null;
 const btnZoomIn = document.getElementById('btn-zoom-in') as HTMLButtonElement | null;
 const valZoom = document.getElementById('val-zoom');
@@ -928,6 +948,36 @@ function updateMenuUI(): void {
     updateMenuUI();
   });
 
+  // Players Voice Output Toggle + 0..5 Pixel Volume Bars
+  const voiceOutOn = isVoiceOutEnabled();
+  const voiceOutVol = getVoiceOutVolume();
+  if (lblVoiceOut) lblVoiceOut.textContent = t('menu_voice_out');
+  if (btnVoiceOut) {
+    btnVoiceOut.textContent = voiceOutOn ? t('menu_on') : t('menu_off');
+    btnVoiceOut.classList.toggle('on', voiceOutOn);
+  }
+  if (valVoiceOut) valVoiceOut.textContent = `${voiceOutOn ? voiceOutVol : 0}/5`;
+  renderPixelVolumeBars(voiceOutBars, voiceOutVol, voiceOutOn, (lvl) => {
+    setVoiceOutVolume(lvl);
+    sound.playCoinDrop();
+    updateMenuUI();
+  });
+
+  // Local Microphone Input Toggle + 0..5 Pixel Volume Bars
+  const micInOn = isMicInputEnabled();
+  const micInVol = getMicInputVolume();
+  if (lblMicVol) lblMicVol.textContent = t('menu_mic_vol');
+  if (btnMicVol) {
+    btnMicVol.textContent = micInOn ? t('menu_on') : t('menu_off');
+    btnMicVol.classList.toggle('on', micInOn);
+  }
+  if (valMicVol) valMicVol.textContent = `${micInOn ? micInVol : 0}/5`;
+  renderPixelVolumeBars(micVolBars, micInVol, micInOn, (lvl) => {
+    setMicInputVolume(lvl);
+    sound.playCoinDrop();
+    updateMenuUI();
+  });
+
   // Zoom level indicator
   if (valZoom) valZoom.textContent = `${Math.round(targetZoom * 100)}%`;
 
@@ -1647,6 +1697,42 @@ btnSfxVolDown?.addEventListener('click', () => {
 
 btnSfxVolUp?.addEventListener('click', () => {
   sound.setSfxVolume(sound.getSfxVolume() + 1);
+  updateMenuUI();
+});
+
+btnVoiceOut?.addEventListener('click', () => {
+  toggleVoiceOut();
+  sound.playCoinDrop();
+  updateMenuUI();
+});
+
+btnVoiceOutDown?.addEventListener('click', () => {
+  setVoiceOutVolume(getVoiceOutVolume() - 1);
+  sound.playCoinDrop();
+  updateMenuUI();
+});
+
+btnVoiceOutUp?.addEventListener('click', () => {
+  setVoiceOutVolume(getVoiceOutVolume() + 1);
+  sound.playCoinDrop();
+  updateMenuUI();
+});
+
+btnMicVol?.addEventListener('click', () => {
+  toggleMicInput();
+  sound.playCoinDrop();
+  updateMenuUI();
+});
+
+btnMicVolDown?.addEventListener('click', () => {
+  setMicInputVolume(getMicInputVolume() - 1);
+  sound.playCoinDrop();
+  updateMenuUI();
+});
+
+btnMicVolUp?.addEventListener('click', () => {
+  setMicInputVolume(getMicInputVolume() + 1);
+  sound.playCoinDrop();
   updateMenuUI();
 });
 

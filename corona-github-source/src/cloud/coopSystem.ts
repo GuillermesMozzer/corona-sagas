@@ -133,7 +133,11 @@ let latestGuestWorldSnapshot: WorldState | null = null;
 let onGuestForceExit: ((reason: string) => void) | null = null;
 
 // WebRTC + Automatic Firestore Opus Relay Voice Chat state
+let rawMicStream: MediaStream | null = null;
 let localAudioStream: MediaStream | null = null;
+let micProcessCtx: AudioContext | null = null;
+let micInputGainNode: GainNode | null = null;
+let micProcessedDest: MediaStreamAudioDestinationNode | null = null;
 let micAudioCtx: AudioContext | null = null;
 let micMeterTimer: number | null = null;
 let lastVoiceDetectedMs = 0;
@@ -141,12 +145,43 @@ let roomConnectedAtMs = 0;
 let relayLoopTimer: number | null = null;
 let activeRelayRecorder: MediaRecorder | null = null;
 let remotePlaybackCtx: AudioContext | null = null;
+let remotePlaybackGain: GainNode | null = null;
 let remoteChunkPlayCursor = 0;
 const peerConnections = new Map<string, RTCPeerConnection>();
 const peerSignalChains = new Map<string, Promise<void>>();
 const pendingIceCandidates = new Map<string, RTCIceCandidateInit[]>();
 const remoteAudioEls = new Map<string, HTMLAudioElement>();
 const processedSignalIds = new Set<string>();
+
+// Persisted Voice Chat Volumes (0..5 + ON/OFF toggle, matching Music & SFX controls)
+const VOICE_OUT_ON_KEY = 'corona_voice_out_on_v1';
+const VOICE_OUT_VOL_KEY = 'corona_voice_out_vol_v1';
+const MIC_IN_ON_KEY = 'corona_mic_in_on_v1';
+const MIC_IN_VOL_KEY = 'corona_mic_in_vol_v1';
+
+let voiceOutEnabled = true;
+let voiceOutVolume = 5;
+let micInputEnabled = true;
+let micInputVolume = 4;
+
+try {
+  const voOn = window.localStorage.getItem(VOICE_OUT_ON_KEY);
+  if (voOn !== null) voiceOutEnabled = voOn === '1';
+  const voVol = window.localStorage.getItem(VOICE_OUT_VOL_KEY);
+  if (voVol !== null) {
+    const n = Number(voVol);
+    if (Number.isFinite(n) && n >= 0 && n <= 5) voiceOutVolume = Math.round(n);
+  }
+  const miOn = window.localStorage.getItem(MIC_IN_ON_KEY);
+  if (miOn !== null) micInputEnabled = miOn === '1';
+  const miVol = window.localStorage.getItem(MIC_IN_VOL_KEY);
+  if (miVol !== null) {
+    const n = Number(miVol);
+    if (Number.isFinite(n) && n >= 0 && n <= 5) micInputVolume = Math.round(n);
+  }
+} catch {
+  // Ignore localStorage restrictions
+}
 
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
@@ -1239,6 +1274,145 @@ function isPeerWebRtcConnected(peerUid: string): boolean {
   return Boolean(el && el.srcObject);
 }
 
+function getEffectiveVoiceOutGain(): number {
+  if (!voiceOutEnabled || voiceOutVolume <= 0) return 0;
+  return Math.max(0, Math.min(1, voiceOutVolume / 5));
+}
+
+function getEffectiveMicInputGain(): number {
+  if (!micInputEnabled || micInputVolume <= 0) return 0;
+  const table = [0, 0.35, 0.65, 1.0, 1.35, 1.75];
+  return table[Math.max(0, Math.min(5, Math.round(micInputVolume)))] ?? 1.0;
+}
+
+function applyVoiceOutVolumeToAll(): void {
+  const gain = getEffectiveVoiceOutGain();
+  for (const el of remoteAudioEls.values()) {
+    try {
+      el.volume = gain;
+      el.muted = gain <= 0;
+    } catch {
+      // Ignore
+    }
+  }
+  if (remotePlaybackGain && remotePlaybackCtx) {
+    try {
+      remotePlaybackGain.gain.setTargetAtTime(gain, remotePlaybackCtx.currentTime, 0.015);
+    } catch {
+      remotePlaybackGain.gain.value = gain;
+    }
+  }
+}
+
+function applyMicInputVolumeToPipeline(): void {
+  const gain = getEffectiveMicInputGain();
+  if (micInputGainNode && micProcessCtx) {
+    try {
+      micInputGainNode.gain.setTargetAtTime(gain, micProcessCtx.currentTime, 0.015);
+    } catch {
+      micInputGainNode.gain.value = gain;
+    }
+  } else if (rawMicStream) {
+    for (const track of rawMicStream.getAudioTracks()) {
+      track.enabled = gain > 0;
+    }
+  }
+}
+
+export function isVoiceOutEnabled(): boolean {
+  return voiceOutEnabled;
+}
+
+export function getVoiceOutVolume(): number {
+  return voiceOutVolume;
+}
+
+export function setVoiceOutVolume(level: number): number {
+  const safe = Math.max(0, Math.min(5, Math.round(level)));
+  voiceOutVolume = safe;
+  if (safe > 0 && !voiceOutEnabled) {
+    voiceOutEnabled = true;
+    try {
+      window.localStorage.setItem(VOICE_OUT_ON_KEY, '1');
+    } catch {
+      // Ignore
+    }
+  }
+  try {
+    window.localStorage.setItem(VOICE_OUT_VOL_KEY, String(safe));
+  } catch {
+    // Ignore
+  }
+  applyVoiceOutVolumeToAll();
+  return voiceOutVolume;
+}
+
+export function toggleVoiceOut(): boolean {
+  voiceOutEnabled = !voiceOutEnabled;
+  if (voiceOutEnabled && voiceOutVolume === 0) {
+    voiceOutVolume = 3;
+    try {
+      window.localStorage.setItem(VOICE_OUT_VOL_KEY, '3');
+    } catch {
+      // Ignore
+    }
+  }
+  try {
+    window.localStorage.setItem(VOICE_OUT_ON_KEY, voiceOutEnabled ? '1' : '0');
+  } catch {
+    // Ignore
+  }
+  applyVoiceOutVolumeToAll();
+  return voiceOutEnabled;
+}
+
+export function isMicInputEnabled(): boolean {
+  return micInputEnabled;
+}
+
+export function getMicInputVolume(): number {
+  return micInputVolume;
+}
+
+export function setMicInputVolume(level: number): number {
+  const safe = Math.max(0, Math.min(5, Math.round(level)));
+  micInputVolume = safe;
+  if (safe > 0 && !micInputEnabled) {
+    micInputEnabled = true;
+    try {
+      window.localStorage.setItem(MIC_IN_ON_KEY, '1');
+    } catch {
+      // Ignore
+    }
+  }
+  try {
+    window.localStorage.setItem(MIC_IN_VOL_KEY, String(safe));
+  } catch {
+    // Ignore
+  }
+  applyMicInputVolumeToPipeline();
+  return micInputVolume;
+}
+
+export function toggleMicInput(): boolean {
+  micInputEnabled = !micInputEnabled;
+  if (micInputEnabled && micInputVolume === 0) {
+    micInputVolume = 3;
+    try {
+      window.localStorage.setItem(MIC_IN_VOL_KEY, '3');
+    } catch {
+      // Ignore
+    }
+  }
+  try {
+    window.localStorage.setItem(MIC_IN_ON_KEY, micInputEnabled ? '1' : '0');
+  } catch {
+    // Ignore
+  }
+  applyMicInputVolumeToPipeline();
+  return micInputEnabled;
+}
+
 function getOrUnlockRemotePlaybackCtx(): AudioContext | null {
   try {
     const AudioCtxCtor =
@@ -1246,6 +1420,9 @@ function getOrUnlockRemotePlaybackCtx(): AudioContext | null {
     if (!AudioCtxCtor) return null;
     if (!remotePlaybackCtx) {
       remotePlaybackCtx = new AudioCtxCtor();
+      remotePlaybackGain = remotePlaybackCtx.createGain();
+      remotePlaybackGain.gain.value = getEffectiveVoiceOutGain();
+      remotePlaybackGain.connect(remotePlaybackCtx.destination);
     }
     if (remotePlaybackCtx.state === 'suspended') {
       void remotePlaybackCtx.resume().catch(() => {});
@@ -1476,6 +1653,8 @@ function startVoiceRelayLoopIfNeeded(): void {
 }
 
 async function playIncomingRelayChunk(_fromUid: string, mime: string, b64: string): Promise<void> {
+  const outGain = getEffectiveVoiceOutGain();
+  if (outGain <= 0) return;
   try {
     const bytes = base64ToUint8Array(b64);
     const ctx = getOrUnlockRemotePlaybackCtx();
@@ -1485,7 +1664,12 @@ async function playIncomingRelayChunk(_fromUid: string, mime: string, b64: strin
         const audioBuf = await ctx.decodeAudioData(arrBuf);
         const src = ctx.createBufferSource();
         src.buffer = audioBuf;
-        src.connect(ctx.destination);
+        if (remotePlaybackGain) {
+          remotePlaybackGain.gain.value = getEffectiveVoiceOutGain();
+          src.connect(remotePlaybackGain);
+        } else {
+          src.connect(ctx.destination);
+        }
         const startAt = Math.max(ctx.currentTime + 0.01, remoteChunkPlayCursor);
         src.start(startAt);
         remoteChunkPlayCursor = startAt + audioBuf.duration;
@@ -1500,7 +1684,7 @@ async function playIncomingRelayChunk(_fromUid: string, mime: string, b64: strin
     });
     const url = URL.createObjectURL(blob);
     const el = new Audio(url);
-    el.volume = 1;
+    el.volume = getEffectiveVoiceOutGain();
     el.onended = () => URL.revokeObjectURL(url);
     el.onerror = () => URL.revokeObjectURL(url);
     await el.play().catch(() => {
@@ -1514,11 +1698,23 @@ async function playIncomingRelayChunk(_fromUid: string, mime: string, b64: strin
 function stopLocalMicrophoneInternal(): void {
   stopMicLevelMonitor();
   stopVoiceRelayLoop();
+  if (rawMicStream) {
+    for (const track of rawMicStream.getTracks()) {
+      track.stop();
+    }
+    rawMicStream = null;
+  }
   if (localAudioStream) {
     for (const track of localAudioStream.getTracks()) {
       track.stop();
     }
     localAudioStream = null;
+  }
+  micInputGainNode = null;
+  micProcessedDest = null;
+  if (micProcessCtx) {
+    void micProcessCtx.close().catch(() => {});
+    micProcessCtx = null;
   }
   // Mute audio senders cleanly so re-enabling mic later works with replaceTrack
   for (const pc of peerConnections.values()) {
@@ -1535,6 +1731,10 @@ function stopLocalMicrophoneInternal(): void {
  */
 export function resumeRemoteCoopAudio(): void {
   getOrUnlockRemotePlaybackCtx();
+  applyVoiceOutVolumeToAll();
+  if (micProcessCtx && micProcessCtx.state === 'suspended') {
+    void micProcessCtx.resume().catch(() => {});
+  }
   for (const el of remoteAudioEls.values()) {
     if (el.paused && el.srcObject) {
       void el.play().catch(() => {});
@@ -1615,15 +1815,19 @@ function getOrCreatePeerConnection(code: string, myUid: string, peerUid: string)
   pc.ontrack = (ev) => {
     const stream = ev.streams[0] ?? new MediaStream([ev.track]);
     let audioEl = remoteAudioEls.get(peerUid);
+    const outGain = getEffectiveVoiceOutGain();
     if (!audioEl) {
       audioEl = document.createElement('audio');
       audioEl.autoplay = true;
-      audioEl.volume = 1;
-      audioEl.muted = false;
+      audioEl.volume = outGain;
+      audioEl.muted = outGain <= 0;
       audioEl.setAttribute('playsinline', 'true');
       audioEl.style.display = 'none';
       document.body.appendChild(audioEl);
       remoteAudioEls.set(peerUid, audioEl);
+    } else {
+      audioEl.volume = outGain;
+      audioEl.muted = outGain <= 0;
     }
     audioEl.srcObject = stream;
     void audioEl.play().catch(() => {});
@@ -1749,10 +1953,36 @@ export async function toggleCoopMicrophone(): Promise<{
   }
 
   try {
-    localAudioStream = await navigator.mediaDevices.getUserMedia({
+    rawMicStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       video: false,
     });
+
+    // Route hardware mic through a live GainNode so the Menu "Meu Microfone" volume (0..5) adjusts gain in real time!
+    try {
+      const AudioCtxCtor =
+        window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtxCtor) {
+        micProcessCtx = new AudioCtxCtor();
+        if (micProcessCtx.state === 'suspended') {
+          void micProcessCtx.resume().catch(() => {});
+        }
+        const micSrc = micProcessCtx.createMediaStreamSource(rawMicStream);
+        micInputGainNode = micProcessCtx.createGain();
+        micInputGainNode.gain.value = getEffectiveMicInputGain();
+        micProcessedDest = micProcessCtx.createMediaStreamDestination();
+        micSrc.connect(micInputGainNode);
+        micInputGainNode.connect(micProcessedDest);
+        localAudioStream = micProcessedDest.stream;
+      } else {
+        localAudioStream = rawMicStream;
+        applyMicInputVolumeToPipeline();
+      }
+    } catch {
+      localAudioStream = rawMicStream;
+      applyMicInputVolumeToPipeline();
+    }
+
     coopState.micOn = true;
     lastVoiceDetectedMs = Date.now();
     startMicLevelMonitor(localAudioStream);
@@ -1775,6 +2005,7 @@ export async function toggleCoopMicrophone(): Promise<{
     notify();
     return { ok: true, micOn: true, inRoom };
   } catch (err) {
+    stopLocalMicrophoneInternal();
     coopState.micOn = false;
     coopState.speaking = false;
     const errName = (err as { name?: string })?.name ?? '';
