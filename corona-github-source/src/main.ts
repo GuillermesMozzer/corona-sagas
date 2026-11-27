@@ -33,6 +33,19 @@ import {
   tickFeedbackTimer,
 } from './storage/feedbackSystem';
 import {
+  authCloudState,
+  enableLocalGuestFallback,
+  fetchAllPlayersMetrics,
+  flushCloudTelemetry,
+  initGoogleAuthCloud,
+  isPlayerAuthorizedToPlay,
+  signInWithGoogleAccount,
+  signOutGoogleAccount,
+  subscribeAuthCloud,
+  tickCloudTelemetry,
+  type PlayerMetricRow,
+} from './cloud/googleAuthCloud';
+import {
   confirmCharacterSelection,
   confirmCrestAndStartCampaign,
   issueUnitCommand,
@@ -66,9 +79,30 @@ const btnLang = document.getElementById('menu-lang') as HTMLButtonElement | null
 const btnMusic = document.getElementById('menu-music') as HTMLButtonElement | null;
 const btnSfx = document.getElementById('menu-sfx') as HTMLButtonElement | null;
 const btnFullscreen = document.getElementById('menu-fullscreen') as HTMLButtonElement | null;
+const btnAdmin = document.getElementById('menu-admin') as HTMLButtonElement | null;
 const btnExport = document.getElementById('menu-export') as HTMLButtonElement | null;
 const btnImport = document.getElementById('menu-import') as HTMLButtonElement | null;
+const btnSignout = document.getElementById('menu-signout') as HTMLButtonElement | null;
 const importFileInput = document.getElementById('import-file-input') as HTMLInputElement | null;
+
+// Google First-Login Gate & User Badge DOM elements
+const googleLoginGate = document.getElementById('google-login-gate') as HTMLDivElement | null;
+const btnGoogleSignin = document.getElementById('btn-google-signin') as HTMLButtonElement | null;
+const lblGoogleCta = document.getElementById('lbl-google-cta');
+const googleGateSub = document.getElementById('google-gate-sub');
+const googleGateStatus = document.getElementById('google-gate-status');
+const btnGuestFallback = document.getElementById('btn-guest-fallback') as HTMLButtonElement | null;
+const googleUserBadge = document.getElementById('google-user-badge') as HTMLDivElement | null;
+const googleUserAvatar = document.getElementById('google-user-avatar') as HTMLImageElement | null;
+const googleUserName = document.getElementById('google-user-name');
+const googleUserSync = document.getElementById('google-user-sync');
+
+// Admin Players Dashboard DOM elements
+const adminModal = document.getElementById('admin-modal') as HTMLDivElement | null;
+const adminRefresh = document.getElementById('admin-refresh') as HTMLButtonElement | null;
+const adminClose = document.getElementById('admin-close') as HTMLButtonElement | null;
+const adminKpis = document.getElementById('admin-kpis');
+const adminTbody = document.getElementById('admin-tbody');
 
 const lblResume = document.getElementById('lbl-resume');
 const lblSave = document.getElementById('lbl-save');
@@ -86,13 +120,17 @@ const lblSfx = document.getElementById('lbl-sfx');
 const valSfx = document.getElementById('val-sfx');
 const lblFullscreen = document.getElementById('lbl-fullscreen');
 const valFullscreen = document.getElementById('val-fullscreen');
+const lblAdmin = document.getElementById('lbl-admin');
 const lblExport = document.getElementById('lbl-export');
 const lblImport = document.getElementById('lbl-import');
+const lblSignout = document.getElementById('lbl-signout');
+const valSignout = document.getElementById('val-signout');
 const lblEscHint = document.getElementById('lbl-esc-hint');
 
 const renderer = new PixelRenderer();
 let world: WorldState = createInitialWorld('login');
 let menuOpen = false;
+let adminOpen = false;
 let pausedByMenu = false;
 
 const input: InputState = {
@@ -187,6 +225,150 @@ async function toggleFullscreen(): Promise<void> {
   setTimeout(fitCanvas, 60);
 }
 
+function formatPlayDuration(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+  return `${m}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function renderAdminTable(rows: PlayerMetricRow[]): void {
+  if (!adminKpis || !adminTbody) return;
+  const totalPlayers = rows.length;
+  const totalLogins = rows.reduce((acc, r) => acc + r.loginCount, 0);
+  const totalSeconds = rows.reduce((acc, r) => acc + r.totalPlaySeconds, 0);
+  const activeNow = rows.filter(
+    (r) => r.status === 'playing' && Date.now() - r.lastActiveMs < 3 * 60 * 1000
+  ).length;
+
+  adminKpis.innerHTML = `
+    <div class="admin-kpi"><div class="admin-kpi-val">${totalPlayers}</div><div class="admin-kpi-lbl">Jogadores Google</div></div>
+    <div class="admin-kpi"><div class="admin-kpi-val">${activeNow}</div><div class="admin-kpi-lbl">Jogando Agora</div></div>
+    <div class="admin-kpi"><div class="admin-kpi-val">${totalLogins}</div><div class="admin-kpi-lbl">Total de Acessos</div></div>
+    <div class="admin-kpi"><div class="admin-kpi-val">${formatPlayDuration(totalSeconds)}</div><div class="admin-kpi-lbl">Horas Totais</div></div>
+  `;
+
+  if (rows.length === 0) {
+    adminTbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#8aa4bc;">Nenhum jogador registrado ainda.</td></tr>';
+    return;
+  }
+
+  adminTbody.innerHTML = rows
+    .map((r) => {
+      const isRecent = Date.now() - r.lastActiveMs < 3 * 60 * 1000;
+      const effectiveStatus = isRecent ? r.status : 'offline';
+      const statusLabel =
+        effectiveStatus === 'playing'
+          ? 'Jogando'
+          : effectiveStatus === 'menu'
+            ? 'Menu'
+            : effectiveStatus === 'paused'
+              ? 'Pausado'
+              : 'Offline';
+      const lastStr = r.lastActiveMs ? new Date(r.lastActiveMs).toLocaleString('pt-BR') : '—';
+      return `
+        <tr>
+          <td>
+            <div style="font-weight:700;color:#fff4d1;">${escapeHtml(r.displayName)}</div>
+            <div style="font-size:10px;color:#8aa4bc;">${escapeHtml(r.email)}</div>
+          </td>
+          <td><span class="status-pill status-${effectiveStatus}">${statusLabel}</span></td>
+          <td>${r.loginCount}x</td>
+          <td>${formatPlayDuration(r.totalPlaySeconds)}</td>
+          <td>Ilha ${r.currentIsland} · Dia ${r.currentDay} · Nv.${r.kingdomLevel}</td>
+          <td>${r.savedCampaignsCount}/8 ${r.feedbackAnswered ? '· ★' : ''}</td>
+          <td>${escapeHtml(lastStr)}</td>
+        </tr>
+      `;
+    })
+    .join('');
+}
+
+async function openAdminDashboard(): Promise<void> {
+  if (!authCloudState.user?.isAdmin) return;
+  setMenuOpen(false);
+  adminOpen = true;
+  adminModal?.classList.add('open');
+  if (adminTbody) {
+    adminTbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#ffe58a;">Carregando jogadores...</td></tr>';
+  }
+  try {
+    const rows = await fetchAllPlayersMetrics();
+    renderAdminTable(rows);
+  } catch {
+    if (adminTbody) {
+      adminTbody.innerHTML =
+        '<tr><td colspan="7" style="text-align:center;color:#ff9e9e;">Sem permissão no Firestore. Confira as regras de segurança para seu e-mail admin.</td></tr>';
+    }
+  }
+}
+
+function closeAdminDashboard(): void {
+  adminOpen = false;
+  adminModal?.classList.remove('open');
+}
+
+function updateGoogleAuthUI(): void {
+  const onLogin = world.mode === 'login';
+  const authorized = isPlayerAuthorizedToPlay();
+  const showGate = onLogin && !authorized && !feedbackUi.open;
+
+  googleLoginGate?.classList.toggle('visible', showGate);
+  if (lblGoogleCta) lblGoogleCta.textContent = t('google_cta');
+  if (googleGateSub) googleGateSub.textContent = t('google_gate_sub');
+  if (btnGoogleSignin) {
+    btnGoogleSignin.disabled = authCloudState.loading || authCloudState.syncing;
+  }
+
+  const statusMsg = authCloudState.syncing
+    ? t('google_syncing')
+    : authCloudState.errorMessage;
+  if (googleGateStatus) {
+    googleGateStatus.textContent = statusMsg ?? '';
+    googleGateStatus.classList.toggle('visible', Boolean(statusMsg));
+  }
+
+  if (btnGuestFallback) {
+    btnGuestFallback.textContent = t('google_offline_fallback');
+    btnGuestFallback.classList.toggle('visible', !authCloudState.configured && showGate);
+  }
+
+  const user = authCloudState.user;
+  const showBadge = onLogin && user !== null;
+  googleUserBadge?.classList.toggle('visible', showBadge);
+  if (user) {
+    if (googleUserName) googleUserName.textContent = user.displayName;
+    if (googleUserSync) {
+      googleUserSync.textContent = authCloudState.syncing
+        ? t('google_syncing')
+        : `☁ ${t('google_cloud_synced')}`;
+    }
+    if (googleUserAvatar) {
+      if (user.photoURL) {
+        googleUserAvatar.src = user.photoURL;
+        googleUserAvatar.style.display = 'block';
+      } else {
+        googleUserAvatar.style.display = 'none';
+      }
+    }
+  }
+
+  if (lblAdmin) lblAdmin.textContent = t('google_admin_panel');
+  if (btnAdmin) btnAdmin.style.display = user?.isAdmin ? 'flex' : 'none';
+  if (lblSignout) lblSignout.textContent = t('google_signout');
+  if (valSignout) valSignout.textContent = user ? user.email.split('@')[0] : 'Local';
+  if (btnSignout) btnSignout.style.display = user || authCloudState.guestBypass ? 'flex' : 'none';
+}
+
 function updateMenuUI(): void {
   const fs = isFullscreenActive();
   const musicOn = sound.isMusicEnabled();
@@ -199,8 +381,8 @@ function updateMenuUI(): void {
   if (lblHome) lblHome.textContent = t('menu_main');
   if (lblMap) lblMap.textContent = t('menu_map');
   if (valMap) {
-    const romans = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
-    valMap.textContent = `${romans[(world.currentIsland - 1) % 7] ?? 'I'}/VII`;
+    const romans = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX'];
+    valMap.textContent = `${romans[(world.currentIsland - 1) % 9] ?? 'I'}/IX`;
   }
   if (lblDayLen) lblDayLen.textContent = t('menu_daylen');
   if (valDayLen) valDayLen.textContent = `${world.dayHalfMinutes} min`;
@@ -229,6 +411,7 @@ function updateMenuUI(): void {
   if (btnResume) btnResume.style.display = inCampaign ? 'flex' : 'none';
   if (btnSave) btnSave.style.display = inCampaign ? 'flex' : 'none';
   if (btnMap) btnMap.style.display = inCampaign ? 'flex' : 'none';
+  updateGoogleAuthUI();
 }
 
 function setMenuOpen(open: boolean): void {
@@ -243,10 +426,12 @@ function setMenuOpen(open: boolean): void {
       saveCampaign(world);
       world.mode = 'paused';
       pausedByMenu = true;
+      void flushCloudTelemetry(world, 'paused');
     }
   } else {
     if (pausedByMenu && world.mode === 'paused') {
       world.mode = 'playing';
+      void flushCloudTelemetry(world, 'playing');
     }
     pausedByMenu = false;
     canvas.focus();
@@ -317,12 +502,14 @@ function loadSavedCampaignFlow(slotIndex?: number): void {
     world.crest.secondaryColor
   );
   updateMenuUI();
+  void flushCloudTelemetry(world, 'playing');
   canvas.focus();
 }
 
 function goToLogin(): void {
   if (world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map') {
     saveCampaign(world);
+    void flushCloudTelemetry(world, 'menu');
   }
   if (feedbackUi.open) {
     feedbackUi.open = false;
@@ -345,8 +532,10 @@ function togglePause(): void {
     saveCampaign(world);
     world.mode = 'paused';
     clearMovementInputs();
+    void flushCloudTelemetry(world, 'paused');
   } else if (world.mode === 'paused') {
     world.mode = 'playing';
+    void flushCloudTelemetry(world, 'playing');
   }
   updateMenuUI();
 }
@@ -818,19 +1007,61 @@ importFileInput?.addEventListener('change', () => {
   reader.readAsText(file);
 });
 
+// Google First-Login Gate, Sign-out, and Admin Dashboard handlers
+btnGoogleSignin?.addEventListener('click', () => {
+  sound.unlock();
+  sound.playCoinPickup();
+  void signInWithGoogleAccount();
+});
+
+btnGuestFallback?.addEventListener('click', () => {
+  sound.unlock();
+  sound.playCoinPickup();
+  enableLocalGuestFallback();
+});
+
+btnAdmin?.addEventListener('click', () => {
+  void openAdminDashboard();
+});
+
+adminRefresh?.addEventListener('click', () => {
+  void openAdminDashboard();
+});
+
+adminClose?.addEventListener('click', () => {
+  closeAdminDashboard();
+});
+
+adminModal?.addEventListener('click', (e) => {
+  if (e.target === adminModal) closeAdminDashboard();
+});
+
+btnSignout?.addEventListener('click', () => {
+  setMenuOpen(false);
+  const prevWorld = world;
+  goToLogin();
+  void signOutGoogleAccount(prevWorld);
+});
+
 // Auto-save whenever the user closes the tab, refreshes, or minimizes on mobile!
 function autoSaveActiveCampaign(): void {
   if (world.crest.locked && (world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map')) {
     saveCampaign(world);
   }
+  void flushCloudTelemetry(world, 'offline');
 }
 window.addEventListener('pagehide', autoSaveActiveCampaign);
 window.addEventListener('beforeunload', autoSaveActiveCampaign);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
     autoSaveActiveCampaign();
-  } else if (document.visibilityState === 'visible' && canAutoGrantOnReturn()) {
-    completeFeedbackClaim();
+  } else if (document.visibilityState === 'visible') {
+    if (canAutoGrantOnReturn()) {
+      completeFeedbackClaim();
+    }
+    if (world.mode === 'playing') {
+      void flushCloudTelemetry(world, 'playing');
+    }
   }
 });
 window.addEventListener('focus', () => {
@@ -869,6 +1100,10 @@ window.addEventListener('keydown', (e) => {
     if (isFullscreenActive()) {
       return;
     }
+    if (adminOpen) {
+      closeAdminDashboard();
+      return;
+    }
     if (feedbackUi.open) {
       closeFeedbackPopup();
       sound.playCoinDrop();
@@ -900,9 +1135,10 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
-  if (menuOpen || feedbackUi.open) return;
+  if (menuOpen || feedbackUi.open || adminOpen) return;
 
   if (world.mode === 'login') {
+    if (!isPlayerAuthorizedToPlay()) return;
     if (code === 'Space' || code === 'Enter') startNewCampaignFlow();
     return;
   }
@@ -1006,6 +1242,11 @@ window.addEventListener('blur', clearMovementInputs);
 window.addEventListener('resize', fitCanvas);
 window.addEventListener('orientationchange', () => setTimeout(fitCanvas, 120));
 
+subscribeAuthCloud(() => {
+  updateMenuUI();
+});
+initGoogleAuthCloud();
+
 fitCanvas();
 updateMenuUI();
 
@@ -1027,12 +1268,13 @@ function frame(now: number): void {
     (ptrSprint && ptrMoveSide !== 0);
 
   while (accumulator >= FIXED_DT) {
-    if (feedbackUi.open && world.mode === 'playing') {
+    if ((feedbackUi.open || adminOpen) && world.mode === 'playing') {
       world.elapsed += FIXED_DT;
     } else {
       stepWorld(world, input, FIXED_DT);
       if (world.mode === 'playing') {
         deliverPendingFeedbackIfPlaying();
+        tickCloudTelemetry(FIXED_DT, world);
         if (tickFeedbackTimer(FIXED_DT, !menuOpen && !world.tutorial?.active)) {
           clearMovementInputs();
           sound.playCoinPickup();

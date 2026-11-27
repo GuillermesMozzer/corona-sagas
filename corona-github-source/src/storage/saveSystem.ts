@@ -47,8 +47,38 @@ interface LegacyPayload {
   state: WorldState;
 }
 
-function slotKey(slot: number): string {
+export interface StoredSlotRaw {
+  slot: number;
+  savedAt: number;
+  payloadJson: string;
+  island: number;
+  day: number;
+  kingdomLevel: number;
+  villagers: number;
+  gold: number;
+  diamonds: number;
+}
+
+export interface CloudSaveHooks {
+  onSaveSlot?: (raw: StoredSlotRaw) => void;
+  onDeleteSlot?: (slot: number) => void;
+}
+
+let activeAccountUid: string | null = null;
+let cloudHooks: CloudSaveHooks = {};
+
+export function setCloudSaveHooks(hooks: CloudSaveHooks): void {
+  cloudHooks = hooks;
+}
+
+export function setSaveAccountNamespace(uid: string | null): void {
+  activeAccountUid = uid ? uid.replace(/[^a-zA-Z0-9_-]/g, '_') : null;
+}
+
+function slotKey(slot: number, uidOverride?: string | null): string {
   const clamped = Math.max(0, Math.min(MAX_SAVE_SLOTS - 1, Math.floor(slot)));
+  const ns = uidOverride !== undefined ? uidOverride : activeAccountUid;
+  if (ns) return `corona_u_${ns}_slot_v2_${clamped}`;
   return `${SLOT_KEY_PREFIX}${clamped}`;
 }
 
@@ -195,6 +225,21 @@ function migrateLegacySaveIfNeeded(): void {
   }
 }
 
+function buildRawSlotSummary(slot: number, payload: StoredPayload, payloadJson: string): StoredSlotRaw {
+  const s = payload.state;
+  return {
+    slot,
+    savedAt: payload.savedAt ?? Date.now(),
+    payloadJson,
+    island: s.currentIsland ?? 1,
+    day: s.day ?? 1,
+    kingdomLevel: s.hall?.level ?? 1,
+    villagers: (s.villagers ?? []).filter((v) => v.role !== 'wanderer').length,
+    gold: s.monarchs?.[0]?.coins ?? s.resources?.gold ?? 0,
+    diamonds: s.monarchs?.[0]?.diamonds ?? s.resources?.diamonds ?? 0,
+  };
+}
+
 export function saveCampaign(w: WorldState, slotOverride?: number): void {
   if (!w.crest.locked) return;
   const slot = Math.max(0, Math.min(MAX_SAVE_SLOTS - 1, Math.floor(slotOverride ?? w.saveSlot ?? 0)));
@@ -217,7 +262,9 @@ export function saveCampaign(w: WorldState, slotOverride?: number): void {
       savedAt: Date.now(),
       state: cleanState,
     };
-    window.localStorage.setItem(slotKey(slot), JSON.stringify(payload));
+    const serialized = JSON.stringify(payload);
+    window.localStorage.setItem(slotKey(slot), serialized);
+    cloudHooks.onSaveSlot?.(buildRawSlotSummary(slot, payload, serialized));
   } catch {
     // Ignore storage quota or sandbox restrictions gracefully
   }
@@ -241,11 +288,74 @@ export function loadCampaign(slotIndex?: number): WorldState | null {
 }
 
 export function deleteCampaignSlot(slotIndex: number): void {
+  const clamped = Math.max(0, Math.min(MAX_SAVE_SLOTS - 1, Math.floor(slotIndex)));
   try {
-    window.localStorage.removeItem(slotKey(slotIndex));
+    window.localStorage.removeItem(slotKey(clamped));
   } catch {
     // Ignore
   }
+  cloudHooks.onDeleteSlot?.(clamped);
+}
+
+/**
+ * Lists raw serialized campaign payloads for the currently active account namespace.
+ */
+export function listRawSlotPayloads(): StoredSlotRaw[] {
+  migrateLegacySaveIfNeeded();
+  const out: StoredSlotRaw[] = [];
+  for (let i = 0; i < MAX_SAVE_SLOTS; i++) {
+    try {
+      const raw = window.localStorage.getItem(slotKey(i));
+      if (!raw) continue;
+      const payload = JSON.parse(raw) as StoredPayload;
+      if (!payload || !payload.state || !payload.state.boat || !payload.state.islands) continue;
+      out.push(buildRawSlotSummary(i, payload, raw));
+    } catch {
+      // Ignore corrupt slot
+    }
+  }
+  return out;
+}
+
+/**
+ * Writes a campaign payload downloaded from Google Cloud (Firestore) into the active account namespace.
+ */
+export function applyCloudSlotPayload(slot: number, payloadJson: string): boolean {
+  const clamped = Math.max(0, Math.min(MAX_SAVE_SLOTS - 1, Math.floor(slot)));
+  try {
+    const payload = JSON.parse(payloadJson) as StoredPayload;
+    if (!payload || !payload.state || !payload.state.boat || !payload.state.islands) return false;
+    payload.slot = clamped;
+    payload.state.saveSlot = clamped;
+    window.localStorage.setItem(slotKey(clamped), JSON.stringify(payload));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * On a player's very first Google sign-in on this device, migrates any pre-existing local guest
+ * campaigns into the Google account namespace if the account has no campaigns yet.
+ */
+export function migrateGuestSlotsIfEmpty(): StoredSlotRaw[] {
+  if (!activeAccountUid) return [];
+  migrateLegacySaveIfNeeded();
+  const migrated: StoredSlotRaw[] = [];
+  for (let i = 0; i < MAX_SAVE_SLOTS; i++) {
+    try {
+      if (window.localStorage.getItem(slotKey(i))) continue;
+      const guestRaw = window.localStorage.getItem(slotKey(i, null));
+      if (!guestRaw) continue;
+      const payload = JSON.parse(guestRaw) as StoredPayload;
+      if (!payload || !payload.state || !payload.state.boat || !payload.state.islands) continue;
+      window.localStorage.setItem(slotKey(i), guestRaw);
+      migrated.push(buildRawSlotSummary(i, payload, guestRaw));
+    } catch {
+      // Ignore
+    }
+  }
+  return migrated;
 }
 
 export function listCampaignSlots(): Array<SavedCampaignSummary | null> {

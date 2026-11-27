@@ -172,11 +172,306 @@
       border-top: 1px solid rgba(255, 255, 255, 0.08);
       line-height: 1.4;
     }
+
+    /* First-Login White Oblong Google Sign-In Gate */
+    #google-login-gate {
+      position: fixed;
+      left: 50%;
+      top: 56%;
+      transform: translate(-50%, -50%);
+      z-index: 20;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 11px;
+      width: min(320px, calc(100vw - 28px));
+      text-align: center;
+      pointer-events: auto;
+    }
+    #google-login-gate.visible {
+      display: flex;
+    }
+    #btn-google-signin {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      min-width: 224px;
+      height: 48px;
+      padding: 0 28px 0 20px;
+      background: #ffffff;
+      color: #1f1f1f;
+      border: 1px solid rgba(255, 255, 255, 0.92);
+      border-radius: 9999px;
+      font-family: 'Roboto', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      box-shadow:
+        0 10px 30px rgba(0, 0, 0, 0.55),
+        0 2px 8px rgba(0, 0, 0, 0.3),
+        0 0 0 2px rgba(239, 196, 98, 0.28);
+      transition: transform 0.14s ease, box-shadow 0.16s ease, background 0.14s ease;
+    }
+    #btn-google-signin:hover {
+      background: #f8fafd;
+      transform: translateY(-1px);
+      box-shadow:
+        0 14px 36px rgba(0, 0, 0, 0.62),
+        0 0 0 2px rgba(239, 196, 98, 0.55);
+    }
+    #btn-google-signin:active {
+      transform: translateY(1px) scale(0.985);
+      background: #eef3fa;
+    }
+    #btn-google-signin:disabled {
+      opacity: 0.72;
+      cursor: wait;
+      transform: none;
+    }
+    #btn-google-signin svg {
+      width: 22px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+    #google-gate-sub {
+      font-size: 11px;
+      color: #d6e7f7;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
+      line-height: 1.4;
+      max-width: 280px;
+    }
+    #google-gate-status {
+      font-size: 11px;
+      color: #ffd882;
+      background: rgba(9, 17, 29, 0.86);
+      border: 1px solid rgba(239, 196, 98, 0.45);
+      border-radius: 8px;
+      padding: 6px 10px;
+      display: none;
+      line-height: 1.35;
+    }
+    #google-gate-status.visible {
+      display: block;
+    }
+    #btn-guest-fallback {
+      display: none;
+      background: rgba(14, 24, 38, 0.82);
+      border: 1px solid rgba(158, 196, 224, 0.35);
+      border-radius: 9999px;
+      color: #b7d2e8;
+      font-family: inherit;
+      font-size: 11px;
+      padding: 6px 14px;
+      cursor: pointer;
+    }
+    #btn-guest-fallback.visible {
+      display: inline-block;
+    }
+    #btn-guest-fallback:hover {
+      border-color: rgba(239, 196, 98, 0.6);
+      color: #ffe58a;
+    }
+
+    /* Compact Signed-In Google User Pill (top-left on login screen) */
+    #google-user-badge {
+      position: fixed;
+      top: max(8px, env(safe-area-inset-top));
+      left: max(8px, env(safe-area-inset-left));
+      z-index: 22;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      max-width: calc(100vw - 76px);
+      height: 36px;
+      padding: 0 12px 0 6px;
+      background: rgba(10, 17, 28, 0.88);
+      border: 1px solid rgba(239, 196, 98, 0.5);
+      border-radius: 9999px;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    }
+    #google-user-badge.visible {
+      display: flex;
+    }
+    #google-user-avatar {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 1px solid rgba(255, 255, 255, 0.45);
+      background: #ffffff;
+      flex-shrink: 0;
+    }
+    #google-user-meta {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      line-height: 1.15;
+    }
+    #google-user-name {
+      font-size: 11px;
+      font-weight: 700;
+      color: #f3f7fc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #google-user-sync {
+      font-size: 9px;
+      color: #7ee8c4;
+      white-space: nowrap;
+    }
+
+    /* Admin Players Dashboard Modal */
+    #admin-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      background: rgba(4, 8, 16, 0.82);
+      backdrop-filter: blur(6px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+    }
+    #admin-modal.open {
+      display: flex;
+    }
+    #admin-card {
+      width: min(860px, 100%);
+      max-height: 88dvh;
+      background: #0b1422;
+      border: 1px solid rgba(239, 196, 98, 0.6);
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.78);
+    }
+    #admin-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(18, 30, 48, 0.9);
+    }
+    #admin-header h2 {
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      color: #ffe58a;
+      text-transform: uppercase;
+    }
+    .admin-btn-group {
+      display: flex;
+      gap: 6px;
+    }
+    .admin-btn {
+      padding: 5px 10px;
+      border-radius: 5px;
+      border: 1px solid rgba(239, 196, 98, 0.5);
+      background: rgba(24, 38, 58, 0.95);
+      color: #e6f0fa;
+      font-family: inherit;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .admin-btn.close {
+      background: #4a1c26;
+      border-color: #e07a85;
+      color: #ffe3e6;
+    }
+    #admin-kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+      gap: 8px;
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .admin-kpi {
+      background: rgba(16, 28, 44, 0.85);
+      border: 1px solid rgba(158, 196, 224, 0.22);
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+    .admin-kpi-val {
+      font-size: 18px;
+      font-weight: 700;
+      color: #ffe58a;
+    }
+    .admin-kpi-lbl {
+      font-size: 10px;
+      color: #9bb7d0;
+      margin-top: 2px;
+    }
+    #admin-table-wrap {
+      overflow: auto;
+      padding: 10px 14px 14px;
+      flex: 1;
+    }
+    #admin-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+    #admin-table th {
+      text-align: left;
+      padding: 7px 8px;
+      color: #efc462;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+      white-space: nowrap;
+    }
+    #admin-table td {
+      padding: 7px 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      color: #dce9f5;
+      white-space: nowrap;
+    }
+    .status-pill {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .status-playing { background: rgba(52, 168, 83, 0.24); color: #7ef29d; }
+    .status-menu { background: rgba(66, 133, 244, 0.24); color: #8ec1ff; }
+    .status-paused { background: rgba(251, 188, 5, 0.24); color: #ffe07d; }
+    .status-offline { background: rgba(140, 160, 180, 0.18); color: #9db0c2; }
   </style>
 </head>
 <body>
   <div id="game-shell">
     <canvas id="game-canvas" width="480" height="270" tabindex="0"></canvas>
+
+    <!-- First-Login White Oblong Google Sign-In Gate -->
+    <div id="google-login-gate" aria-live="polite">
+      <button id="btn-google-signin" type="button">
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+        </svg>
+        <span id="lbl-google-cta">Conecte-se</span>
+      </button>
+      <div id="google-gate-sub">Salve e recupere suas campanhas na sua conta Google</div>
+      <div id="google-gate-status"></div>
+      <button id="btn-guest-fallback" type="button">Continuar localmente (Firebase pendente)</button>
+    </div>
+
+    <!-- Compact Signed-In Google User Pill -->
+    <div id="google-user-badge">
+      <img id="google-user-avatar" alt="Google" referrerpolicy="no-referrer" />
+      <div id="google-user-meta">
+        <span id="google-user-name">Monarca</span>
+        <span id="google-user-sync">☁ Nuvem Google</span>
+      </div>
+    </div>
 
     <button id="btn-menu" aria-label="Menu" title="Menu">☰</button>
     <div id="menu-backdrop"></div>
@@ -194,7 +489,7 @@
       </button>
       <button id="menu-map" class="menu-item" style="display:none;">
         <span id="lbl-map">Mapa das Ilhas</span>
-        <span id="val-map" class="menu-badge on">I/VII</span>
+        <span id="val-map" class="menu-badge on">I/IX</span>
       </button>
       <button id="menu-daylen" class="menu-item">
         <span id="lbl-daylen">Dia / Noite</span>
@@ -216,6 +511,10 @@
         <span id="lbl-fullscreen">Tela Cheia</span>
         <span id="val-fullscreen" class="menu-badge">OFF</span>
       </button>
+      <button id="menu-admin" class="menu-item primary" style="display:none;">
+        <span id="lbl-admin">Painel de Jogadores</span>
+        <span class="menu-badge on">ADMIN</span>
+      </button>
       <button id="menu-export" class="menu-item">
         <span id="lbl-export">Exportar Backup</span>
         <span class="menu-badge">.JSON</span>
@@ -224,8 +523,42 @@
         <span id="lbl-import">Importar Backup</span>
         <span class="menu-badge">.JSON</span>
       </button>
+      <button id="menu-signout" class="menu-item" style="display:none;">
+        <span id="lbl-signout">Sair da Conta Google</span>
+        <span id="val-signout" class="menu-badge">Google</span>
+      </button>
       <input id="import-file-input" type="file" accept=".json,application/json" style="display:none;" />
       <div id="lbl-esc-hint" class="menu-hint">ESC ou toque aqui para sair da Tela Cheia</div>
+    </div>
+
+    <!-- Admin Players Metrics Dashboard Modal -->
+    <div id="admin-modal" role="dialog" aria-modal="true" aria-label="Painel de Jogadores">
+      <div id="admin-card">
+        <div id="admin-header">
+          <h2>Painel de Jogadores — Corona Sagas</h2>
+          <div class="admin-btn-group">
+            <button id="admin-refresh" class="admin-btn" type="button">Atualizar</button>
+            <button id="admin-close" class="admin-btn close" type="button">✕ Fechar</button>
+          </div>
+        </div>
+        <div id="admin-kpis"></div>
+        <div id="admin-table-wrap">
+          <table id="admin-table">
+            <thead>
+              <tr>
+                <th>Jogador</th>
+                <th>Status</th>
+                <th>Acessos</th>
+                <th>Tempo</th>
+                <th>Progresso</th>
+                <th>Campanhas</th>
+                <th>Último Acesso</th>
+              </tr>
+            </thead>
+            <tbody id="admin-tbody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
   <script type="module" src="/src/main.ts"></script>

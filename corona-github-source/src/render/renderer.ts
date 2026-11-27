@@ -9,6 +9,7 @@ import {
   SHIELD_SHAPES,
   drawShieldEmblem,
 } from '../customization/presets';
+import { isPlayerAuthorizedToPlay } from '../cloud/googleAuthCloud';
 import { getLanguage, t } from '../i18n/translations';
 import { feedbackUi, isFeedbackAnswered } from '../storage/feedbackSystem';
 import {
@@ -338,78 +339,80 @@ export class PixelRenderer {
     ctx.font = '8px monospace';
     ctx.fillText(t('subtitle'), cx, titleY + 14);
 
-    const btnW = Math.min(200, this.viewW - 28);
-    const btnH = 24;
-    const bx = Math.round(cx - btnW / 2);
-    const by1 = titleY + 26;
+    if (isPlayerAuthorizedToPlay()) {
+      const btnW = Math.min(200, this.viewW - 28);
+      const btnH = 24;
+      const bx = Math.round(cx - btnW / 2);
+      const by1 = titleY + 26;
 
-    ctx.fillStyle = 'rgba(20, 32, 48, 0.92)';
-    ctx.fillRect(bx, by1, btnW, btnH);
-    ctx.strokeStyle = '#efc462';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(bx + 0.5, by1 + 0.5, btnW - 1, btnH - 1);
-    ctx.fillStyle = '#ffe58a';
-    ctx.font = 'bold 9px monospace';
-    ctx.fillText(t('new_campaign'), cx, by1 + 15);
-    this.addHit('login_new', bx, by1, btnW, btnH);
+      ctx.fillStyle = 'rgba(20, 32, 48, 0.92)';
+      ctx.fillRect(bx, by1, btnW, btnH);
+      ctx.strokeStyle = '#efc462';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx + 0.5, by1 + 0.5, btnW - 1, btnH - 1);
+      ctx.fillStyle = '#ffe58a';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(t('new_campaign'), cx, by1 + 15);
+      this.addHit('login_new', bx, by1, btnW, btnH);
 
-    const by2 = by1 + 30;
-    const savedCount = countSavedCampaigns();
-    ctx.fillStyle = saved ? 'rgba(16, 28, 42, 0.92)' : 'rgba(14, 20, 30, 0.85)';
-    ctx.fillRect(bx, by2, btnW, 32);
-    ctx.strokeStyle = saved ? 'rgba(140, 210, 255, 0.78)' : 'rgba(140, 175, 210, 0.42)';
-    ctx.strokeRect(bx + 0.5, by2 + 0.5, btnW - 1, 31);
+      const by2 = by1 + 30;
+      const savedCount = countSavedCampaigns();
+      ctx.fillStyle = saved ? 'rgba(16, 28, 42, 0.92)' : 'rgba(14, 20, 30, 0.85)';
+      ctx.fillRect(bx, by2, btnW, 32);
+      ctx.strokeStyle = saved ? 'rgba(140, 210, 255, 0.78)' : 'rgba(140, 175, 210, 0.42)';
+      ctx.strokeRect(bx + 0.5, by2 + 0.5, btnW - 1, 31);
 
-    if (saved) {
-      drawShieldEmblem(ctx, saved.crest, bx + 20, by2 + 16, 9);
-      ctx.textAlign = 'left';
-      ctx.fillStyle = '#d9eeff';
-      ctx.font = 'bold 8px monospace';
-      ctx.fillText(`${t('slots_btn')} (${savedCount}/${MAX_SAVE_SLOTS})`, bx + 36, by2 + 13);
-      ctx.fillStyle = '#95b2cc';
-      ctx.font = '7px monospace';
-      ctx.fillText(
-        `Slot ${saved.slot + 1} · ${t('day_short')} ${saved.day} · ${saved.gold}g`,
-        bx + 36,
-        by2 + 24
-      );
-    } else {
+      if (saved) {
+        drawShieldEmblem(ctx, saved.crest, bx + 20, by2 + 16, 9);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#d9eeff';
+        ctx.font = 'bold 8px monospace';
+        ctx.fillText(`${t('slots_btn')} (${savedCount}/${MAX_SAVE_SLOTS})`, bx + 36, by2 + 13);
+        ctx.fillStyle = '#95b2cc';
+        ctx.font = '7px monospace';
+        ctx.fillText(
+          `Slot ${saved.slot + 1} · ${t('day_short')} ${saved.day} · ${saved.gold}g`,
+          bx + 36,
+          by2 + 24
+        );
+      } else {
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#c4d8eb';
+        ctx.font = 'bold 8px monospace';
+        ctx.fillText(`${t('slots_btn')} (0/${MAX_SAVE_SLOTS})`, cx, by2 + 14);
+        ctx.fillStyle = '#7e93a8';
+        ctx.font = '7px monospace';
+        ctx.fillText(t('no_save'), cx, by2 + 25);
+      }
+      this.addHit('login_slots', bx, by2, btnW, 32);
+
+      // Pixel-Art Google Forms Rating Button (+3 Diamonds)
+      const by3 = by2 + 38;
+      const fbBtnH = 22;
+      const alreadyAnswered = isFeedbackAnswered();
+      ctx.fillStyle = alreadyAnswered ? 'rgba(16, 26, 38, 0.88)' : 'rgba(15, 36, 48, 0.94)';
+      ctx.fillRect(bx, by3, btnW, fbBtnH);
+      ctx.strokeStyle = alreadyAnswered ? 'rgba(130, 175, 205, 0.55)' : '#5ce1e6';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx + 0.5, by3 + 0.5, btnW - 1, fbBtnH - 1);
+
+      // Pixel-art star on left and diamond on right
+      this.drawPixelStar(ctx, bx + 12, by3 + 11, 1, true);
+      if (!alreadyAnswered) {
+        this.drawPixelDiamondIcon(ctx, bx + btnW - 13, by3 + 11, 1, w.elapsed);
+      }
       ctx.textAlign = 'center';
-      ctx.fillStyle = '#c4d8eb';
-      ctx.font = 'bold 8px monospace';
-      ctx.fillText(`${t('slots_btn')} (0/${MAX_SAVE_SLOTS})`, cx, by2 + 14);
-      ctx.fillStyle = '#7e93a8';
+      ctx.fillStyle = alreadyAnswered ? '#b7d4e8' : '#b8f7ff';
+      ctx.font = 'bold 7.5px monospace';
+      ctx.fillText(alreadyAnswered ? t('rate_game_done_btn') : t('rate_game_btn'), cx, by3 + 14);
+      this.addHit('login_feedback', bx, by3, btnW, fbBtnH);
+
+      ctx.textAlign = 'center';
+      const pulse = 0.6 + 0.4 * Math.sin(w.elapsed * 3);
+      ctx.fillStyle = `rgba(205, 224, 242, ${pulse.toFixed(2)})`;
       ctx.font = '7px monospace';
-      ctx.fillText(t('no_save'), cx, by2 + 25);
+      ctx.fillText(t('login_hint'), cx, by3 + 33);
     }
-    this.addHit('login_slots', bx, by2, btnW, 32);
-
-    // Pixel-Art Google Forms Rating Button (+3 Diamonds)
-    const by3 = by2 + 38;
-    const fbBtnH = 22;
-    const alreadyAnswered = isFeedbackAnswered();
-    ctx.fillStyle = alreadyAnswered ? 'rgba(16, 26, 38, 0.88)' : 'rgba(15, 36, 48, 0.94)';
-    ctx.fillRect(bx, by3, btnW, fbBtnH);
-    ctx.strokeStyle = alreadyAnswered ? 'rgba(130, 175, 205, 0.55)' : '#5ce1e6';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(bx + 0.5, by3 + 0.5, btnW - 1, fbBtnH - 1);
-
-    // Pixel-art star on left and diamond on right
-    this.drawPixelStar(ctx, bx + 12, by3 + 11, 1, true);
-    if (!alreadyAnswered) {
-      this.drawPixelDiamondIcon(ctx, bx + btnW - 13, by3 + 11, 1, w.elapsed);
-    }
-    ctx.textAlign = 'center';
-    ctx.fillStyle = alreadyAnswered ? '#b7d4e8' : '#b8f7ff';
-    ctx.font = 'bold 7.5px monospace';
-    ctx.fillText(alreadyAnswered ? t('rate_game_done_btn') : t('rate_game_btn'), cx, by3 + 14);
-    this.addHit('login_feedback', bx, by3, btnW, fbBtnH);
-
-    ctx.textAlign = 'center';
-    const pulse = 0.6 + 0.4 * Math.sin(w.elapsed * 3);
-    ctx.fillStyle = `rgba(205, 224, 242, ${pulse.toFixed(2)})`;
-    ctx.font = '7px monospace';
-    ctx.fillText(t('login_hint'), cx, by3 + 33);
 
     // Google Technology Disclaimer Badge with Pixel-Art Google "G" Logo
     const gText = t('google_tech_disclaimer');
