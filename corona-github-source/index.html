@@ -443,11 +443,37 @@
     .status-menu { background: rgba(66, 133, 244, 0.24); color: #8ec1ff; }
     .status-paused { background: rgba(251, 188, 5, 0.24); color: #ffe07d; }
     .status-offline { background: rgba(140, 160, 180, 0.18); color: #9db0c2; }
+
+    /* Character Name Text Input overlaid cleanly during char_select */
+    #char-name-input {
+      position: fixed;
+      z-index: 24;
+      display: none;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #fff6d6;
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      padding: 0 4px;
+      user-select: text;
+      -webkit-user-select: text;
+      touch-action: manipulation;
+    }
+    #char-name-input::placeholder {
+      color: rgba(162, 188, 212, 0.55);
+      font-weight: 400;
+    }
+    #char-name-input.visible {
+      display: block;
+    }
   </style>
 </head>
 <body>
   <div id="game-shell">
     <canvas id="game-canvas" width="480" height="270" tabindex="0"></canvas>
+    <input id="char-name-input" type="text" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Digite o nome..." aria-label="Nome do personagem" />
 
     <!-- First-Login White Oblong Google Sign-In Gate -->
     <div id="google-login-gate" aria-live="polite">

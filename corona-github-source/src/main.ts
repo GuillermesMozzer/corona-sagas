@@ -49,6 +49,7 @@ import {
   confirmCharacterSelection,
   confirmCrestAndStartCampaign,
   issueUnitCommand,
+  orderSpecificVillager,
   sailToIsland,
   showBanner,
   skipTutorial,
@@ -168,6 +169,7 @@ const btnExport = document.getElementById('menu-export') as HTMLButtonElement | 
 const btnImport = document.getElementById('menu-import') as HTMLButtonElement | null;
 const btnSignout = document.getElementById('menu-signout') as HTMLButtonElement | null;
 const importFileInput = document.getElementById('import-file-input') as HTMLInputElement | null;
+const charNameInput = document.getElementById('char-name-input') as HTMLInputElement | null;
 
 // Google First-Login Gate & User Badge DOM elements
 const googleLoginGate = document.getElementById('google-login-gate') as HTMLDivElement | null;
@@ -635,10 +637,17 @@ function cycle(val: number, len: number, delta: number): number {
 }
 
 function adjustCharOption(row: number, delta: number): void {
-  if (row === 0) world.appearance.outfitIndex = cycle(world.appearance.outfitIndex, OUTFIT_PRESETS.length, delta);
-  else if (row === 1) world.appearance.hairIndex = cycle(world.appearance.hairIndex, HAIR_PRESETS.length, delta);
-  else if (row === 2) world.appearance.horseIndex = cycle(world.appearance.horseIndex, HORSE_PRESETS.length, delta);
-  else if (row === 3) world.appearance.crownIndex = cycle(world.appearance.crownIndex, CROWN_PRESETS.length, delta);
+  if (row === 0) {
+    world.appearance.gender = world.appearance.gender === 'king' ? 'queen' : 'king';
+  } else if (row === 1) {
+    world.appearance.outfitIndex = cycle(world.appearance.outfitIndex, OUTFIT_PRESETS.length, delta);
+  } else if (row === 2) {
+    world.appearance.hairIndex = cycle(world.appearance.hairIndex, HAIR_PRESETS.length, delta);
+  } else if (row === 3) {
+    world.appearance.horseIndex = cycle(world.appearance.horseIndex, HORSE_PRESETS.length, delta);
+  } else if (row === 4) {
+    world.appearance.crownIndex = cycle(world.appearance.crownIndex, CROWN_PRESETS.length, delta);
+  }
   sound.playCoinDrop();
 }
 
@@ -804,6 +813,29 @@ function handleCanvasHit(hitId: string): boolean {
       triggerMountPower(world);
       return true;
     }
+    if (hitId === 'villager_dir_left' && world.selectedVillagerId) {
+      orderSpecificVillager(world, world.selectedVillagerId, -1);
+      return true;
+    }
+    if (hitId === 'villager_dir_right' && world.selectedVillagerId) {
+      orderSpecificVillager(world, world.selectedVillagerId, 1);
+      return true;
+    }
+    if (hitId === 'villager_dir_close') {
+      world.selectedVillagerId = null;
+      sound.playCoinDrop();
+      return true;
+    }
+    if (hitId.startsWith('villager_pick_')) {
+      const vid = Number(hitId.replace('villager_pick_', ''));
+      if (Number.isFinite(vid)) {
+        world.selectedVillagerId = world.selectedVillagerId === vid ? null : vid;
+        ptrMoveSide = 0;
+        ptrSprint = false;
+        sound.playCoinDrop();
+      }
+      return true;
+    }
     if (hitId === 'tutorial_skip') {
       skipTutorial(world);
       sound.playCoinDrop();
@@ -812,7 +844,7 @@ function handleCanvasHit(hitId: string): boolean {
   }
 
   if (world.mode === 'char_select') {
-    const keyToRow: Record<string, number> = { outfit: 0, hair: 1, horse: 2, crown: 3 };
+    const keyToRow: Record<string, number> = { gender: 0, outfit: 1, hair: 2, horse: 3, crown: 4 };
     if (hitId.startsWith('char_prev_')) {
       const r = keyToRow[hitId.replace('char_prev_', '')];
       renderer.charSelectFocusRow = r;
@@ -826,6 +858,7 @@ function handleCanvasHit(hitId: string): boolean {
       return true;
     }
     if (hitId === 'char_random') {
+      world.appearance.gender = Math.random() < 0.5 ? 'king' : 'queen';
       world.appearance.outfitIndex = Math.floor(Math.random() * OUTFIT_PRESETS.length);
       world.appearance.hairIndex = Math.floor(Math.random() * HAIR_PRESETS.length);
       world.appearance.horseIndex = Math.floor(Math.random() * HORSE_PRESETS.length);
@@ -834,6 +867,7 @@ function handleCanvasHit(hitId: string): boolean {
       return true;
     }
     if (hitId === 'char_confirm') {
+      charNameInput?.blur();
       confirmCharacterSelection(world);
       return true;
     }
@@ -939,6 +973,10 @@ canvas.addEventListener('pointerdown', (e) => {
   }
 
   if (world.mode !== 'playing') return;
+
+  if (world.selectedVillagerId) {
+    world.selectedVillagerId = null;
+  }
 
   const side: -1 | 1 = lx < world.viewWidth / 2 ? -1 : 1;
 
@@ -1169,10 +1207,48 @@ document.addEventListener('webkitfullscreenchange', () => {
   setTimeout(fitCanvas, 50);
 });
 
+// Character Name Input listeners (works seamlessly on mobile & desktop keyboards)
+charNameInput?.addEventListener('input', () => {
+  world.appearance.name = charNameInput.value.slice(0, 16);
+});
+charNameInput?.addEventListener('keydown', (e) => {
+  if (e.code === 'Enter' || e.code === 'Escape') {
+    e.preventDefault();
+    charNameInput.blur();
+    canvas.focus();
+  }
+});
+
+function syncCharNameInput(): void {
+  if (!charNameInput) return;
+  const rectBox = renderer.charNameBoxRect;
+  const visible = world.mode === 'char_select' && rectBox !== null && !menuOpen && !adminOpen;
+  charNameInput.classList.toggle('visible', visible);
+  if (!visible || !rectBox) {
+    if (document.activeElement === charNameInput) charNameInput.blur();
+    return;
+  }
+  const cRect = canvas.getBoundingClientRect();
+  const scaleX = cRect.width / Math.max(1, world.viewWidth);
+  const scaleY = cRect.height / Math.max(1, world.viewHeight);
+  charNameInput.style.left = `${Math.round(cRect.left + rectBox.x * scaleX)}px`;
+  charNameInput.style.top = `${Math.round(cRect.top + rectBox.y * scaleY)}px`;
+  charNameInput.style.width = `${Math.round(rectBox.w * scaleX)}px`;
+  charNameInput.style.height = `${Math.round(rectBox.h * scaleY)}px`;
+  charNameInput.style.fontSize = `${Math.max(11, Math.min(20, Math.round(rectBox.h * scaleY * 0.72)))}px`;
+  charNameInput.placeholder = t('monarch_name_ph');
+  if (document.activeElement !== charNameInput && charNameInput.value !== world.appearance.name) {
+    charNameInput.value = world.appearance.name;
+  }
+}
+
 // =========================================================================
 // KEYBOARD CONTROLS (with Double-Tap Arrow/A/D Sprint & ESC handling)
 // =========================================================================
 window.addEventListener('keydown', (e) => {
+  if (charNameInput && document.activeElement === charNameInput) {
+    return;
+  }
   const code = e.code;
   if (
     code === 'ArrowLeft' ||
@@ -1201,6 +1277,10 @@ window.addEventListener('keydown', (e) => {
     }
     if (menuOpen) {
       setMenuOpen(false);
+      return;
+    }
+    if (world.selectedVillagerId) {
+      world.selectedVillagerId = null;
       return;
     }
     if (world.mode === 'slot_select') {
@@ -1234,8 +1314,8 @@ window.addEventListener('keydown', (e) => {
   }
 
   if (world.mode === 'char_select') {
-    if (code === 'ArrowUp' || code === 'KeyW') renderer.charSelectFocusRow = cycle(renderer.charSelectFocusRow, 4, -1);
-    else if (code === 'ArrowDown' || code === 'KeyS') renderer.charSelectFocusRow = cycle(renderer.charSelectFocusRow, 4, 1);
+    if (code === 'ArrowUp' || code === 'KeyW') renderer.charSelectFocusRow = cycle(renderer.charSelectFocusRow, 5, -1);
+    else if (code === 'ArrowDown' || code === 'KeyS') renderer.charSelectFocusRow = cycle(renderer.charSelectFocusRow, 5, 1);
     else if (code === 'ArrowLeft' || code === 'KeyA') adjustCharOption(renderer.charSelectFocusRow, -1);
     else if (code === 'ArrowRight' || code === 'KeyD') adjustCharOption(renderer.charSelectFocusRow, 1);
     else if (code === 'Space' || code === 'Enter') confirmCharacterSelection(world);
@@ -1357,9 +1437,15 @@ function frame(now: number): void {
     (kbDoubleSprintDir === 1 && kbRight) ||
     (ptrSprint && ptrMoveSide !== 0);
 
+  const typingCharName = Boolean(charNameInput && document.activeElement === charNameInput);
+
   while (accumulator >= FIXED_DT) {
     if ((feedbackUi.open || adminOpen) && world.mode === 'playing') {
       world.elapsed += FIXED_DT;
+    } else if (typingCharName && world.mode === 'char_select') {
+      // Pause countdown while player is typing their monarch's name
+      world.elapsed += FIXED_DT;
+      if (world.monarchs[0]) world.monarchs[0].animTime += FIXED_DT * 8;
     } else {
       stepWorld(world, input, FIXED_DT);
       if (world.mode === 'playing') {
@@ -1379,6 +1465,7 @@ function frame(now: number): void {
   }
 
   renderer.render(ctx!, world);
+  syncCharNameInput();
   requestAnimationFrame(frame);
 }
 

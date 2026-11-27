@@ -605,6 +605,8 @@ export function createInitialWorld(
     mode,
     saveSlot,
     tutorial,
+    selectedVillagerId: null,
+    hasOrderedVillager: false,
     worldMapContext: 'inspect',
     viewWidth: LOGICAL_WIDTH,
     viewHeight: 270,

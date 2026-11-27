@@ -38,7 +38,11 @@ export type MountId = 'starter' | 'harpy' | 'wolf' | 'ice_horse' | 'bear' | 'fir
 export type ShieldShape = 'round' | 'kite' | 'hex' | 'heater';
 export type ShieldPattern = 'valknut' | 'mjolnir' | 'axes' | 'vegvisir' | 'raven' | 'cross';
 
+export type CharacterGender = 'king' | 'queen';
+
 export interface CharacterAppearance {
+  gender: CharacterGender;
+  name: string;
   outfitIndex: number;
   hairIndex: number;
   horseIndex: number;
@@ -561,6 +565,7 @@ export type TutorialStep =
   | 'build_right_wall'
   | 'build_left_wall'
   | 'buy_bow'
+  | 'order_villager'
   | 'farewell';
 
 export interface TutorialState {
@@ -579,6 +584,8 @@ export interface WorldState {
   mode: GameMode;
   saveSlot: number;
   tutorial: TutorialState | null;
+  selectedVillagerId?: number | null;
+  hasOrderedVillager?: boolean;
   worldMapContext: 'inspect' | 'sail';
   viewWidth: number;
   viewHeight: number;

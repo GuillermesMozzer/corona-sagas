@@ -93,7 +93,7 @@ export const CREST_FG_COLORS: Array<{ name: string; hex: string }> = [
 ];
 
 export function defaultAppearance(): CharacterAppearance {
-  return { outfitIndex: 0, hairIndex: 0, horseIndex: 0, crownIndex: 0 };
+  return { gender: 'king', name: '', outfitIndex: 0, hairIndex: 0, horseIndex: 0, crownIndex: 0 };
 }
 
 export function defaultCrest(): CrestConfig {

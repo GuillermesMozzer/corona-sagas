@@ -1900,6 +1900,7 @@ export function issueUnitCommand(w: WorldState, mode: CommandMode, targetSide: -
     chosen.orderFlashTimer = 1.8;
     chosen.orderDir = targetSide;
     chosen.actionTimer = 0;
+    w.hasOrderedVillager = true;
     sound.playOrder(targetSide);
     spawnBurst(w, chosen.x, GROUND_Y - 18, 6, w.crest.secondaryColor, 'spark', 28);
     w.commandFeedback = {
@@ -1920,6 +1921,59 @@ export function issueUnitCommand(w: WorldState, mode: CommandMode, targetSide: -
       timer: 1.4,
     };
   }
+}
+
+/**
+ * Directly assigns a specific recruited villager (excluding wanderers) to the left (-1) or right (+1) side.
+ */
+export function orderSpecificVillager(w: WorldState, villagerId: number, targetSide: -1 | 1): boolean {
+  const v = w.villagers.find(
+    (item) => item.id === villagerId && item.role !== 'wanderer' && item.state !== 'embarked' && item.state !== 'boarding'
+  );
+  if (!v) {
+    w.selectedVillagerId = null;
+    return false;
+  }
+
+  v.side = targetSide;
+  v.assignedFarmId = null;
+  v.assignedTowerId = null;
+  v.targetId = null;
+  v.facing = targetSide;
+  v.targetX = CENTER_X + targetSide * 95;
+  v.orderFlashTimer = 2.0;
+  v.orderDir = targetSide;
+  v.actionTimer = 0;
+  w.selectedVillagerId = null;
+  w.hasOrderedVillager = true;
+
+  const roleLabels: Record<VillagerRole, string> = {
+    wanderer: t('role_peasant'),
+    peasant: t('role_peasant'),
+    builder: t('role_builder'),
+    warrior: t('role_warrior'),
+    archer: t('role_archer'),
+    producer: t('role_producer'),
+  };
+  const dirText = targetSide < 0 ? t('sent_left') : t('sent_right');
+  sound.playOrder(targetSide);
+  spawnBurst(w, v.x, GROUND_Y - 18, 8, w.crest.secondaryColor, 'spark', 32);
+  w.commandFeedback = {
+    mode:
+      v.role === 'warrior'
+        ? 'attack'
+        : v.role === 'archer'
+          ? 'archer'
+          : v.role === 'builder'
+            ? 'build'
+            : v.role === 'producer'
+              ? 'produce'
+              : 'none',
+    side: targetSide,
+    text: `${roleLabels[v.role]} ${t('unit_sent')} ${dirText}`,
+    timer: 1.6,
+  };
+  return true;
 }
 
 function updateTacticalCommands(w: WorldState, input: InputState, dt: number): void {
@@ -2450,11 +2504,26 @@ function spawnProgressiveEnemy(w: WorldState, portalX: number, side: -1 | 1, kin
   spawnBurst(w, portalX, enemy.y - 16, 8, kind === 'frost_troll' ? '#9ef5ff' : '#7cf7ff', 'shadow', 35);
 }
 
+function canFirstNightBegin(w: WorldState): boolean {
+  if (w.day > 1 || w.currentIsland > 1) return true;
+  const fireLit = w.hall.level >= 1;
+  const palisadeBuilt = w.walls.some((wall) => wall.level >= 1);
+  const archerHired = w.villagers.some((v) => v.role === 'archer');
+  const tutorialDone = !w.tutorial || !w.tutorial.active || w.tutorial.step === 'farewell';
+  const orderingLearned = Boolean(w.hasOrderedVillager) || !w.tutorial?.active;
+  return fireLit && palisadeBuilt && archerHired && tutorialDone && orderingLearned;
+}
+
 function updateDayNightAndWaves(w: WorldState, dt: number): void {
   const prevTime = w.timeOfDay;
   // Configurable Day/Night duration: 1..6 minutes each -> full cycle = dayHalfMinutes * 120 seconds!
   const cycleDuration = Math.max(1, Math.min(6, w.dayHalfMinutes || 3)) * 120;
   w.timeOfDay += dt / cycleDuration;
+
+  // First night only arrives after campfire lit, palisade built, archer hired, and ghost ordering lesson completed!
+  if (w.day === 1 && w.currentIsland === 1 && !canFirstNightBegin(w) && w.timeOfDay > 0.41) {
+    w.timeOfDay = 0.41;
+  }
 
   if (w.timeOfDay >= 1) {
     w.timeOfDay -= 1;
@@ -2588,38 +2657,43 @@ function updateDayNightAndWaves(w: WorldState, dt: number): void {
   w.threatLevel = computeThreatLevel(w);
   sound.setNightMood(w.isNight);
 
+  const isFirstNightPeaceful = w.day === 1 && w.currentIsland === 1;
+
   if (prevTime < 0.47 && w.timeOfDay >= 0.47) {
-    sound.playHorn(true);
-    showBanner(
-      w,
-      w.isBloodMoon ? `LUA DE SANGUE · ${t('threat_lbl')} ${w.threatLevel}` : `NOITE ${w.day} · ${t('threat_lbl')} ${w.threatLevel}`,
-      'Ataques mais fortes a cada noite — os portais de Helheim se abrem!',
-      w.isBloodMoon ? '#ff5e6c' : '#8cc8ff'
-    );
+    if (isFirstNightPeaceful) {
+      sound.playHorn(false);
+      showBanner(w, t('first_night_peace'), t('first_night_sub'), '#ffe58a');
+    } else {
+      sound.playHorn(true);
+      showBanner(
+        w,
+        w.isBloodMoon ? `LUA DE SANGUE · ${t('threat_lbl')} ${w.threatLevel}` : `NOITE ${w.day} · ${t('threat_lbl')} ${w.threatLevel}`,
+        'Ataques mais fortes a cada noite — os portais de Helheim se abrem!',
+        w.isBloodMoon ? '#ff5e6c' : '#8cc8ff'
+      );
+    }
   }
 
   // Progressive Night Sub-Waves scaled by threatLevel!
+  // Attacks ONLY begin AFTER the first night (Day 2+ on Island 1, or any night on Island 2+)
   const queueSubWave = (multiplier: number) => {
+    if (isFirstNightPeaceful) return;
     const baseCount = Math.min(12, Math.max(1, Math.round((1 + w.threatLevel * 0.85) * multiplier)));
     for (const portal of w.portals) {
       if (portal.destroyed) continue;
-      if (w.day === 1 && w.currentIsland === 1 && w.nightWaveStage === 0) {
-        portal.spawnQueue += portal.side === 1 ? 2 : 1;
-      } else {
-        portal.spawnQueue += Math.max(1, Math.floor(baseCount * (0.75 + Math.random() * 0.45)));
-      }
+      portal.spawnQueue += Math.max(1, Math.floor(baseCount * (0.75 + Math.random() * 0.45)));
       portal.spawnCooldown = 1.1 + Math.random() * 1.4;
     }
   };
 
-  if (w.isNight && w.nightWaveStage === 0 && w.timeOfDay >= 0.51) {
+  if (!isFirstNightPeaceful && w.isNight && w.nightWaveStage === 0 && w.timeOfDay >= 0.51) {
     w.waveTriggeredTonight = true;
     queueSubWave(1.0);
     w.nightWaveStage = 1;
-  } else if (w.isNight && w.nightWaveStage === 1 && w.timeOfDay >= 0.67) {
+  } else if (!isFirstNightPeaceful && w.isNight && w.nightWaveStage === 1 && w.timeOfDay >= 0.67) {
     queueSubWave(w.threatLevel <= 2 ? 0.6 : 0.9);
     w.nightWaveStage = 2;
-  } else if (w.isNight && w.nightWaveStage === 2 && w.timeOfDay >= 0.81 && w.threatLevel >= 3) {
+  } else if (!isFirstNightPeaceful && w.isNight && w.nightWaveStage === 2 && w.timeOfDay >= 0.81 && w.threatLevel >= 3) {
     queueSubWave(0.95);
     w.nightWaveStage = 3;
   }
@@ -2828,7 +2902,9 @@ function updateVillagers(w: WorldState, dt: number): void {
               v.hp = 22;
               v.maxHp = 22;
             }
-            v.side = pickBalancedSide(w, v.role);
+            if (v.orderDir === 0) {
+              v.side = pickBalancedSide(w, v.role);
+            }
             v.state = 'idle';
             sound.playBuildComplete();
             spawnBurst(w, v.x, GROUND_Y - 14, 8, w.crest.secondaryColor, 'spark', 30);
@@ -2839,11 +2915,12 @@ function updateVillagers(w: WorldState, dt: number): void {
 
       if (!isEveningOrNight && trySweepCoinsToHall(w, v, dt)) continue;
 
-      if (Math.abs(v.x - CENTER_X) > 75) {
-        moveToward(v, CENTER_X + (Math.random() - 0.5) * 40, 44, dt);
+      const homeAnchor = v.orderDir !== 0 ? CENTER_X + v.side * 75 : CENTER_X;
+      if (Math.abs(v.x - homeAnchor) > 70) {
+        moveToward(v, homeAnchor + (Math.random() - 0.5) * 30, 44, dt);
       } else {
         if (v.actionTimer <= 0) {
-          v.targetX = CENTER_X + (Math.random() - 0.5) * 90;
+          v.targetX = homeAnchor + (Math.random() - 0.5) * 70;
           v.actionTimer = 2.5 + Math.random() * 3;
         }
         moveToward(v, v.targetX, 20, dt);
@@ -3949,12 +4026,19 @@ export function getTutorialTargetX(w: WorldState): number {
   if (tut.step === 'buy_bow') {
     return w.shops.find((s) => s.kind === 'bow')?.x ?? CENTER_X - 80;
   }
+  if (tut.step === 'order_villager') {
+    const hired =
+      w.villagers.find((v) => v.role === 'archer' && v.state !== 'embarked') ??
+      w.villagers.find((v) => v.role !== 'wanderer' && v.state !== 'embarked');
+    return hired ? hired.x : CENTER_X;
+  }
   return w.boat.x;
 }
 
 export function skipTutorial(w: WorldState): void {
   if (!w.tutorial) return;
   w.tutorial.active = false;
+  w.hasOrderedVillager = true;
   markTutorialCompleted();
   saveCampaign(w);
 }
@@ -4020,10 +4104,12 @@ function updateTutorial(w: WorldState, dt: number): void {
         spawnCoin(w, bowShop.x + (i === 0 ? -8 : 8), GROUND_Y - 12, (i === 0 ? -16 : 16), -62, false, 0.2);
       }
     }
-  } else if (
-    tut.step === 'buy_bow' &&
-    ((bowShop && bowShop.stock >= 1) || w.villagers.some((v) => v.role === 'archer'))
-  ) {
+  } else if (tut.step === 'buy_bow' && w.villagers.some((v) => v.role === 'archer')) {
+    tut.step = 'order_villager';
+    tut.fadeCycle = 0;
+    sound.playCoinPickup();
+    spawnBurst(w, tut.spiritX, tut.spiritY, 16, '#7ef5ff', 'spark', 55);
+  } else if (tut.step === 'order_villager' && w.hasOrderedVillager) {
     tut.step = 'farewell';
     tut.farewellTimer = 7.0;
     tut.fadeCycle = 0;

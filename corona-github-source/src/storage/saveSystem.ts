@@ -5,7 +5,7 @@ export const MAX_SAVE_SLOTS = 8;
 
 const LEGACY_SAVE_KEY = 'corona_campaign_save_v1';
 const SLOT_KEY_PREFIX = 'corona_campaign_slot_v2_';
-const TUTORIAL_DONE_KEY = 'corona_tutorial_done_v1';
+const TUTORIAL_DONE_KEY = 'corona_tutorial_done_v2';
 
 export function isTutorialCompleted(): boolean {
   try {
@@ -93,6 +93,12 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
   state.mode = 'playing';
   state.saveSlot = slot;
   state.tutorial = state.tutorial ?? null;
+  state.selectedVillagerId = null;
+  state.hasOrderedVillager = state.hasOrderedVillager ?? (state.day > 1);
+  if (state.appearance) {
+    state.appearance.gender = state.appearance.gender ?? 'king';
+    state.appearance.name = state.appearance.name ?? '';
+  }
   state.activeCommand = 'none';
   state.touchCommandMode = 'none';
   state.commandFeedback = null;

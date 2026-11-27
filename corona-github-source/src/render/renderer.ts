@@ -95,6 +95,7 @@ export class PixelRenderer {
   public crestSelectFocusRow = 0;
   public selectedMapIsland = 1;
   public pendingDeleteSlot: number | null = null;
+  public charNameBoxRect: { x: number; y: number; w: number; h: number } | null = null;
 
   // Live responsive logical viewport dimensions (adapts to 100% of any device!)
   private viewW = LOGICAL_WIDTH;
@@ -208,6 +209,7 @@ export class PixelRenderer {
     ctx.setTransform(this.renderScale, 0, 0, this.renderScale, 0, 0);
     ctx.imageSmoothingEnabled = false;
     this.hitRegions = [];
+    this.charNameBoxRect = null;
 
     if (w.mode === 'slot_select') {
       this.drawSlotSelectScreen(ctx, w);
@@ -289,9 +291,12 @@ export class PixelRenderer {
     this.drawWaterReflection(ctx, w, nightFactor);
     this.drawSnowParticles(ctx, w);
 
-    // 4. Floating Coin Placeholder & Flying Coins
+    // 4. Floating Coin Placeholder, Flying Coins & Selected Villager Arrow Picker
     if (w.mode === 'playing' && w.activePrompt) {
       this.drawFloatingPrompt(ctx, w, camX);
+    }
+    if (w.mode === 'playing' && w.selectedVillagerId) {
+      this.drawSelectedVillagerPicker(ctx, w, camX);
     }
     this.drawFlyingCoins(ctx, w, camX);
 
@@ -339,10 +344,17 @@ export class PixelRenderer {
     ctx.fillStyle = '#fff5bd';
     ctx.fillRect(cx - 10, titleY - 38, 20, 2);
 
+    // Pixel-Art CORONA Title (layered metallic gold pixel bevel)
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#fff4d1';
-    ctx.font = 'bold 28px Georgia, serif';
+    ctx.font = 'bold 31px "Pixelify Sans", monospace';
+    ctx.fillStyle = '#241404';
+    ctx.fillText('CORONA', cx + 1.5, titleY + 2.5);
+    ctx.fillStyle = '#9e6616';
+    ctx.fillText('CORONA', cx, titleY + 1.5);
+    ctx.fillStyle = '#f7c948';
     ctx.fillText('CORONA', cx, titleY);
+    ctx.fillStyle = '#fff5c4';
+    ctx.fillText('CORONA', cx, titleY - 0.6);
 
     ctx.fillStyle = '#9ec4e0';
     ctx.font = '8px monospace';
@@ -861,29 +873,29 @@ export class PixelRenderer {
     const padX = isPortrait ? 12 : 18;
 
     ctx.fillStyle = '#fff2c9';
-    ctx.font = isPortrait ? 'bold 10px Georgia, serif' : 'bold 12px Georgia, serif';
-    ctx.fillText(t('choose_monarch'), padX, 22);
+    ctx.font = isPortrait ? 'bold 10px "Pixelify Sans", monospace' : 'bold 12px "Pixelify Sans", monospace';
+    ctx.fillText(t('choose_monarch'), padX, 20);
     ctx.fillStyle = '#8b99a8';
     ctx.font = '7px monospace';
-    ctx.fillText(t('starter_note'), padX, 34);
+    ctx.fillText(t('starter_note'), padX, 31);
 
     const secs = Math.ceil(w.selectTimer);
     const urgent = secs <= 5;
     ctx.textAlign = 'right';
     ctx.fillStyle = urgent ? '#ff646c' : '#efc462';
     ctx.font = 'bold 13px monospace';
-    ctx.fillText(`${secs}s`, this.viewW - rightSafe, 24);
+    ctx.fillText(`${secs}s`, this.viewW - rightSafe, 22);
     ctx.textAlign = 'left';
 
     const barW = this.viewW - padX * 2;
     ctx.fillStyle = '#181e28';
-    ctx.fillRect(padX, 41, barW, 3);
+    ctx.fillRect(padX, 37, barW, 3);
     ctx.fillStyle = urgent ? '#ff646c' : '#efc462';
-    ctx.fillRect(padX, 41, Math.round((barW * w.selectTimer) / 20), 3);
+    ctx.fillRect(padX, 37, Math.round((barW * w.selectTimer) / 20), 3);
 
-    const previewX = isPortrait ? Math.round(this.viewW / 2) : Math.round(this.viewW * 0.28);
-    const previewY = isPortrait ? 148 : Math.round(this.viewH * 0.7);
-    const previewScale = isPortrait ? 2.6 : 3;
+    const previewX = isPortrait ? Math.round(this.viewW / 2) : Math.round(this.viewW * 0.26);
+    const previewY = isPortrait ? 132 : Math.round(this.viewH * 0.68);
+    const previewScale = isPortrait ? 2.4 : 2.9;
 
     const spot = ctx.createRadialGradient(previewX, previewY - 24, 6, previewX, previewY - 24, 68);
     spot.addColorStop(0, 'rgba(239, 196, 98, 0.14)');
@@ -905,75 +917,106 @@ export class PixelRenderer {
     };
     this.drawMonarch(ctx, w, previewMonarch, 0, previewScale, previewX, previewY);
 
+    // Live Monarch Title & Name underneath pedestal
+    const roleTitle = w.appearance.gender === 'queen' ? t('gender_queen') : t('gender_king');
+    const customName = w.appearance.name.trim();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffe58a';
+    ctx.font = 'bold 8px monospace';
+    ctx.fillText(customName ? `${roleTitle} ${customName.toUpperCase()}` : roleTitle, previewX, previewY + 18);
+    ctx.textAlign = 'left';
+
+    const px = isPortrait ? padX : Math.round(this.viewW * 0.48);
+    const pw = isPortrait ? this.viewW - padX * 2 : Math.min(238, this.viewW - px - padX);
+
+    // Character Name Box (native HTML input overlays this exact rect for mobile/PC typing)
+    const nameBoxY = isPortrait ? 156 : 45;
+    const nameBoxH = isPortrait ? 26 : 23;
+    ctx.fillStyle = '#0c1119';
+    ctx.fillRect(px, nameBoxY, pw, nameBoxH);
+    ctx.strokeStyle = '#efc462';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px + 0.5, nameBoxY + 0.5, pw - 1, nameBoxH - 1);
+    ctx.fillStyle = '#9ec4e0';
+    ctx.font = '5.5px monospace';
+    ctx.fillText(t('monarch_name_lbl'), px + 6, nameBoxY + 8);
+    this.charNameBoxRect = {
+      x: px + 4,
+      y: nameBoxY + 9,
+      w: pw - 8,
+      h: nameBoxH - 11,
+    };
+
     const rows = [
+      { key: 'gender', label: t('gender'), val: roleTitle },
       { key: 'outfit', label: t('outfit'), val: OUTFIT_PRESETS[w.appearance.outfitIndex].name },
       { key: 'hair', label: t('hair'), val: HAIR_PRESETS[w.appearance.hairIndex].name },
       { key: 'horse', label: t('horse'), val: HORSE_PRESETS[w.appearance.horseIndex].name },
       { key: 'crown', label: t('crown'), val: CROWN_PRESETS[w.appearance.crownIndex].name },
     ];
 
-    const px = isPortrait ? padX : Math.round(this.viewW * 0.5);
-    const pw = isPortrait ? this.viewW - padX * 2 : Math.min(232, this.viewW - px - padX);
-    const startY = isPortrait ? 168 : 62;
-    const rowStep = isPortrait ? 33 : 34;
+    const startY = nameBoxY + nameBoxH + 5;
+    const rowH = isPortrait ? 24 : 23;
+    const rowStep = isPortrait ? 27 : 26;
 
     rows.forEach((row, idx) => {
       const ry = startY + idx * rowStep;
       const focused = this.charSelectFocusRow === idx;
       ctx.fillStyle = focused ? '#141a24' : '#0c0f15';
-      ctx.fillRect(px, ry, pw, 28);
+      ctx.fillRect(px, ry, pw, rowH);
       ctx.strokeStyle = focused ? '#efc462' : '#252d3a';
-      ctx.strokeRect(px + 0.5, ry + 0.5, pw - 1, 27);
+      ctx.strokeRect(px + 0.5, ry + 0.5, pw - 1, rowH - 1);
 
       ctx.fillStyle = '#7e8fa3';
-      ctx.font = '6px monospace';
-      ctx.fillText(row.label, px + 26, ry + 10);
+      ctx.font = '5.5px monospace';
+      ctx.fillText(row.label, px + 24, ry + 8.5);
 
       ctx.fillStyle = '#eef4fa';
-      ctx.font = 'bold 8px monospace';
-      ctx.fillText(row.val, px + 26, ry + 22);
+      ctx.font = 'bold 7.5px monospace';
+      ctx.fillText(row.val, px + 24, ry + 19);
 
+      const arrowH = rowH - 6;
       ctx.fillStyle = '#1d2533';
-      ctx.fillRect(px + 4, ry + 5, 18, 18);
+      ctx.fillRect(px + 3, ry + 3, 17, arrowH);
       ctx.fillStyle = '#efc462';
       ctx.textAlign = 'center';
-      ctx.font = 'bold 9px monospace';
-      ctx.fillText('◀', px + 13, ry + 17);
-      this.addHit(`char_prev_${row.key}`, px + 2, ry + 2, 24, 24);
+      ctx.font = 'bold 8.5px monospace';
+      ctx.fillText('◀', px + 11.5, ry + rowH / 2 + 3);
+      this.addHit(`char_prev_${row.key}`, px + 1, ry + 1, 22, rowH - 2);
 
       ctx.fillStyle = '#1d2533';
-      ctx.fillRect(px + pw - 22, ry + 5, 18, 18);
+      ctx.fillRect(px + pw - 20, ry + 3, 17, arrowH);
       ctx.fillStyle = '#efc462';
-      ctx.fillText('▶', px + pw - 13, ry + 17);
-      this.addHit(`char_next_${row.key}`, px + pw - 24, ry + 2, 24, 24);
+      ctx.fillText('▶', px + pw - 11.5, ry + rowH / 2 + 3);
+      this.addHit(`char_next_${row.key}`, px + pw - 23, ry + 1, 22, rowH - 2);
       ctx.textAlign = 'left';
     });
 
-    const btnY = startY + rows.length * rowStep + 6;
+    const btnY = startY + rows.length * rowStep + 4;
     const randW = Math.round(pw * 0.4);
     const confW = pw - randW - 6;
 
     ctx.fillStyle = '#161d29';
-    ctx.fillRect(px, btnY, randW, 24);
+    ctx.fillRect(px, btnY, randW, 22);
     ctx.strokeStyle = '#3b485c';
-    ctx.strokeRect(px + 0.5, btnY + 0.5, randW - 1, 23);
+    ctx.strokeRect(px + 0.5, btnY + 0.5, randW - 1, 21);
     ctx.textAlign = 'center';
     ctx.fillStyle = '#cbd8e6';
-    ctx.font = 'bold 8px monospace';
-    ctx.fillText(t('random'), px + randW / 2, btnY + 15);
-    this.addHit('char_random', px, btnY, randW, 24);
+    ctx.font = 'bold 7.5px monospace';
+    ctx.fillText(t('random'), px + randW / 2, btnY + 14);
+    this.addHit('char_random', px, btnY, randW, 22);
 
     ctx.fillStyle = '#2b2412';
-    ctx.fillRect(px + randW + 6, btnY, confW, 24);
+    ctx.fillRect(px + randW + 6, btnY, confW, 22);
     ctx.strokeStyle = '#efc462';
-    ctx.strokeRect(px + randW + 6.5, btnY + 0.5, confW - 1, 23);
+    ctx.strokeRect(px + randW + 6.5, btnY + 0.5, confW - 1, 21);
     ctx.fillStyle = '#ffe58a';
-    ctx.fillText(t('confirm'), px + randW + 6 + confW / 2, btnY + 15);
-    this.addHit('char_confirm', px + randW + 6, btnY, confW, 24);
+    ctx.fillText(t('confirm'), px + randW + 6 + confW / 2, btnY + 14);
+    this.addHit('char_confirm', px + randW + 6, btnY, confW, 22);
 
     ctx.fillStyle = '#6f7e91';
-    ctx.font = '7px monospace';
-    ctx.fillText(t('char_hint'), Math.round(this.viewW / 2), Math.min(this.viewH - 10, btnY + 40));
+    ctx.font = '6.5px monospace';
+    ctx.fillText(t('char_hint'), Math.round(this.viewW / 2), Math.min(this.viewH - 6, btnY + 34));
     ctx.textAlign = 'left';
   }
 
@@ -2742,6 +2785,110 @@ export class PixelRenderer {
       ctx.fillText(v.orderDir < 0 ? '◀' : '▶', sx, baseY - 22 - walkBob);
       ctx.textAlign = 'left';
     }
+
+    // Recruited villagers (everyone except wanderers) can be tapped/clicked to choose left/right!
+    if (w.mode === 'playing' && v.role !== 'wanderer' && v.state !== 'embarked' && v.state !== 'boarding') {
+      const screenY = baseY + this.worldOffsetY;
+      this.addHit(`villager_pick_${v.id}`, sx - 9, screenY - 22, 18, 25);
+
+      if (w.selectedVillagerId === v.id) {
+        const pulse = 0.65 + 0.35 * Math.sin(w.elapsed * 7);
+        ctx.strokeStyle = `rgba(255, 229, 138, ${pulse.toFixed(2)})`;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(sx - 6.5, baseY - 19.5 - walkBob, 13, 21);
+      }
+    }
+  }
+
+  private drawSelectedVillagerPicker(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    const v = w.villagers.find(
+      (item) => item.id === w.selectedVillagerId && item.role !== 'wanderer' && item.state !== 'embarked'
+    );
+    if (!v) return;
+
+    let baseY = GROUND_Y;
+    if (v.role === 'archer' && v.assignedTowerId) {
+      const tw = w.towers.find((item) => item.id === v.assignedTowerId && item.level > 0 && !item.destroyed);
+      if (tw && Math.abs(v.x - tw.x) < 11) {
+        baseY = GROUND_Y - getTowerHeight(tw.level) - 2;
+      }
+    }
+
+    const sx = Math.round(v.x - camX);
+    const screenY = baseY + this.worldOffsetY;
+
+    const pw = 88;
+    const ph = 32;
+    const px = Math.max(6, Math.min(this.viewW - pw - 6, Math.round(sx - pw / 2)));
+    const py = Math.max(46, Math.round(screenY - 56));
+
+    // Pixel-art selector box
+    ctx.fillStyle = 'rgba(7, 14, 24, 0.94)';
+    ctx.fillRect(px, py, pw, ph);
+    ctx.strokeStyle = '#efc462';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px + 0.5, py + 0.5, pw - 1, ph - 1);
+
+    // Small downward pointer triangle toward the villager
+    const tipX = Math.max(px + 8, Math.min(px + pw - 8, sx));
+    ctx.fillStyle = '#efc462';
+    ctx.fillRect(tipX - 2, py + ph, 5, 1);
+    ctx.fillRect(tipX - 1, py + ph + 1, 3, 1);
+    ctx.fillRect(tipX, py + ph + 2, 1, 1);
+
+    const roleLabel =
+      v.role === 'archer'
+        ? t('role_archer')
+        : v.role === 'builder'
+          ? t('role_builder')
+          : v.role === 'warrior'
+            ? t('role_warrior')
+            : v.role === 'producer'
+              ? t('role_producer')
+              : t('role_peasant');
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ffe58a';
+    ctx.font = 'bold 6px monospace';
+    ctx.fillText(roleLabel, px + 5, py + 9);
+
+    // Tiny close [x] button on top-right
+    const cxX = px + pw - 12;
+    const cxY = py + 2;
+    ctx.fillStyle = '#3b1822';
+    ctx.fillRect(cxX, cxY, 10, 9);
+    ctx.fillStyle = '#ffd4dc';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 6.5px monospace';
+    ctx.fillText('×', cxX + 5, cxY + 7);
+    this.addHit('villager_dir_close', cxX - 2, cxY - 2, 14, 13);
+
+    // Left [◀ ESQ] and Right [DIR ▶] arrow buttons
+    const btnY = py + 13;
+    const btnH = 15;
+    const btnW = 38;
+
+    const leftActive = v.side === -1;
+    ctx.fillStyle = leftActive ? '#2c4466' : '#142033';
+    ctx.fillRect(px + 4, btnY, btnW, btnH);
+    ctx.strokeStyle = leftActive ? '#7ef5ff' : '#efc462';
+    ctx.strokeRect(px + 4.5, btnY + 0.5, btnW - 1, btnH - 1);
+    ctx.fillStyle = leftActive ? '#b8f7ff' : '#ffe58a';
+    ctx.font = 'bold 7px monospace';
+    ctx.fillText(`◀ ${t('dir_left_short')}`, px + 4 + btnW / 2, btnY + 10.5);
+    this.addHit('villager_dir_left', px + 2, btnY - 1, btnW + 3, btnH + 3);
+
+    const rightX = px + pw - btnW - 4;
+    const rightActive = v.side === 1;
+    ctx.fillStyle = rightActive ? '#2c4466' : '#142033';
+    ctx.fillRect(rightX, btnY, btnW, btnH);
+    ctx.strokeStyle = rightActive ? '#7ef5ff' : '#efc462';
+    ctx.strokeRect(rightX + 0.5, btnY + 0.5, btnW - 1, btnH - 1);
+    ctx.fillStyle = rightActive ? '#b8f7ff' : '#ffe58a';
+    ctx.fillText(`${t('dir_right_short')} ▶`, rightX + btnW / 2, btnY + 10.5);
+    this.addHit('villager_dir_right', rightX - 1, btnY - 1, btnW + 3, btnH + 3);
+
+    ctx.textAlign = 'left';
   }
 
   private drawEnemies(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
@@ -3019,21 +3166,45 @@ export class PixelRenderer {
     ctx.fillStyle = secondary;
     ctx.fillRect(-4, -10 - bob + riderYOffset, 8, 1);
 
+    const isQueen = w.appearance.gender === 'queen';
+
     const capeSway = moving ? (m.sprinting ? 5 : 3) : 1;
     ctx.fillStyle = primary;
-    ctx.fillRect(-f * (4 + capeSway) - (f > 0 ? 4 : 0), -21 - bob + riderYOffset, 6 + capeSway, 7);
+    ctx.fillRect(-f * (4 + capeSway) - (f > 0 ? 4 : 0), -21 - bob + riderYOffset, 6 + capeSway, isQueen ? 8 : 7);
 
+    // Body / Tunic or Royal Gown
     ctx.fillStyle = outfit.tunic;
     ctx.fillRect(-3, -21 - bob + riderYOffset, 6, 8);
-    ctx.fillStyle = secondary;
-    ctx.fillRect(-3, -15 - bob + riderYOffset, 6, 1);
+    if (isQueen) {
+      // Refined royal waist & flowing skirt hem
+      ctx.fillStyle = primary;
+      ctx.fillRect(-3, -15 - bob + riderYOffset, 6, 3);
+      ctx.fillStyle = secondary;
+      ctx.fillRect(-3, -16 - bob + riderYOffset, 6, 1);
+      ctx.fillRect(-2, -13 - bob + riderYOffset, 4, 1);
+    } else {
+      ctx.fillStyle = secondary;
+      ctx.fillRect(-3, -15 - bob + riderYOffset, 6, 1);
+    }
 
+    // Head & Hair (Queen: long flowing hair/braid, no beard; King: Nordic beard)
     ctx.fillStyle = outfit.skin;
     ctx.fillRect(-2, -25 - bob + riderYOffset, 4, 4);
     ctx.fillStyle = hair.color;
-    ctx.fillRect(-3, -25 - bob + riderYOffset, 1, 4);
-    if (outfit.hasBeard) {
+    if (isQueen) {
+      const hairFlow = moving ? 2 : 1;
+      // Crown-framed top hair + flowing mane behind shoulder
+      ctx.fillRect(-3, -25 - bob + riderYOffset, 1, 5);
+      ctx.fillRect(2, -25 - bob + riderYOffset, 1, 4);
+      ctx.fillRect(f > 0 ? -4 - hairFlow : 2, -24 - bob + riderYOffset, 2 + hairFlow, 5);
+      ctx.fillRect(f > 0 ? -4 - hairFlow : 3, -19 - bob + riderYOffset, 2, 3);
+    } else {
+      ctx.fillRect(-3, -25 - bob + riderYOffset, 1, 4);
+      // King always sports a regal Nordic beard
       ctx.fillRect(f > 0 ? 0 : -2, -22 - bob + riderYOffset, 3, 3);
+      if (outfit.hasBeard) {
+        ctx.fillRect(f > 0 ? 1 : -2, -20 - bob + riderYOffset, 2, 1);
+      }
     }
     if (outfit.hasHood) {
       ctx.fillStyle = outfit.tunic;
@@ -3042,6 +3213,35 @@ export class PixelRenderer {
 
     if (m.hasCrown) {
       this.drawCrownSprite(ctx, w, 0, -27 - bob + riderYOffset);
+    }
+
+    // Nighttime Torch carried in front hand (always active at dusk/night in gameplay!)
+    const carryTorch = scale === 1 && (w.isNight || (w.timeOfDay >= 0.45 && w.timeOfDay < 0.99));
+    if (carryTorch) {
+      const tx = f * 5;
+      const ty = -20 - bob + riderYOffset;
+      const flick = Math.floor(w.elapsed * 14) % 3;
+      // Arm & wooden torch shaft
+      ctx.fillStyle = outfit.tunic;
+      ctx.fillRect(f > 0 ? 2 : -4, ty + 2, 3, 2);
+      ctx.fillStyle = '#734824';
+      ctx.fillRect(tx, ty - 2, 2, 6);
+      ctx.fillStyle = '#4a4e57';
+      ctx.fillRect(tx - 1, ty - 3, 4, 2);
+      // Warm pixel halo directly around flame
+      ctx.fillStyle = 'rgba(255, 178, 64, 0.34)';
+      ctx.fillRect(tx - 3, ty - 9, 8, 8);
+      // 3-layer flickering pixel flame
+      ctx.fillStyle = '#ff5e1f';
+      ctx.fillRect(tx - 1, ty - 6 - (flick === 1 ? 1 : 0), 4, 3 + (flick === 1 ? 1 : 0));
+      ctx.fillStyle = '#ffb52e';
+      ctx.fillRect(tx, ty - 7 - (flick === 2 ? 1 : 0), 2, 4);
+      ctx.fillStyle = '#fff8bf';
+      ctx.fillRect(tx, ty - 5, 2, 2);
+      // Rising pixel spark
+      const sparkY = ty - 9 - ((Math.floor(w.elapsed * 10) % 4));
+      ctx.fillStyle = '#ffe58a';
+      ctx.fillRect(tx + (flick === 0 ? 1 : 0), sparkY, 1, 1);
     }
 
     ctx.restore();
@@ -3157,6 +3357,25 @@ export class PixelRenderer {
       ctx.fillStyle = g;
       ctx.fillRect(sx - radius, sy - radius, radius * 2, radius * 2);
     };
+
+    const monarch = w.monarchs[0];
+    if (monarch && (w.isNight || (w.timeOfDay >= 0.45 && w.timeOfDay < 0.99))) {
+      const torchFlick = Math.sin(w.elapsed * 15) * 3.5 + Math.cos(w.elapsed * 23) * 1.5;
+      const torchWorldX = monarch.x + monarch.facing * 6;
+      const torchY = GROUND_Y - 23 - Math.round(monarch.flyY);
+      drawGlow(
+        torchWorldX,
+        torchY,
+        74 + torchFlick,
+        `rgba(255, 168, 68, ${(0.36 * nightFactor).toFixed(2)})`
+      );
+      drawGlow(
+        torchWorldX,
+        torchY,
+        28 + torchFlick * 0.4,
+        `rgba(255, 224, 132, ${(0.28 * nightFactor).toFixed(2)})`
+      );
+    }
 
     if (w.hall.level >= 1) {
       const flick = Math.sin(w.elapsed * 11) * 4;
@@ -3569,16 +3788,21 @@ export class PixelRenderer {
       ctx.fillText(`${w.banker.balance}`, rx + 8, resStripY + 9);
     }
 
-    // Active Kingdom Lv, God blessing & Night Threat mini-pills below Top-Left Day box
+    // Active Kingdom Lv, Monarch Name, God blessing & Night Threat mini-pills below Top-Left Day box
     let subY = isNarrow ? 65 : 34;
     const maxK = getIslandMaxKingdomLevel(w);
-    ctx.fillStyle = 'rgba(8, 14, 24, 0.8)';
-    ctx.fillRect(6, subY, 76, 12);
-    ctx.strokeStyle = 'rgba(239, 196, 98, 0.35)';
-    ctx.strokeRect(6.5, subY + 0.5, 75, 11);
-    ctx.fillStyle = '#ffe58a';
+    const roleLabel = w.appearance.gender === 'queen' ? t('gender_queen') : t('gender_king');
+    const monarchTag = w.appearance.name.trim()
+      ? `♛ ${roleLabel} ${w.appearance.name.trim().toUpperCase()} · ${w.hall.level}/${maxK}`
+      : `♛ REINO ${w.hall.level}/${maxK}`;
     ctx.font = 'bold 6px monospace';
-    ctx.fillText(`♛ REINO ${w.hall.level}/${maxK}`, 10, subY + 8);
+    const kPillW = Math.min(138, Math.max(76, Math.ceil(ctx.measureText(monarchTag).width) + 10));
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.8)';
+    ctx.fillRect(6, subY, kPillW, 12);
+    ctx.strokeStyle = 'rgba(239, 196, 98, 0.35)';
+    ctx.strokeRect(6.5, subY + 0.5, kPillW - 1, 11);
+    ctx.fillStyle = '#ffe58a';
+    ctx.fillText(monarchTag, 10, subY + 8, kPillW - 8);
     subY += 14;
 
     if (w.activeGod) {
@@ -3864,6 +4088,7 @@ export class PixelRenderer {
     else if (tut.step === 'build_right_wall') text = nearTarget ? t('tut_wall_r_here') : t('tut_wall_r_go');
     else if (tut.step === 'build_left_wall') text = nearTarget ? t('tut_wall_l_here') : t('tut_wall_l_go');
     else if (tut.step === 'buy_bow') text = nearTarget ? t('tut_bow_here') : t('tut_bow_go');
+    else if (tut.step === 'order_villager') text = nearTarget ? t('tut_order_here') : t('tut_order_go');
     else text = t('tut_farewell');
 
     const isNarrow = this.viewW < 420;
