@@ -10,6 +10,7 @@ import {
   drawShieldEmblem,
 } from '../customization/presets';
 import { getLanguage, t } from '../i18n/translations';
+import { feedbackUi, isFeedbackAnswered } from '../storage/feedbackSystem';
 import {
   MAX_SAVE_SLOTS,
   countSavedCampaigns,
@@ -299,6 +300,11 @@ export class PixelRenderer {
       if (w.mode === 'paused') this.drawPauseOverlay(ctx);
       if (w.mode === 'gameover') this.drawGameOverOverlay(ctx, w);
     }
+
+    // 6. Pixel-Art Feedback / Evaluation Modal (top-most layer)
+    if (feedbackUi.open) {
+      this.drawFeedbackPopup(ctx, w);
+    }
   }
 
   // =========================================================================
@@ -309,10 +315,10 @@ export class PixelRenderer {
     ctx.fillRect(0, 0, this.viewW, this.viewH);
 
     const cx = Math.round(this.viewW / 2);
-    const cy = Math.round(this.viewH * 0.45);
+    const cy = Math.round(this.viewH * 0.43);
     const saved = getSavedCampaignSummary();
 
-    const titleY = Math.max(66, cy - 42);
+    const titleY = Math.max(58, cy - 44);
 
     // Golden Crown Emblem
     ctx.fillStyle = '#f7c948';
@@ -333,9 +339,9 @@ export class PixelRenderer {
     ctx.fillText(t('subtitle'), cx, titleY + 14);
 
     const btnW = Math.min(200, this.viewW - 28);
-    const btnH = 26;
+    const btnH = 24;
     const bx = Math.round(cx - btnW / 2);
-    const by1 = titleY + 34;
+    const by1 = titleY + 26;
 
     ctx.fillStyle = 'rgba(20, 32, 48, 0.92)';
     ctx.fillRect(bx, by1, btnW, btnH);
@@ -344,45 +350,66 @@ export class PixelRenderer {
     ctx.strokeRect(bx + 0.5, by1 + 0.5, btnW - 1, btnH - 1);
     ctx.fillStyle = '#ffe58a';
     ctx.font = 'bold 9px monospace';
-    ctx.fillText(t('new_campaign'), cx, by1 + 16);
+    ctx.fillText(t('new_campaign'), cx, by1 + 15);
     this.addHit('login_new', bx, by1, btnW, btnH);
 
-    const by2 = by1 + 34;
+    const by2 = by1 + 30;
     const savedCount = countSavedCampaigns();
     ctx.fillStyle = saved ? 'rgba(16, 28, 42, 0.92)' : 'rgba(14, 20, 30, 0.85)';
-    ctx.fillRect(bx, by2, btnW, 34);
+    ctx.fillRect(bx, by2, btnW, 32);
     ctx.strokeStyle = saved ? 'rgba(140, 210, 255, 0.78)' : 'rgba(140, 175, 210, 0.42)';
-    ctx.strokeRect(bx + 0.5, by2 + 0.5, btnW - 1, 33);
+    ctx.strokeRect(bx + 0.5, by2 + 0.5, btnW - 1, 31);
 
     if (saved) {
-      drawShieldEmblem(ctx, saved.crest, bx + 20, by2 + 17, 9);
+      drawShieldEmblem(ctx, saved.crest, bx + 20, by2 + 16, 9);
       ctx.textAlign = 'left';
       ctx.fillStyle = '#d9eeff';
       ctx.font = 'bold 8px monospace';
-      ctx.fillText(`${t('slots_btn')} (${savedCount}/${MAX_SAVE_SLOTS})`, bx + 36, by2 + 14);
+      ctx.fillText(`${t('slots_btn')} (${savedCount}/${MAX_SAVE_SLOTS})`, bx + 36, by2 + 13);
       ctx.fillStyle = '#95b2cc';
       ctx.font = '7px monospace';
       ctx.fillText(
         `Slot ${saved.slot + 1} · ${t('day_short')} ${saved.day} · ${saved.gold}g`,
         bx + 36,
-        by2 + 25
+        by2 + 24
       );
     } else {
       ctx.textAlign = 'center';
       ctx.fillStyle = '#c4d8eb';
       ctx.font = 'bold 8px monospace';
-      ctx.fillText(`${t('slots_btn')} (0/${MAX_SAVE_SLOTS})`, cx, by2 + 15);
+      ctx.fillText(`${t('slots_btn')} (0/${MAX_SAVE_SLOTS})`, cx, by2 + 14);
       ctx.fillStyle = '#7e93a8';
       ctx.font = '7px monospace';
-      ctx.fillText(t('no_save'), cx, by2 + 26);
+      ctx.fillText(t('no_save'), cx, by2 + 25);
     }
-    this.addHit('login_slots', bx, by2, btnW, 34);
+    this.addHit('login_slots', bx, by2, btnW, 32);
+
+    // Pixel-Art Google Forms Rating Button (+3 Diamonds)
+    const by3 = by2 + 38;
+    const fbBtnH = 22;
+    const alreadyAnswered = isFeedbackAnswered();
+    ctx.fillStyle = alreadyAnswered ? 'rgba(16, 26, 38, 0.88)' : 'rgba(15, 36, 48, 0.94)';
+    ctx.fillRect(bx, by3, btnW, fbBtnH);
+    ctx.strokeStyle = alreadyAnswered ? 'rgba(130, 175, 205, 0.55)' : '#5ce1e6';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx + 0.5, by3 + 0.5, btnW - 1, fbBtnH - 1);
+
+    // Pixel-art star on left and diamond on right
+    this.drawPixelStar(ctx, bx + 12, by3 + 11, 1, true);
+    if (!alreadyAnswered) {
+      this.drawPixelDiamondIcon(ctx, bx + btnW - 13, by3 + 11, 1, w.elapsed);
+    }
+    ctx.textAlign = 'center';
+    ctx.fillStyle = alreadyAnswered ? '#b7d4e8' : '#b8f7ff';
+    ctx.font = 'bold 7.5px monospace';
+    ctx.fillText(alreadyAnswered ? t('rate_game_done_btn') : t('rate_game_btn'), cx, by3 + 14);
+    this.addHit('login_feedback', bx, by3, btnW, fbBtnH);
 
     ctx.textAlign = 'center';
     const pulse = 0.6 + 0.4 * Math.sin(w.elapsed * 3);
     ctx.fillStyle = `rgba(205, 224, 242, ${pulse.toFixed(2)})`;
     ctx.font = '7px monospace';
-    ctx.fillText(t('login_hint'), cx, by2 + 52);
+    ctx.fillText(t('login_hint'), cx, by3 + 35);
 
     // Subtle creator & inspiration credit in small letters at the bottom footer
     ctx.fillStyle = 'rgba(186, 208, 228, 0.72)';
@@ -397,6 +424,224 @@ export class PixelRenderer {
         this.viewH - 8
       );
     }
+    ctx.textAlign = 'left';
+  }
+
+  private drawPixelStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, s = 1, glow = false): void {
+    const x = Math.round(cx);
+    const y = Math.round(cy);
+    if (glow) {
+      ctx.fillStyle = 'rgba(255, 218, 92, 0.25)';
+      ctx.fillRect(x - 4 * s, y - 4 * s, 9 * s, 9 * s);
+    }
+    ctx.fillStyle = '#d48b1e';
+    ctx.fillRect(x - 3 * s, y - 1 * s, 7 * s, 2 * s);
+    ctx.fillRect(x - 2 * s, y + 1 * s, 5 * s, 2 * s);
+    ctx.fillRect(x - 3 * s, y + 3 * s, 2 * s, 1 * s);
+    ctx.fillRect(x + 2 * s, y + 3 * s, 2 * s, 1 * s);
+    ctx.fillStyle = '#ffd659';
+    ctx.fillRect(x, y - 4 * s, 1 * s, 7 * s);
+    ctx.fillRect(x - 1 * s, y - 2 * s, 3 * s, 4 * s);
+    ctx.fillRect(x - 3 * s, y - 1 * s, 7 * s, 1 * s);
+    ctx.fillRect(x - 2 * s, y + 2 * s, 2 * s, 1 * s);
+    ctx.fillRect(x + 1 * s, y + 2 * s, 2 * s, 1 * s);
+    ctx.fillStyle = '#fff7c8';
+    ctx.fillRect(x, y - 2 * s, 1 * s, 2 * s);
+  }
+
+  private drawPixelDiamondIcon(ctx: CanvasRenderingContext2D, cx: number, cy: number, s = 1, elapsed = 0): void {
+    const x = Math.round(cx);
+    const y = Math.round(cy);
+    const shimmer = 0.65 + 0.35 * Math.sin(elapsed * 5 + cx * 0.2);
+    ctx.fillStyle = `rgba(92, 232, 255, ${(0.22 * shimmer).toFixed(2)})`;
+    ctx.fillRect(x - 4 * s, y - 4 * s, 9 * s, 9 * s);
+    // Outer facet
+    ctx.fillStyle = '#1f98c7';
+    ctx.fillRect(x - 1 * s, y - 4 * s, 3 * s, 1 * s);
+    ctx.fillRect(x - 2 * s, y - 3 * s, 5 * s, 1 * s);
+    ctx.fillRect(x - 3 * s, y - 2 * s, 7 * s, 3 * s);
+    ctx.fillRect(x - 2 * s, y + 1 * s, 5 * s, 1 * s);
+    ctx.fillRect(x - 1 * s, y + 2 * s, 3 * s, 1 * s);
+    ctx.fillRect(x, y + 3 * s, 1 * s, 1 * s);
+    // Bright cyan inner facet
+    ctx.fillStyle = '#6cf0ff';
+    ctx.fillRect(x - 1 * s, y - 3 * s, 3 * s, 5 * s);
+    ctx.fillRect(x - 2 * s, y - 1 * s, 5 * s, 2 * s);
+    // Specular pixel gleam
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - 1 * s, y - 2 * s, 1 * s, 2 * s);
+    if (shimmer > 0.85) {
+      ctx.fillRect(x + 1 * s, y - 3 * s, 1 * s, 1 * s);
+    }
+  }
+
+  // =========================================================================
+  // PIXEL-ART FEEDBACK POPUP (Every 30 min if unanswered · +3 Diamonds)
+  // =========================================================================
+  private drawFeedbackPopup(ctx: CanvasRenderingContext2D, w: WorldState): void {
+    // Fullscreen dark backdrop (intercepts clicks so nothing behind is triggered)
+    ctx.fillStyle = 'rgba(3, 7, 15, 0.74)';
+    ctx.fillRect(0, 0, this.viewW, this.viewH);
+    this.addHit('feedback_backdrop', 0, 0, this.viewW, this.viewH);
+
+    const pw = Math.min(234, this.viewW - 18);
+    const ph = feedbackUi.awaitingConfirm ? 154 : 146;
+    const px = Math.round((this.viewW - pw) / 2);
+    const py = Math.round((this.viewH - ph) / 2);
+    const cx = Math.round(px + pw / 2);
+
+    // Drop shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.58)';
+    ctx.fillRect(px + 3, py + 4, pw, ph);
+
+    // Outer pixel border (dark navy) + metallic gold double frame
+    ctx.fillStyle = '#08121f';
+    ctx.fillRect(px - 1, py - 1, pw + 2, ph + 2);
+
+    const bgGrad = ctx.createLinearGradient(px, py, px, py + ph);
+    bgGrad.addColorStop(0, '#132438');
+    bgGrad.addColorStop(1, '#09131f');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(px, py, pw, ph);
+
+    // Gold pixel border
+    ctx.strokeStyle = '#efc462';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px + 0.5, py + 0.5, pw - 1, ph - 1);
+    ctx.strokeStyle = 'rgba(104, 184, 214, 0.35)';
+    ctx.strokeRect(px + 3.5, py + 3.5, pw - 7, ph - 7);
+
+    // Pixel corner rivets
+    ctx.fillStyle = '#fff0b3';
+    ctx.fillRect(px + 2, py + 2, 2, 2);
+    ctx.fillRect(px + pw - 4, py + 2, 2, 2);
+    ctx.fillRect(px + 2, py + ph - 4, 2, 2);
+    ctx.fillRect(px + pw - 4, py + ph - 4, 2, 2);
+
+    // Top-right [X] Close Button (pixel-art square, generous tap hit box)
+    const xSize = 15;
+    const xBtnX = px + pw - xSize - 5;
+    const xBtnY = py + 5;
+    ctx.fillStyle = '#471b24';
+    ctx.fillRect(xBtnX, xBtnY, xSize, xSize);
+    ctx.strokeStyle = '#e07a85';
+    ctx.strokeRect(xBtnX + 0.5, xBtnY + 0.5, xSize - 1, xSize - 1);
+    // Crisp pixel X
+    ctx.fillStyle = '#ffe2e6';
+    for (let i = 0; i < 7; i++) {
+      ctx.fillRect(xBtnX + 4 + i, xBtnY + 4 + i, 1, 1);
+      ctx.fillRect(xBtnX + 10 - i, xBtnY + 4 + i, 1, 1);
+    }
+    this.addHit('feedback_close', xBtnX - 3, xBtnY - 3, xSize + 6, xSize + 6);
+
+    // 5 Pixel-Art Golden Stars across the top
+    const starSpacing = 14;
+    const starStartX = cx - starSpacing * 2;
+    for (let i = 0; i < 5; i++) {
+      const bounce = Math.round(Math.sin(w.elapsed * 3.5 + i * 0.6) * 0.8);
+      this.drawPixelStar(ctx, starStartX + i * starSpacing, py + 17 + bounce, 1, true);
+    }
+
+    // Modal Title
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffe58a';
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText(t('fb_title'), cx, py + 36);
+
+    // Description lines
+    ctx.fillStyle = '#d3e6f7';
+    ctx.font = '6.5px monospace';
+    if (feedbackUi.loginGrantedNotice) {
+      ctx.fillStyle = '#7ff7c4';
+      ctx.font = 'bold 7px monospace';
+      ctx.fillText(t('fb_reward_banner_title'), cx, py + 51);
+      ctx.fillStyle = '#c8e9ff';
+      ctx.font = '6.5px monospace';
+      ctx.fillText(t('fb_saved_for_next'), cx, py + 62);
+    } else if (feedbackUi.awaitingConfirm) {
+      ctx.fillText(t('fb_wait_desc1'), cx, py + 49);
+      ctx.fillText(t('fb_wait_desc2'), cx, py + 59);
+    } else {
+      ctx.fillText(t('fb_desc1'), cx, py + 49);
+      ctx.fillText(t('fb_desc2'), cx, py + 59);
+    }
+
+    // 3 Pixel-Art Diamonds Reward Strip
+    const stripW = pw - 24;
+    const stripX = px + 12;
+    const stripY = py + 67;
+    const stripH = 26;
+    ctx.fillStyle = 'rgba(9, 32, 46, 0.92)';
+    ctx.fillRect(stripX, stripY, stripW, stripH);
+    ctx.strokeStyle = 'rgba(92, 225, 230, 0.65)';
+    ctx.strokeRect(stripX + 0.5, stripY + 0.5, stripW - 1, stripH - 1);
+
+    // Draw 3 glowing pixel-art diamonds on the left of the strip
+    const dBaseX = stripX + 16;
+    const dY = stripY + 13;
+    for (let i = 0; i < 3; i++) {
+      const bob = Math.round(Math.sin(w.elapsed * 4 + i * 1.1) * 1);
+      this.drawPixelDiamondIcon(ctx, dBaseX + i * 13, dY + bob, 1, w.elapsed);
+    }
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#8ef6ff';
+    ctx.font = 'bold 7.5px monospace';
+    ctx.fillText(t('fb_reward_label'), dBaseX + 42, stripY + 16);
+
+    // Primary CTA Button
+    const ctaW = pw - 24;
+    const ctaX = px + 12;
+    const ctaY = py + 100;
+    const ctaH = 22;
+    ctx.textAlign = 'center';
+
+    if (feedbackUi.loginGrantedNotice) {
+      ctx.fillStyle = '#1f5e42';
+      ctx.fillRect(ctaX, ctaY, ctaW, ctaH);
+      ctx.strokeStyle = '#7ff7c4';
+      ctx.strokeRect(ctaX + 0.5, ctaY + 0.5, ctaW - 1, ctaH - 1);
+      ctx.fillStyle = '#e8fff5';
+      ctx.font = 'bold 8px monospace';
+      ctx.fillText('OK', cx, ctaY + 14);
+      this.addHit('feedback_close', ctaX, ctaY, ctaW, ctaH);
+    } else if (feedbackUi.awaitingConfirm) {
+      const glow = 0.8 + 0.2 * Math.sin(w.elapsed * 6);
+      ctx.fillStyle = `rgba(28, 96, 66, ${glow.toFixed(2)})`;
+      ctx.fillRect(ctaX, ctaY, ctaW, ctaH);
+      ctx.strokeStyle = '#7ff7c4';
+      ctx.strokeRect(ctaX + 0.5, ctaY + 0.5, ctaW - 1, ctaH - 1);
+      ctx.fillStyle = '#f2fff8';
+      ctx.font = 'bold 7px monospace';
+      ctx.fillText(t('fb_claim_btn'), cx, ctaY + 14);
+      this.addHit('feedback_claim', ctaX, ctaY, ctaW, ctaH);
+
+      // Reopen link below
+      ctx.fillStyle = '#9ec4e0';
+      ctx.font = '6px monospace';
+      ctx.fillText(t('fb_reopen_btn'), cx, ctaY + 34);
+      this.addHit('feedback_open', ctaX + 18, ctaY + 25, ctaW - 36, 13);
+    } else {
+      ctx.fillStyle = '#473610';
+      ctx.fillRect(ctaX, ctaY, ctaW, ctaH);
+      ctx.strokeStyle = '#ffe066';
+      ctx.strokeRect(ctaX + 0.5, ctaY + 0.5, ctaW - 1, ctaH - 1);
+      ctx.fillStyle = '#fff2b0';
+      ctx.font = 'bold 7.5px monospace';
+      ctx.fillText(t('fb_open_btn'), cx, ctaY + 14);
+      this.addHit('feedback_open', ctaX, ctaY, ctaW, ctaH);
+    }
+
+    // Footer hint or configuration notice
+    if (feedbackUi.noUrlNotice) {
+      ctx.fillStyle = '#ffb380';
+      ctx.font = '6px monospace';
+      ctx.fillText(t('fb_not_configured'), cx, py + ph - 9);
+    } else if (!feedbackUi.awaitingConfirm) {
+      ctx.fillStyle = 'rgba(162, 188, 212, 0.85)';
+      ctx.font = '6px monospace';
+      ctx.fillText(t('fb_later_hint'), cx, py + ph - 9);
+    }
+
     ctx.textAlign = 'left';
   }
 

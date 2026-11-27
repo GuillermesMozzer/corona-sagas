@@ -22,6 +22,17 @@ import {
   saveCampaign,
 } from './storage/saveSystem';
 import {
+  canAutoGrantOnReturn,
+  claimFeedbackReward,
+  closeFeedbackPopup,
+  deliverPendingFeedbackDiamonds,
+  feedbackUi,
+  isFeedbackAnswered,
+  launchFeedbackForm,
+  openFeedbackPopup,
+  tickFeedbackTimer,
+} from './storage/feedbackSystem';
+import {
   confirmCharacterSelection,
   confirmCrestAndStartCampaign,
   issueUnitCommand,
@@ -313,6 +324,13 @@ function goToLogin(): void {
   if (world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map') {
     saveCampaign(world);
   }
+  if (feedbackUi.open) {
+    feedbackUi.open = false;
+    feedbackUi.awaitingConfirm = false;
+    feedbackUi.formOpenedAt = null;
+    feedbackUi.noUrlNotice = false;
+    feedbackUi.loginGrantedNotice = false;
+  }
   pausedByMenu = false;
   setMenuOpen(false);
   clearMovementInputs();
@@ -369,7 +387,61 @@ function toggleTouchCommand(mode: Exclude<CommandMode, 'none'>): void {
   sound.playCoinDrop();
 }
 
+function completeFeedbackClaim(): void {
+  const result = claimFeedbackReward(world);
+  if (result === 'granted_now') {
+    sound.playBuildComplete();
+    sound.playCoinPickup();
+    showBanner(world, t('fb_reward_banner_title'), t('fb_reward_banner_sub'), '#5ce1e6');
+    saveCampaign(world);
+  } else if (result === 'queued_for_campaign') {
+    sound.playBuildComplete();
+    sound.playCoinPickup();
+  }
+}
+
+function deliverPendingFeedbackIfPlaying(): void {
+  const granted = deliverPendingFeedbackDiamonds(world);
+  if (granted > 0) {
+    sound.playBuildComplete();
+    sound.playCoinPickup();
+    showBanner(world, t('fb_reward_banner_title'), t('fb_reward_banner_sub'), '#5ce1e6');
+    saveCampaign(world);
+  }
+}
+
 function handleCanvasHit(hitId: string): boolean {
+  // Feedback modal always has top priority when open
+  if (hitId === 'feedback_close') {
+    closeFeedbackPopup();
+    sound.playCoinDrop();
+    return true;
+  }
+  if (hitId === 'feedback_open') {
+    sound.playCoinPickup();
+    launchFeedbackForm();
+    return true;
+  }
+  if (hitId === 'feedback_claim') {
+    completeFeedbackClaim();
+    return true;
+  }
+  if (hitId === 'feedback_backdrop') {
+    return true;
+  }
+
+  if (hitId === 'login_feedback') {
+    sound.playCoinPickup();
+    if (isFeedbackAnswered()) {
+      if (!launchFeedbackForm()) {
+        openFeedbackPopup('login');
+        launchFeedbackForm();
+      }
+    } else {
+      openFeedbackPopup('login');
+    }
+    return true;
+  }
   if (hitId === 'login_new') {
     startNewCampaignFlow();
     return true;
@@ -755,7 +827,16 @@ function autoSaveActiveCampaign(): void {
 window.addEventListener('pagehide', autoSaveActiveCampaign);
 window.addEventListener('beforeunload', autoSaveActiveCampaign);
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') autoSaveActiveCampaign();
+  if (document.visibilityState === 'hidden') {
+    autoSaveActiveCampaign();
+  } else if (document.visibilityState === 'visible' && canAutoGrantOnReturn()) {
+    completeFeedbackClaim();
+  }
+});
+window.addEventListener('focus', () => {
+  if (canAutoGrantOnReturn()) {
+    completeFeedbackClaim();
+  }
 });
 
 document.addEventListener('fullscreenchange', () => {
@@ -788,6 +869,11 @@ window.addEventListener('keydown', (e) => {
     if (isFullscreenActive()) {
       return;
     }
+    if (feedbackUi.open) {
+      closeFeedbackPopup();
+      sound.playCoinDrop();
+      return;
+    }
     if (menuOpen) {
       setMenuOpen(false);
       return;
@@ -814,7 +900,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
-  if (menuOpen) return;
+  if (menuOpen || feedbackUi.open) return;
 
   if (world.mode === 'login') {
     if (code === 'Space' || code === 'Enter') startNewCampaignFlow();
@@ -941,7 +1027,18 @@ function frame(now: number): void {
     (ptrSprint && ptrMoveSide !== 0);
 
   while (accumulator >= FIXED_DT) {
-    stepWorld(world, input, FIXED_DT);
+    if (feedbackUi.open && world.mode === 'playing') {
+      world.elapsed += FIXED_DT;
+    } else {
+      stepWorld(world, input, FIXED_DT);
+      if (world.mode === 'playing') {
+        deliverPendingFeedbackIfPlaying();
+        if (tickFeedbackTimer(FIXED_DT, !menuOpen && !world.tutorial?.active)) {
+          clearMovementInputs();
+          sound.playCoinPickup();
+        }
+      }
+    }
     input.dropJustPressed = false;
     input.leftJustPressed = false;
     input.rightJustPressed = false;
