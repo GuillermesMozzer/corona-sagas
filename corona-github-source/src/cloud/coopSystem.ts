@@ -88,6 +88,7 @@ export interface CoopState {
   unreadMessages: number;
   chatOpen: boolean;
   micOn: boolean;
+  speaking: boolean;
   micError: string | null;
   statusBanner: string | null;
 }
@@ -103,6 +104,7 @@ export const coopState: CoopState = {
   unreadMessages: 0,
   chatOpen: false,
   micOn: false,
+  speaking: false,
   micError: null,
   statusBanner: null,
 };
@@ -132,7 +134,10 @@ let onGuestForceExit: ((reason: string) => void) | null = null;
 
 // WebRTC Voice Chat state
 let localAudioStream: MediaStream | null = null;
+let micAudioCtx: AudioContext | null = null;
+let micMeterTimer: number | null = null;
 const peerConnections = new Map<string, RTCPeerConnection>();
+const pendingIceCandidates = new Map<string, RTCIceCandidateInit[]>();
 const remoteAudioEls = new Map<string, HTMLAudioElement>();
 const processedSignalIds = new Set<string>();
 
@@ -280,7 +285,6 @@ function cleanupSubscriptionsAndAudio(): void {
   latestGuestWorldSnapshot = null;
   lastSentInputKey = '';
 
-  stopLocalMicrophoneInternal();
   for (const pc of peerConnections.values()) {
     try {
       pc.close();
@@ -289,6 +293,7 @@ function cleanupSubscriptionsAndAudio(): void {
     }
   }
   peerConnections.clear();
+  pendingIceCandidates.clear();
   for (const el of remoteAudioEls.values()) {
     try {
       el.pause();
@@ -302,8 +307,13 @@ function cleanupSubscriptionsAndAudio(): void {
   processedSignalIds.clear();
 }
 
-function resetCoopState(): void {
+function resetCoopState(keepLocalMic = false): void {
   cleanupSubscriptionsAndAudio();
+  if (!keepLocalMic) {
+    stopLocalMicrophoneInternal();
+    coopState.micOn = false;
+    coopState.speaking = false;
+  }
   coopState.active = false;
   coopState.role = 'none';
   coopState.roomCode = null;
@@ -313,7 +323,6 @@ function resetCoopState(): void {
   coopState.messages = [];
   coopState.unreadMessages = 0;
   coopState.chatOpen = false;
-  coopState.micOn = false;
   coopState.micError = null;
   coopState.statusBanner = null;
   notify();
@@ -372,6 +381,7 @@ function subscribeCommonRoomChannels(code: string, myUid: string): void {
           // Ignore
         }
         peerConnections.delete(peerUid);
+        pendingIceCandidates.delete(peerUid);
         const aEl = remoteAudioEls.get(peerUid);
         if (aEl) {
           aEl.pause();
@@ -381,10 +391,10 @@ function subscribeCommonRoomChannels(code: string, myUid: string): void {
         }
       }
     }
-    if (localAudioStream) {
+    if (localAudioStream && coopState.micOn) {
       for (const m of list) {
-        if (m.uid !== myUid && !peerConnections.has(m.uid) && myUid < m.uid) {
-          void initiateVoiceOffer(code, myUid, m.uid);
+        if (m.uid !== myUid && !peerConnections.has(m.uid)) {
+          void attachLocalAudioAndOffer(code, myUid, m.uid);
         }
       }
     }
@@ -397,42 +407,54 @@ function subscribeCommonRoomChannels(code: string, myUid: string): void {
     orderBy('createdAtMs', 'asc'),
     limit(60)
   );
-  messagesUnsub = onSnapshot(msgQ, (snap) => {
-    const prevCount = coopState.messages.length;
-    const msgs: CoopChatMessage[] = [];
-    snap.forEach((docSnap) => {
-      const d = docSnap.data() as Record<string, unknown>;
-      msgs.push({
-        id: docSnap.id,
-        uid: String(d.uid ?? ''),
-        email: String(d.email ?? ''),
-        displayName: String(d.displayName ?? 'Monarca'),
-        text: String(d.text ?? ''),
-        createdAtMs: typeof d.createdAtMs === 'number' ? d.createdAtMs : 0,
+  messagesUnsub = onSnapshot(
+    msgQ,
+    (snap) => {
+      const prevCount = coopState.messages.length;
+      const msgs: CoopChatMessage[] = [];
+      snap.forEach((docSnap) => {
+        const d = docSnap.data() as Record<string, unknown>;
+        msgs.push({
+          id: docSnap.id,
+          uid: String(d.uid ?? ''),
+          email: String(d.email ?? ''),
+          displayName: String(d.displayName ?? 'Monarca'),
+          text: String(d.text ?? ''),
+          createdAtMs: typeof d.createdAtMs === 'number' ? d.createdAtMs : 0,
+        });
       });
-    });
-    coopState.messages = msgs;
-    if (!coopState.chatOpen && msgs.length > prevCount) {
-      const latest = msgs[msgs.length - 1];
-      if (latest && latest.uid !== myUid) {
-        coopState.unreadMessages += msgs.length - prevCount;
+      coopState.messages = msgs;
+      if (!coopState.chatOpen && msgs.length > prevCount) {
+        const latest = msgs[msgs.length - 1];
+        if (latest && latest.uid !== myUid) {
+          coopState.unreadMessages += msgs.length - prevCount;
+        }
       }
+      notify();
+    },
+    (err) => {
+      console.warn('[Corona Co-op] Chat snapshot error:', err);
     }
-    notify();
-  });
+  );
 
   // 3. Live WebRTC Signaling channel for Voice Chat
-  signalsUnsub = onSnapshot(collection(db, 'coop_rooms', code, 'signals'), (snap) => {
-    snap.docChanges().forEach((chg) => {
-      if (chg.type !== 'added') return;
-      const sigId = chg.doc.id;
-      if (processedSignalIds.has(sigId)) return;
-      const d = chg.doc.data() as Record<string, unknown>;
-      if (d.to !== myUid) return;
-      processedSignalIds.add(sigId);
-      void handleIncomingVoiceSignal(code, myUid, String(d.from ?? ''), d);
-    });
-  });
+  signalsUnsub = onSnapshot(
+    collection(db, 'coop_rooms', code, 'signals'),
+    (snap) => {
+      snap.docChanges().forEach((chg) => {
+        if (chg.type !== 'added') return;
+        const sigId = chg.doc.id;
+        if (processedSignalIds.has(sigId)) return;
+        const d = chg.doc.data() as Record<string, unknown>;
+        if (d.to !== myUid) return;
+        processedSignalIds.add(sigId);
+        void handleIncomingVoiceSignal(code, myUid, String(d.from ?? ''), d);
+      });
+    },
+    (err) => {
+      console.warn('[Corona Co-op] Voice signal snapshot error:', err);
+    }
+  );
 }
 
 /**
@@ -455,7 +477,7 @@ export async function hostOpenCoopRoom(world: WorldState): Promise<{ ok: boolean
     return { ok: true, code: coopState.roomCode };
   }
 
-  resetCoopState();
+  resetCoopState(true);
   const code = generateRoomCode();
 
   // Tag host monarch with host identity
@@ -488,7 +510,7 @@ export async function hostOpenCoopRoom(world: WorldState): Promise<{ ok: boolean
       photoURL: user.photoURL,
       role: 'host',
       appearance: { ...world.appearance },
-      micOn: false,
+      micOn: coopState.micOn,
       joinedAtMs: Date.now(),
     });
 
@@ -855,15 +877,40 @@ export function guestSyncCoopFrame(
 }
 
 /**
- * Sends a real-time Co-op text chat message.
+ * Sends a text chat message:
+ * - In an active Co-op room: syncs in real time via Firestore to all players in the room.
+ * - Solo (before opening Co-op): appends locally so the chat drawer works immediately and invites opening Co-op.
  */
-export async function sendCoopChatMessage(rawText: string): Promise<boolean> {
+export async function sendCoopChatMessage(
+  rawText: string
+): Promise<{ ok: boolean; localOnly?: boolean; error?: string }> {
   const text = rawText.trim().slice(0, 180);
-  if (!text) return false;
-  if (!coopState.active || !coopState.roomCode) return false;
-  const db = getFirestoreDb();
+  if (!text) return { ok: false };
+
   const user = authCloudState.user;
-  if (!db || !user) return false;
+  const senderName = user?.displayName || 'Você';
+
+  // Solo / before Co-op room is opened: show message locally immediately so chat works right away
+  if (!coopState.active || !coopState.roomCode) {
+    coopState.messages = [
+      ...coopState.messages.slice(-59),
+      {
+        id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        uid: user?.uid ?? 'local',
+        email: user?.email ?? '',
+        displayName: senderName,
+        text,
+        createdAtMs: Date.now(),
+      },
+    ];
+    notify();
+    return { ok: true, localOnly: true };
+  }
+
+  const db = getFirestoreDb();
+  if (!db || !user) {
+    return { ok: false, error: 'Conecte sua conta Google para enviar mensagens no Co-op.' };
+  }
 
   try {
     await addDoc(collection(db, 'coop_rooms', coopState.roomCode, 'messages'), {
@@ -874,9 +921,10 @@ export async function sendCoopChatMessage(rawText: string): Promise<boolean> {
       createdAtMs: Date.now(),
       createdAt: serverTimestamp(),
     });
-    return true;
-  } catch {
-    return false;
+    return { ok: true };
+  } catch (err) {
+    console.warn('[Corona Co-op] Failed to send chat message:', err);
+    return { ok: false, error: 'Sem permissão no Firestore para enviar chat. Publique as Regras do Firestore.' };
   }
 }
 
@@ -1042,18 +1090,113 @@ export async function adminUnbanCommunityPlayer(targetUid: string): Promise<bool
 // WEBRTC PEER-TO-PEER VOICE CHAT (MICROPHONE) VIA FIRESTORE SIGNALING
 // =========================================================================
 
+function stopMicLevelMonitor(): void {
+  if (micMeterTimer !== null) {
+    window.clearInterval(micMeterTimer);
+    micMeterTimer = null;
+  }
+  if (micAudioCtx) {
+    void micAudioCtx.close().catch(() => {});
+    micAudioCtx = null;
+  }
+  if (coopState.speaking) {
+    coopState.speaking = false;
+  }
+}
+
+function startMicLevelMonitor(stream: MediaStream): void {
+  stopMicLevelMonitor();
+  try {
+    const AudioCtxCtor =
+      window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtxCtor) return;
+    micAudioCtx = new AudioCtxCtor();
+    const src = micAudioCtx.createMediaStreamSource(stream);
+    const analyser = micAudioCtx.createAnalyser();
+    analyser.fftSize = 256;
+    src.connect(analyser);
+    const buf = new Uint8Array(analyser.frequencyBinCount);
+    micMeterTimer = window.setInterval(() => {
+      if (!coopState.micOn || !localAudioStream) {
+        if (coopState.speaking) {
+          coopState.speaking = false;
+          notify();
+        }
+        return;
+      }
+      analyser.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const d = (buf[i] - 128) / 128;
+        sum += d * d;
+      }
+      const rms = Math.sqrt(sum / buf.length);
+      const isNowSpeaking = rms > 0.025;
+      if (isNowSpeaking !== coopState.speaking) {
+        coopState.speaking = isNowSpeaking;
+        notify();
+      }
+    }, 120);
+  } catch {
+    // Voice level visual is optional; never block mic transmission
+  }
+}
+
 function stopLocalMicrophoneInternal(): void {
+  stopMicLevelMonitor();
   if (localAudioStream) {
     for (const track of localAudioStream.getTracks()) {
       track.stop();
     }
     localAudioStream = null;
   }
+  // Mute audio senders cleanly so re-enabling mic later works with replaceTrack
+  for (const pc of peerConnections.values()) {
+    for (const sender of pc.getSenders()) {
+      if (sender.track?.kind === 'audio' || sender.track === null) {
+        void sender.replaceTrack(null).catch(() => {});
+      }
+    }
+  }
+}
+
+/**
+ * Unlocks/resumes any remote teammate <audio> streams after a user gesture (mobile/desktop autoplay safeguard).
+ */
+export function resumeRemoteCoopAudio(): void {
+  for (const el of remoteAudioEls.values()) {
+    if (el.paused && el.srcObject) {
+      void el.play().catch(() => {});
+    }
+  }
+}
+
+async function flushPendingIceCandidates(peerUid: string, pc: RTCPeerConnection): Promise<void> {
+  const queue = pendingIceCandidates.get(peerUid);
+  if (!queue || queue.length === 0) return;
+  pendingIceCandidates.delete(peerUid);
+  for (const cand of queue) {
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(cand));
+    } catch {
+      // Ignore stale candidate
+    }
+  }
 }
 
 function getOrCreatePeerConnection(code: string, myUid: string, peerUid: string): RTCPeerConnection {
   const existing = peerConnections.get(peerUid);
-  if (existing) return existing;
+  if (existing && existing.connectionState !== 'closed' && existing.connectionState !== 'failed') {
+    return existing;
+  }
+  if (existing) {
+    try {
+      existing.close();
+    } catch {
+      // Ignore
+    }
+    peerConnections.delete(peerUid);
+  }
 
   const pc = new RTCPeerConnection(RTC_CONFIG);
   peerConnections.set(peerUid, pc);
@@ -1078,12 +1221,13 @@ function getOrCreatePeerConnection(code: string, myUid: string, peerUid: string)
   };
 
   pc.ontrack = (ev) => {
-    const stream = ev.streams[0];
-    if (!stream) return;
+    const stream = ev.streams[0] ?? new MediaStream([ev.track]);
     let audioEl = remoteAudioEls.get(peerUid);
     if (!audioEl) {
       audioEl = document.createElement('audio');
       audioEl.autoplay = true;
+      audioEl.volume = 1;
+      audioEl.muted = false;
       audioEl.setAttribute('playsinline', 'true');
       audioEl.style.display = 'none';
       document.body.appendChild(audioEl);
@@ -1096,11 +1240,24 @@ function getOrCreatePeerConnection(code: string, myUid: string, peerUid: string)
   return pc;
 }
 
-async function initiateVoiceOffer(code: string, myUid: string, peerUid: string): Promise<void> {
+async function attachLocalAudioAndOffer(code: string, myUid: string, peerUid: string): Promise<void> {
   const db = getFirestoreDb();
   if (!db) return;
   try {
     const pc = getOrCreatePeerConnection(code, myUid, peerUid);
+    if (localAudioStream) {
+      const audioTrack = localAudioStream.getAudioTracks()[0];
+      if (audioTrack) {
+        const audioSender = pc
+          .getSenders()
+          .find((s) => s.track?.kind === 'audio' || (s.track === null && pc.getSenders().length > 0));
+        if (audioSender) {
+          await audioSender.replaceTrack(audioTrack);
+        } else {
+          pc.addTrack(audioTrack, localAudioStream);
+        }
+      }
+    }
     const offer = await pc.createOffer({ offerToReceiveAudio: true });
     await pc.setLocalDescription(offer);
     await addDoc(collection(db, 'coop_rooms', code, 'signals'), {
@@ -1110,8 +1267,8 @@ async function initiateVoiceOffer(code: string, myUid: string, peerUid: string):
       sdp: offer.sdp ?? '',
       createdAtMs: Date.now(),
     });
-  } catch {
-    // Ignore transient WebRTC negotiation failure
+  } catch (err) {
+    console.warn('[Corona Co-op] Voice offer failed:', err);
   }
 }
 
@@ -1129,7 +1286,26 @@ async function handleIncomingVoiceSignal(
   try {
     const pc = getOrCreatePeerConnection(code, myUid, fromUid);
     if (sigType === 'offer' && typeof data.sdp === 'string') {
+      // Polite-peer rollback prevents glare deadlock when both players open mic simultaneously
+      if (pc.signalingState !== 'stable') {
+        await pc.setLocalDescription({ type: 'rollback' });
+      }
       await pc.setRemoteDescription({ type: 'offer', sdp: data.sdp });
+      await flushPendingIceCandidates(fromUid, pc);
+
+      // Ensure our local mic track is attached in our answer if our mic is already ON
+      if (localAudioStream && coopState.micOn) {
+        const audioTrack = localAudioStream.getAudioTracks()[0];
+        if (audioTrack) {
+          const existingSender = pc.getSenders().find((s) => s.track?.kind === 'audio' || s.track === null);
+          if (existingSender) {
+            await existingSender.replaceTrack(audioTrack);
+          } else {
+            pc.addTrack(audioTrack, localAudioStream);
+          }
+        }
+      }
+
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       await addDoc(collection(db, 'coop_rooms', code, 'signals'), {
@@ -1142,46 +1318,58 @@ async function handleIncomingVoiceSignal(
     } else if (sigType === 'answer' && typeof data.sdp === 'string') {
       if (pc.signalingState === 'have-local-offer') {
         await pc.setRemoteDescription({ type: 'answer', sdp: data.sdp });
+        await flushPendingIceCandidates(fromUid, pc);
       }
     } else if (sigType === 'ice' && data.candidate) {
-      await pc.addIceCandidate(new RTCIceCandidate(data.candidate as RTCIceCandidateInit));
+      const candInit = data.candidate as RTCIceCandidateInit;
+      if (!pc.remoteDescription) {
+        const list = pendingIceCandidates.get(fromUid) ?? [];
+        list.push(candInit);
+        pendingIceCandidates.set(fromUid, list);
+      } else {
+        await pc.addIceCandidate(new RTCIceCandidate(candInit));
+      }
     }
-  } catch {
-    // Ignore stale ICE / SDP signal errors
+  } catch (err) {
+    console.warn('[Corona Co-op] Voice signal error:', err);
   }
 }
 
 /**
- * Toggles the player's microphone ON / OFF for live Co-op voice chat.
+ * Toggles the player's microphone ON / OFF immediately during gameplay.
+ * Works right away (opens browser microphone with live voice indicator) and automatically
+ * transmits peer-to-peer audio whenever inside a Co-op room!
  */
-export async function toggleCoopMicrophone(): Promise<{ ok: boolean; micOn: boolean; error?: string }> {
-  if (!coopState.active || !coopState.roomCode) {
-    coopState.micError = 'Ative ou entre em uma campanha Co-op para usar o microfone.';
-    notify();
-    return { ok: false, micOn: false, error: coopState.micError };
-  }
+export async function toggleCoopMicrophone(): Promise<{
+  ok: boolean;
+  micOn: boolean;
+  inRoom?: boolean;
+  error?: string;
+}> {
   const user = authCloudState.user;
   const db = getFirestoreDb();
-  if (!user || !db) {
-    return { ok: false, micOn: false, error: 'Conta Google necessária.' };
-  }
+  const inRoom = Boolean(coopState.active && coopState.roomCode && user && db);
 
   coopState.micError = null;
+  resumeRemoteCoopAudio();
 
   if (coopState.micOn) {
     stopLocalMicrophoneInternal();
     coopState.micOn = false;
-    void setDoc(
-      doc(db, 'coop_rooms', coopState.roomCode, 'members', user.uid),
-      { micOn: false },
-      { merge: true }
-    ).catch(() => {});
+    coopState.speaking = false;
+    if (inRoom && coopState.roomCode && user && db) {
+      void setDoc(
+        doc(db, 'coop_rooms', coopState.roomCode, 'members', user.uid),
+        { micOn: false },
+        { merge: true }
+      ).catch(() => {});
+    }
     notify();
-    return { ok: true, micOn: false };
+    return { ok: true, micOn: false, inRoom };
   }
 
   if (!navigator.mediaDevices?.getUserMedia) {
-    coopState.micError = 'Microfone não suportado neste navegador.';
+    coopState.micError = 'Microfone não suportado neste navegador (use HTTPS).';
     notify();
     return { ok: false, micOn: false, error: coopState.micError };
   }
@@ -1192,32 +1380,32 @@ export async function toggleCoopMicrophone(): Promise<{ ok: boolean; micOn: bool
       video: false,
     });
     coopState.micOn = true;
+    startMicLevelMonitor(localAudioStream);
 
-    const code = coopState.roomCode;
-    void setDoc(
-      doc(db, 'coop_rooms', code, 'members', user.uid),
-      { micOn: true },
-      { merge: true }
-    ).catch(() => {});
+    if (inRoom && coopState.roomCode && user && db) {
+      const code = coopState.roomCode;
+      void setDoc(
+        doc(db, 'coop_rooms', code, 'members', user.uid),
+        { micOn: true },
+        { merge: true }
+      ).catch(() => {});
 
-    // Attach local audio track to existing peers & initiate offers to all other room members
-    for (const m of coopState.members) {
-      if (m.uid === user.uid) continue;
-      const pc = getOrCreatePeerConnection(code, user.uid, m.uid);
-      const senders = pc.getSenders();
-      for (const track of localAudioStream.getAudioTracks()) {
-        if (!senders.some((s) => s.track?.kind === 'audio')) {
-          pc.addTrack(track, localAudioStream);
-        }
+      for (const m of coopState.members) {
+        if (m.uid === user.uid) continue;
+        await attachLocalAudioAndOffer(code, user.uid, m.uid);
       }
-      await initiateVoiceOffer(code, user.uid, m.uid);
     }
 
     notify();
-    return { ok: true, micOn: true };
-  } catch {
+    return { ok: true, micOn: true, inRoom };
+  } catch (err) {
     coopState.micOn = false;
-    coopState.micError = 'Permissão de microfone negada.';
+    coopState.speaking = false;
+    const errName = (err as { name?: string })?.name ?? '';
+    coopState.micError =
+      errName === 'NotFoundError'
+        ? 'Nenhum microfone encontrado neste dispositivo.'
+        : 'Permissão de microfone negada no navegador.';
     notify();
     return { ok: false, micOn: false, error: coopState.micError };
   }

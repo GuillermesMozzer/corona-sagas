@@ -58,6 +58,7 @@ import {
   joinCoopRoomAsGuest,
   leaveCoopAsGuest,
   reportAndBanCoopPlayer,
+  resumeRemoteCoopAudio,
   sendCoopChatMessage,
   setCoopChatOpen,
   setGuestForceExitHandler,
@@ -224,6 +225,7 @@ const btnCoopMic = document.getElementById('btn-coop-mic') as HTMLButtonElement 
 const chatUnreadDot = document.getElementById('chat-unread-dot');
 const coopChatPanel = document.getElementById('coop-chat-panel') as HTMLDivElement | null;
 const coopChatTitle = document.getElementById('coop-chat-title');
+const coopChatOpenRoom = document.getElementById('coop-chat-open-room') as HTMLButtonElement | null;
 const coopChatClose = document.getElementById('coop-chat-close') as HTMLButtonElement | null;
 const coopChatMessages = document.getElementById('coop-chat-messages') as HTMLDivElement | null;
 const coopChatForm = document.getElementById('coop-chat-form') as HTMLFormElement | null;
@@ -696,30 +698,44 @@ function updateCoopUI(): void {
   }
   if (btnCoopMic) {
     btnCoopMic.classList.toggle('active', coopState.micOn);
+    btnCoopMic.classList.toggle('speaking', coopState.micOn && coopState.speaking);
     btnCoopMic.classList.toggle('muted', !coopState.micOn);
-    btnCoopMic.title = coopState.micOn ? 'Microfone Ligado (clique para mutar)' : 'Abrir Microfone Co-op';
+    btnCoopMic.title = coopState.micOn
+      ? coopState.active
+        ? 'Microfone Ligado na sala Co-op (clique para mutar)'
+        : 'Microfone Ligado (clique para mutar)'
+      : 'Abrir Microfone';
   }
 
-  // Co-op Text Chat Drawer
-  coopChatPanel?.classList.toggle('open', isPlaying && coopState.active && coopState.chatOpen);
+  // In-Game Text Chat Drawer (opens immediately on click, online in Co-op or solo!)
+  coopChatPanel?.classList.toggle('open', isPlaying && coopState.chatOpen);
+  if (coopChatOpenRoom) {
+    coopChatOpenRoom.style.display = isPlaying && !coopState.active ? 'inline-block' : 'none';
+  }
   if (coopChatTitle) {
     coopChatTitle.textContent = coopState.roomCode
       ? `CHAT CO-OP · ${coopState.roomCode} (${coopState.members.length}/${MAX_COOP_PLAYERS})`
-      : 'CHAT CO-OP';
+      : 'CHAT DA CAMPANHA';
   }
   if (coopChatMessages) {
     const atBottom =
       coopChatMessages.scrollHeight - coopChatMessages.scrollTop - coopChatMessages.clientHeight < 28;
     if (coopState.messages.length === 0) {
-      coopChatMessages.innerHTML =
-        '<div class="chat-msg-sys">Sala Co-op pronta! Digite abaixo ou ligue o microfone 🎙 para falar em tempo real.</div>';
+      coopChatMessages.innerHTML = coopState.active
+        ? '<div class="chat-msg-sys">Sala Co-op conectada! Digite abaixo ou ligue o microfone para conversar em tempo real.</div>'
+        : '<div class="chat-msg-sys">Chat pronto! Clique em + CO-OP acima (ou no Menu ☰) para gerar um código e jogar/conversar com até 4 jogadores.</div>';
     } else {
-      coopChatMessages.innerHTML = coopState.messages
-        .map(
-          (m) =>
-            `<div class="chat-msg-line"><span class="chat-msg-author">${escapeHtml(m.displayName)}:</span>${escapeHtml(m.text)}</div>`
-        )
-        .join('');
+      const hintLine = !coopState.active
+        ? '<div class="chat-msg-sys">Modo solo — clique em + CO-OP acima para compartilhar o chat e microfone com amigos!</div>'
+        : '';
+      coopChatMessages.innerHTML =
+        hintLine +
+        coopState.messages
+          .map(
+            (m) =>
+              `<div class="chat-msg-line"><span class="chat-msg-author">${escapeHtml(m.displayName)}:</span>${escapeHtml(m.text)}</div>`
+          )
+          .join('');
     }
     if (atBottom) coopChatMessages.scrollTop = coopChatMessages.scrollHeight;
   }
@@ -1688,53 +1704,90 @@ btnCoopCopyCode?.addEventListener('click', async () => {
   }
 });
 
-// Gameplay Co-op Quick Rail (Chat Bubble + Microphone below Menu button)
+// Prevent clicks/taps on the Chat/Mic rail and Chat panel from moving the Monarch on the canvas
+coopQuickRail?.addEventListener('pointerdown', (e) => {
+  e.stopPropagation();
+  resumeRemoteCoopAudio();
+});
+coopChatPanel?.addEventListener('pointerdown', (e) => {
+  e.stopPropagation();
+  resumeRemoteCoopAudio();
+});
+
+// Gameplay Co-op Quick Rail (Chat Bubble + Microphone directly below Menu button)
 btnCoopChat?.addEventListener('click', (e) => {
   e.stopPropagation();
   sound.unlock();
-  if (!coopState.active) {
-    sound.playCoinDrop();
-    showBanner(world, 'CHAT CO-OP', 'Abra o modo Co-op no Menu (☰) para conversar com até 4 jogadores!', '#ffe58a');
-    setMenuOpen(true);
-    return;
-  }
+  resumeRemoteCoopAudio();
   setCoopChatOpen(!coopState.chatOpen);
   if (coopState.chatOpen) {
+    sound.playCoinDrop();
     setTimeout(() => coopChatInput?.focus(), 40);
+  } else {
+    canvas.focus();
   }
 });
 
-coopChatClose?.addEventListener('click', () => {
+coopChatOpenRoom?.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  sound.unlock();
+  resumeRemoteCoopAudio();
+  if (coopState.active) return;
+  const res = await hostOpenCoopRoom(world);
+  if (res.ok && res.code) {
+    sound.playHorn(false);
+    showBanner(
+      world,
+      `CO-OP ABERTO · CÓDIGO ${res.code}`,
+      'Compartilhe este código para até 4 jogadores conversarem e jogarem juntos!',
+      '#6fe87b'
+    );
+    updateCoopUI();
+  } else {
+    sound.playHit();
+    showBanner(world, 'CO-OP ONLINE', res.error ?? 'Conecte sua conta Google para abrir Co-op.', '#ff8a65');
+  }
+});
+
+coopChatClose?.addEventListener('click', (e) => {
+  e.stopPropagation();
   setCoopChatOpen(false);
   canvas.focus();
 });
 
 coopChatForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
+  e.stopPropagation();
   if (!coopChatInput) return;
   const txt = coopChatInput.value.trim();
   if (!txt) return;
   coopChatInput.value = '';
-  const ok = await sendCoopChatMessage(txt);
-  if (ok) sound.playCoinDrop();
+  const res = await sendCoopChatMessage(txt);
+  if (res.ok) {
+    sound.playCoinDrop();
+    if (coopChatMessages) coopChatMessages.scrollTop = coopChatMessages.scrollHeight;
+  } else if (res.error) {
+    sound.playHit();
+    showBanner(world, 'CHAT CO-OP', res.error, '#ff8a65');
+  }
+  coopChatInput.focus();
 });
 
 btnCoopMic?.addEventListener('click', async (e) => {
   e.stopPropagation();
   sound.unlock();
-  if (!coopState.active) {
-    sound.playCoinDrop();
-    showBanner(world, 'MICROFONE CO-OP', 'Abra o modo Co-op no Menu (☰) para conversar por voz!', '#ffe58a');
-    setMenuOpen(true);
-    return;
-  }
+  resumeRemoteCoopAudio();
   const res = await toggleCoopMicrophone();
   if (res.ok) {
     sound.playCoinPickup();
     showBanner(
       world,
-      res.micOn ? 'MICROFONE LIGADO 🎙' : 'MICROFONE MUTADO',
-      res.micOn ? 'Sua voz está sendo transmitida para a sala Co-op.' : 'Microfone desligado.',
+      res.micOn ? 'MICROFONE LIGADO' : 'MICROFONE MUTADO',
+      res.micOn
+        ? res.inRoom
+          ? 'Sua voz está sendo transmitida em tempo real para a sala Co-op!'
+          : 'Microfone aberto! Abra o Co-op (+ CO-OP ou Menu ☰) para conversar com até 4 jogadores.'
+        : 'Microfone desligado.',
       res.micOn ? '#6fe87b' : '#9bb7d0'
     );
   } else {

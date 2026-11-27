@@ -2213,6 +2213,30 @@ export class PixelRenderer {
       const sx = Math.round(shop.x - camX);
       if (sx < -32 || sx > this.viewW + 32) continue;
 
+      // Wooden signboard mounted above the tent with the respective tool pixel icon!
+      const signX = sx - 8;
+      const signY = GROUND_Y - 38;
+      // Vertical wooden support posts connecting roof to signboard
+      ctx.fillStyle = '#4e3524';
+      ctx.fillRect(sx - 5, GROUND_Y - 27, 2, 4);
+      ctx.fillRect(sx + 3, GROUND_Y - 27, 2, 4);
+      // Wooden plaque border & oak plank fill
+      ctx.fillStyle = '#3b2414';
+      ctx.fillRect(signX - 1, signY - 1, 18, 14);
+      ctx.fillStyle = '#7c5230';
+      ctx.fillRect(signX, signY, 16, 12);
+      ctx.fillStyle = '#9c6c42';
+      ctx.fillRect(signX, signY, 16, 2);
+      ctx.fillStyle = '#5e3c20';
+      ctx.fillRect(signX, signY + 10, 16, 2);
+      // Tiny iron corner nails
+      ctx.fillStyle = '#c8d4e0';
+      ctx.fillRect(signX + 1, signY + 1, 1, 1);
+      ctx.fillRect(signX + 14, signY + 1, 1, 1);
+      // Respective tool pixel icon centered on the wooden sign
+      this.drawPixelIcon(ctx, shop.kind, sx - 4, signY + 2);
+
+      // Tent wooden poles & clan-colored awning
       ctx.fillStyle = '#4e3524';
       ctx.fillRect(sx - 13, GROUND_Y - 22, 3, 22);
       ctx.fillRect(sx + 10, GROUND_Y - 22, 3, 22);

@@ -131,6 +131,12 @@
       border-color: #6fe87b;
       color: #a8ffb2;
     }
+    .rail-pixel-btn.speaking {
+      background: #1f5c38;
+      border-color: #b8ffbf;
+      color: #ffffff;
+      box-shadow: 0 0 0 2px #6fe87b, 3px 3px 0 #000000;
+    }
     .rail-pixel-btn.muted {
       border-color: #6b89a8;
       color: #9bb4cc;
@@ -1139,7 +1145,10 @@
     <div id="coop-chat-panel" role="region" aria-label="Chat Co-op">
       <div id="coop-chat-header">
         <span id="coop-chat-title">CHAT CO-OP</span>
-        <button id="coop-chat-close" type="button" aria-label="Fechar Chat">✕</button>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <button id="coop-chat-open-room" type="button" style="display:none;font-family:'Pixelify Sans',monospace;font-size:10px;font-weight:700;padding:2px 6px;background:#173d25;border:2px solid #6fe87b;color:#a8ffb2;cursor:pointer;">+ CO-OP</button>
+          <button id="coop-chat-close" type="button" aria-label="Fechar Chat">✕</button>
+        </div>
       </div>
       <div id="coop-chat-messages"></div>
       <form id="coop-chat-form">
