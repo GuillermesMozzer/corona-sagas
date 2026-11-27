@@ -122,6 +122,8 @@ export type VillagerState =
   | 'hunting'
   | 'defending'
   | 'producing'
+  | 'foraging'
+  | 'fishing'
   | 'boarding'
   | 'embarked'
   | 'fleeing';
@@ -149,7 +151,9 @@ export interface Villager {
   orderDir: -1 | 0 | 1;
 }
 
-export type BuilderTaskKind = 'wall' | 'tower' | 'forge' | 'boat' | 'dock' | 'farm' | 'rock' | 'tree';
+export type Season = 'summer' | 'autumn' | 'winter' | 'spring';
+
+export type BuilderTaskKind = 'wall' | 'tower' | 'forge' | 'boat' | 'dock' | 'farm' | 'brewery' | 'rock' | 'tree';
 
 export interface PriorityTaskRef {
   kind: BuilderTaskKind;
@@ -227,7 +231,13 @@ export interface Hall {
 }
 
 export interface BankerState {
-  x: number;
+  x: number; // Fixed vault desk X
+  walkX?: number; // Live walking X during morning farm collection rounds
+  facing?: 1 | -1;
+  animTime?: number;
+  carriedCoins?: number;
+  phase?: 'idle' | 'left_sweep' | 'return_from_left' | 'right_sweep' | 'return_from_right';
+  targetFarmId?: number | null;
   balance: number;
   interestFraction: number;
   lastDayYield: number;
@@ -266,6 +276,8 @@ export interface BoatState {
   crewWarriors: number;
   crewProducers: number;
   crewBuilders: number;
+  waterDropProgress?: number; // 0 = on land, 0..1 = launching into fjord, 1 = floating in water
+  attackCooldown?: number; // Cooldown for embarked archers & warriors defending the boat
   orderedAt?: number;
 }
 
@@ -333,6 +345,15 @@ export interface LightningBolt {
   life: number;
 }
 
+export interface BerryBush {
+  id: number;
+  x: number;
+  berries: number; // 0 = bare, 1..4 = ripe harvests available in Winter & Spring
+  marked: boolean; // Player paid 1 coin to order foraging
+  forageProgress: number; // 0..1
+  orderedAt?: number;
+}
+
 export interface IslandSnapshot {
   hall: Hall;
   forge: ForgeState | null;
@@ -349,6 +370,7 @@ export interface IslandSnapshot {
   camps: VagrantCamp[];
   trees: Tree[];
   rocks: Rock[];
+  berryBushes?: BerryBush[];
   chests: Chest[];
   portals: Portal[];
   villagers: Villager[];
@@ -363,6 +385,16 @@ export interface VagrantCamp {
   x: number;
   spawnTimer: number;
   active: boolean;
+  isBrewerySite?: boolean; // First innermost camp on each side can become a Brewery!
+  isBrewery?: boolean;
+  breweryCoinsPaid?: number; // 0..15 coins + wood + stone
+  breweryUnderConstruction?: boolean;
+  breweryBuildProgress?: number; // 0..1
+  beerStock?: number; // 0..4 beers (4 coins each)
+  beerCoinsPaid?: number; // 0..4
+  breweryAttractTimer?: number;
+  daysSinceSpawn?: number;
+  orderedAt?: number;
 }
 
 export interface Tree {
@@ -460,6 +492,9 @@ export type PromptTargetType =
   | 'buff_forge'
   | 'tree'
   | 'rock'
+  | 'berry_bush'
+  | 'brewery_build'
+  | 'brewery_beer'
   | 'wanderer'
   | 'boat_build'
   | 'boat_sail'
@@ -640,6 +675,7 @@ export interface WorldState {
   thorActivated: boolean;
   unlockedMounts: MountId[];
   day: number;
+  season?: Season;
   dayHalfMinutes: number;
   timeOfDay: number;
   threatLevel: number;
@@ -667,6 +703,7 @@ export interface WorldState {
   camps: VagrantCamp[];
   trees: Tree[];
   rocks: Rock[];
+  berryBushes?: BerryBush[];
   rockRegrowQueue: number;
   rockRegrowTimer: number;
   treeRegrowQueue: number;

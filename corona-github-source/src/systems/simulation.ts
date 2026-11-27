@@ -25,6 +25,7 @@ import {
   type PromptTargetType,
   type ResourceCost,
   type ResourceSize,
+  type Season,
   type ToolShopKind,
   type Villager,
   type VillagerRole,
@@ -34,6 +35,58 @@ import {
 import { generateIslandSnapshot, heightForTreeSize, sizeFromVariant } from '../world/initWorld';
 import { getIslandDef } from '../world/islands';
 import { GOD_DEFS, MOUNT_DEFS } from '../world/mountsAndGods';
+
+export const BREWERY_BUILD_COST: ResourceCost = { coins: 15, wood: 10, stone: 10, iron: 0 };
+export const BREWERY_BEER_COST = 4;
+export const BREWERY_MAX_BEERS = 4;
+
+export interface SeasonModifiers {
+  farm: number;
+  animal: number;
+  tree: number;
+  rock: number;
+  hasBerries: boolean;
+}
+
+export function getSeasonForDay(day: number): Season {
+  const seasons: Season[] = ['summer', 'autumn', 'winter', 'spring'];
+  const idx = Math.floor((Math.max(1, day) - 1) / 15) % 4;
+  return seasons[idx];
+}
+
+export function getSeasonLabel(season: Season = 'summer'): string {
+  switch (season) {
+    case 'summer':
+      return 'VERÃO';
+    case 'autumn':
+      return 'OUTONO';
+    case 'winter':
+      return 'INVERNO';
+    case 'spring':
+      return 'PRIMAVERA';
+  }
+}
+
+export function getSeasonModifiers(season: Season = 'summer'): SeasonModifiers {
+  switch (season) {
+    case 'summer':
+      return { farm: 1.0, animal: 1.55, tree: 1.5, rock: 0.45, hasBerries: false };
+    case 'autumn':
+      return { farm: 0.45, animal: 1.45, tree: 1.5, rock: 1.0, hasBerries: false };
+    case 'winter':
+      return { farm: 0, animal: 0.25, tree: 0.4, rock: 0.45, hasBerries: true };
+    case 'spring':
+      return { farm: 1.55, animal: 1.5, tree: 1.5, rock: 1.0, hasBerries: true };
+  }
+}
+
+/**
+ * Progressive economy tightening starting from Island 2 so each island takes ~30 minutes of strategic play.
+ */
+export function getIslandCoinDifficultyMult(islandId: number): number {
+  if (islandId <= 1) return 1.0;
+  return Math.max(0.42, 1.0 - (islandId - 1) * 0.11);
+}
 
 export interface RockHarvestSpec {
   stone: number;
@@ -260,8 +313,14 @@ export function getBoatBuildResourceCost(): ResourceCost {
   return { coins: BOAT_BUILD_COST, wood: 10, stone: 5, iron: 0 };
 }
 
-export function getDockBuildResourceCost(): ResourceCost {
-  return { coins: DOCK_BUILD_COST, wood: 12, stone: 10, iron: 2 };
+export function getDockBuildResourceCost(currentIsland = 2): ResourceCost {
+  const extra = Math.max(0, currentIsland - 2);
+  return {
+    coins: DOCK_BUILD_COST + extra * 5,
+    wood: 12 + extra * 3,
+    stone: 10 + extra * 3,
+    iron: 2 + extra * 2,
+  };
 }
 
 export function getWallMaxHp(level: number, odinBlessed = false): number {
@@ -304,7 +363,12 @@ export function computeThreatLevel(w: WorldState): number {
   const islandDef = getIslandDef(w.currentIsland);
   return Math.max(
     1,
-    Math.round(w.day + (islandDef.difficultyBase - 1) * 2.5 + (w.isBloodMoon ? 3 : 0))
+    Math.round(
+      w.day +
+        Math.max(0, w.currentIsland - 1) * 3.5 +
+        (islandDef.difficultyBase - 1) * 1.5 +
+        (w.isBloodMoon ? 4 : 0)
+    )
   );
 }
 
@@ -457,6 +521,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
       camps: w.camps.map((c) => ({ ...c })),
       trees: w.trees.map((tr) => ({ ...tr })),
       rocks: w.rocks.map((r) => ({ ...r })),
+      berryBushes: (w.berryBushes ?? []).map((b) => ({ ...b })),
       chests: w.chests.map((c) => ({ ...c })),
       portals: w.portals.map((p) => ({ ...p })),
       villagers: stayingVillagers.map((v) => ({ ...v })),
@@ -491,6 +556,8 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
       crewWarriors: 0,
       crewProducers: 0,
       crewBuilders: 0,
+      waterDropProgress: 1,
+      attackCooldown: 0,
     };
     w.dock = { ...nextSnap.dock };
     w.godShrine = nextSnap.godShrine ? { ...nextSnap.godShrine } : null;
@@ -499,6 +566,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     w.camps = nextSnap.camps.map((c) => ({ ...c }));
     w.trees = nextSnap.trees.map((tr) => ({ ...tr }));
     w.rocks = nextSnap.rocks.map((r) => ({ ...r }));
+    w.berryBushes = (nextSnap.berryBushes ?? []).map((b) => ({ ...b }));
     w.chests = nextSnap.chests.map((c) => ({ ...c }));
     w.portals = nextSnap.portals.map((p) => ({ ...p }));
     w.villagers = nextSnap.villagers.map((v) => ({ ...v }));
@@ -520,7 +588,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
       });
     });
   } else {
-    // Fresh unexplored island! Boat arrives ashore; Dock must be built!
+    // Fresh unexplored island! Boat arrives floating by shore; Dock must be built!
     const fresh = generateIslandSnapshot(targetIslandId, () => uid(w), embarkedCrew);
     w.hall = fresh.hall;
     w.forge = fresh.forge;
@@ -529,7 +597,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     w.towers = fresh.towers;
     w.farms = fresh.farms;
     w.islandBuffs = fresh.islandBuffs;
-    w.boat = fresh.boat;
+    w.boat = { ...fresh.boat, waterDropProgress: fresh.boat.built ? 1 : 0, attackCooldown: 0 };
     w.dock = fresh.dock;
     w.godShrine = fresh.godShrine;
     w.mountShrine = fresh.mountShrine;
@@ -537,6 +605,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     w.camps = fresh.camps;
     w.trees = fresh.trees;
     w.rocks = fresh.rocks;
+    w.berryBushes = fresh.berryBushes ?? [];
     w.chests = fresh.chests;
     w.portals = fresh.portals;
     w.villagers = fresh.villagers;
@@ -545,6 +614,27 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     w.treeRegrowQueue = fresh.treeRegrowQueue;
     w.treeRegrowTimer = fresh.treeRegrowTimer;
   }
+
+  // Sync berry bushes with active season on destination island
+  const curSeasonMod = getSeasonModifiers(w.season);
+  for (const bush of w.berryBushes) {
+    if (curSeasonMod.hasBerries) {
+      if (bush.berries <= 0) bush.berries = w.season === 'spring' ? 4 : 3;
+    } else {
+      bush.berries = 0;
+      bush.marked = false;
+      bush.forageProgress = 0;
+    }
+  }
+
+  // Reset Banker walking state cleanly to vault on arrival
+  if (w.banker.carriedCoins && w.banker.carriedCoins > 0) {
+    w.banker.balance += w.banker.carriedCoins;
+  }
+  w.banker.walkX = w.banker.x;
+  w.banker.carriedCoins = 0;
+  w.banker.phase = 'idle';
+  w.banker.targetFarmId = null;
 
   // Clear transient entities and spawn Monarch beside the arrived Drakkar!
   w.enemies = [];
@@ -577,10 +667,11 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
   sound.playHorn(false);
   const def = getIslandDef(targetIslandId);
   const lang = getLanguage();
+  const dockCost = getDockBuildResourceCost(targetIslandId);
   showBanner(
     w,
     def.name[lang],
-    w.dock.built ? def.subtitle[lang] : 'Construa o Porto (30🪙 + Madeira/Pedra/Ferro) e ative os Buffs da ilha!',
+    w.dock.built ? def.subtitle[lang] : `Construa o Porto (${dockCost.coins}🪙 + Madeira/Pedra/Ferro) e prepare as defesas!`,
     w.crest.secondaryColor
   );
   syncCurrentIslandProgress(w);
@@ -972,7 +1063,7 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
   if (w.hall.level >= 1 && w.dock.required && !w.dock.built && !w.dock.underConstruction) {
     const d = Math.abs(m.x - w.dock.x);
     if (d < 34 && d < bestDist) {
-      const dockCost = getDockBuildResourceCost();
+      const dockCost = getDockBuildResourceCost(w.currentIsland);
       const pending = countPendingFlyingCoins(w, 'dock_build', 0);
       if (w.dock.coinsPaid < dockCost.coins) {
         bestDist = d;
@@ -1207,6 +1298,52 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
     }
   }
 
+  // 7e. Breweries on first vagrant camp of each side (15 coins + Wood + Stone -> 4 coins per beer, max 4 beers!)
+  if (w.hall.level >= 1) {
+    for (const camp of w.camps) {
+      if (!camp.isBrewerySite) continue;
+      const d = Math.abs(m.x - camp.x);
+      if (d >= 30 || d >= bestDist) continue;
+      if (!camp.isBrewery && !camp.breweryUnderConstruction) {
+        const paid = camp.breweryCoinsPaid ?? 0;
+        const pending = countPendingFlyingCoins(w, 'brewery_build', camp.id);
+        if (paid < BREWERY_BUILD_COST.coins) {
+          bestDist = d;
+          best = {
+            x: camp.x,
+            y: GROUND_Y - 46,
+            label: 'CERVEJARIA',
+            actionClass: 'brewery_build',
+            cost: BREWERY_BUILD_COST.coins,
+            paid,
+            pending,
+            woodCost: BREWERY_BUILD_COST.wood,
+            stoneCost: BREWERY_BUILD_COST.stone,
+            targetType: 'brewery_build',
+            targetId: camp.id,
+          };
+        }
+      } else if (camp.isBrewery && (camp.beerStock ?? 0) < BREWERY_MAX_BEERS) {
+        const paid = camp.beerCoinsPaid ?? 0;
+        const pending = countPendingFlyingCoins(w, 'brewery_beer', camp.id);
+        if (paid < BREWERY_BEER_COST) {
+          bestDist = d;
+          best = {
+            x: camp.x,
+            y: GROUND_Y - 46,
+            label: `CERVEJA (${camp.beerStock ?? 0}/${BREWERY_MAX_BEERS})`,
+            actionClass: 'brewery_beer',
+            cost: BREWERY_BEER_COST,
+            paid,
+            pending,
+            targetType: 'brewery_beer',
+            targetId: camp.id,
+          };
+        }
+      }
+    }
+  }
+
   // 8. Nearest wanderer
   for (const v of w.villagers) {
     if (v.role !== 'wanderer') continue;
@@ -1224,6 +1361,27 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
         pending,
         targetType: 'wanderer',
         targetId: v.id,
+      };
+    }
+  }
+
+  // 8b. Berry bushes (Winter & Spring: pay 1 coin for farmers to harvest berries!)
+  for (const bush of w.berryBushes ?? []) {
+    if (bush.berries <= 0 || bush.marked) continue;
+    const d = Math.abs(m.x - bush.x);
+    if (d < 26 && d < bestDist) {
+      const pending = countPendingFlyingCoins(w, 'berry_bush', bush.id);
+      bestDist = d;
+      best = {
+        x: bush.x,
+        y: GROUND_Y - 28,
+        label: 'COLHER FRUTINHAS',
+        actionClass: 'berry_bush',
+        cost: 1,
+        paid: 0,
+        pending,
+        targetType: 'berry_bush',
+        targetId: bush.id,
       };
     }
   }
@@ -1602,7 +1760,7 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
 
   if (fc.targetType === 'dock_build') {
     if (w.dock.required && !w.dock.built && !w.dock.underConstruction) {
-      const dockCost = getDockBuildResourceCost();
+      const dockCost = getDockBuildResourceCost(w.currentIsland);
       w.dock.coinsPaid = Math.min(dockCost.coins, w.dock.coinsPaid + 1);
       w.dock.buildProgress = Math.min(0.85, (w.dock.coinsPaid / dockCost.coins) * 0.85);
       if (w.dock.coinsPaid >= dockCost.coins) {
@@ -1861,6 +2019,60 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
       sound.playHammer();
       spawnBurst(w, rock.x, GROUND_Y - 12, 6, '#cfdbe6', 'stone', 24);
     }
+    return;
+  }
+
+  if (fc.targetType === 'berry_bush') {
+    const bush = (w.berryBushes ?? []).find((b) => b.id === fc.targetId);
+    if (bush && bush.berries > 0 && !bush.marked) {
+      bush.marked = true;
+      bush.orderedAt = stampOrderSeq(w);
+      markActionClassCompleted(w, 'berry_bush');
+      sound.playCoinPickup();
+      spawnBurst(w, bush.x, GROUND_Y - 10, 6, '#ff5c7a', 'spark', 22);
+    }
+    return;
+  }
+
+  if (fc.targetType === 'brewery_build') {
+    const camp = w.camps.find((c) => c.id === fc.targetId);
+    if (camp && camp.isBrewerySite && !camp.isBrewery && !camp.breweryUnderConstruction) {
+      camp.breweryCoinsPaid = (camp.breweryCoinsPaid ?? 0) + 1;
+      if (camp.breweryCoinsPaid >= BREWERY_BUILD_COST.coins) {
+        if (!hasRequiredMaterials(w, BREWERY_BUILD_COST)) {
+          camp.breweryCoinsPaid = Math.max(0, camp.breweryCoinsPaid - 1);
+          if (w.monarchs[0]) {
+            w.monarchs[0].coins = Math.min(w.monarchs[0].maxCoins, w.monarchs[0].coins + 1);
+            w.resources.gold = w.monarchs[0].coins;
+          }
+          showBanner(w, 'RECURSOS INSUFICIENTES', `Falta: ${formatMissingMaterials(w, BREWERY_BUILD_COST)}`, '#ff8a65');
+          return;
+        }
+        consumeMaterials(w, BREWERY_BUILD_COST);
+        camp.breweryCoinsPaid = 0;
+        camp.breweryUnderConstruction = true;
+        camp.breweryBuildProgress = 0;
+        camp.orderedAt = stampOrderSeq(w);
+        markActionClassCompleted(w, 'brewery_build');
+        sound.playHammer();
+        showBanner(w, 'CERVEJARIA ENCOMENDADA!', 'Construtores irão transformar a barraca em Cervejaria!', '#f5c469');
+      }
+    }
+    return;
+  }
+
+  if (fc.targetType === 'brewery_beer') {
+    const camp = w.camps.find((c) => c.id === fc.targetId);
+    if (camp && camp.isBrewery && (camp.beerStock ?? 0) < BREWERY_MAX_BEERS) {
+      camp.beerCoinsPaid = (camp.beerCoinsPaid ?? 0) + 1;
+      if (camp.beerCoinsPaid >= BREWERY_BEER_COST) {
+        camp.beerCoinsPaid = 0;
+        camp.beerStock = Math.min(BREWERY_MAX_BEERS, (camp.beerStock ?? 0) + 1);
+        markActionClassCompleted(w, 'brewery_beer');
+        sound.playCoinPickup();
+        spawnBurst(w, camp.x, GROUND_Y - 18, 10, '#f7d265', 'spark', 32);
+      }
+    }
   }
 }
 
@@ -2111,6 +2323,10 @@ function findOrderedTaskX(w: WorldState, kind: BuilderTaskKind, id: number): num
   }
   if (kind === 'farm') {
     const item = w.farms.find((x) => x.id === id && x.underConstruction);
+    return item ? item.x : null;
+  }
+  if (kind === 'brewery') {
+    const item = w.camps.find((x) => x.id === id && x.breweryUnderConstruction && !x.isBrewery);
     return item ? item.x : null;
   }
   if (kind === 'rock') {
@@ -2494,17 +2710,7 @@ function updateMonarch(
     spawnBurst(w, w.hall.x, GROUND_Y - 22, 6, '#f7d265', 'spark', 32);
   }
 
-  // Collect stored farm coins when riding past built farms!
-  for (const farm of w.farms) {
-    if (farm.level >= 1 && farm.storedCoins > 0 && Math.abs(m.x - farm.x) < 26 && m.coins < m.maxCoins) {
-      const take = Math.min(farm.storedCoins, m.maxCoins - m.coins);
-      farm.storedCoins -= take;
-      m.coins += take;
-      if (isHostPrimary) w.resources.gold = m.coins;
-      sound.playCoinPickup();
-      spawnBurst(w, farm.x, GROUND_Y - 16, 6, '#f7d265', 'spark', 28);
-    }
-  }
+  // Note: Stored farm coins remain at each farm until full so the Banker collects them every morning!
 
   // Crown physics
   if (!m.hasCrown && m.crownStolenByEnemyId === null) {
@@ -2601,23 +2807,25 @@ function updateForgeAndRegrowth(w: WorldState, dt: number): void {
 
 function pickProgressiveEnemyKind(w: WorldState, indexInQueue: number): EnemyKind {
   const threat = w.threatLevel;
-  if ((w.isBloodMoon && w.day >= 4 && indexInQueue === 0) || (threat >= 8 && indexInQueue === 0 && Math.random() < 0.4)) {
+  if ((w.isBloodMoon && indexInQueue === 0) || (threat >= 7 && indexInQueue === 0 && Math.random() < 0.45)) {
     return 'frost_troll';
   }
-  if (threat >= 4 && Math.random() < Math.min(0.28, 0.1 + (threat - 4) * 0.03)) {
+  if (threat >= 4 && Math.random() < Math.min(0.3, 0.1 + (threat - 4) * 0.03)) {
     return 'hel_crow'; // Flying aerial enemy!
   }
-  if (threat >= 3 && Math.random() < Math.min(0.32, 0.15 + (threat - 3) * 0.03)) {
+  if (threat >= 3 && Math.random() < Math.min(0.35, 0.15 + (threat - 3) * 0.035)) {
     return 'draugr_brute';
   }
-  if (threat >= 2 && Math.random() < Math.min(0.3, 0.12 + (threat - 2) * 0.03)) {
+  if (threat >= 2 && Math.random() < Math.min(0.32, 0.12 + (threat - 2) * 0.03)) {
     return 'wolf_wraith';
   }
   return 'draugr';
 }
 
 function spawnProgressiveEnemy(w: WorldState, portalX: number, side: -1 | 1, kind: EnemyKind): void {
-  const threatScale = 1 + Math.max(0, w.threatLevel - 2) * 0.08;
+  const islandScale = Math.max(0, w.currentIsland - 1) * 0.24;
+  const bloodBonus = w.isBloodMoon ? 0.35 : 0;
+  const threatScale = 1 + Math.max(0, w.threatLevel - 2) * 0.11 + islandScale + bloodBonus;
   const baseHpMap: Record<EnemyKind, number> = {
     draugr: 18,
     wolf_wraith: 14,
@@ -2676,7 +2884,32 @@ function updateDayNightAndWaves(w: WorldState, dt: number): void {
     w.stats.daysSurvived = w.day;
     w.waveTriggeredTonight = false;
     w.nightWaveStage = 0;
-    w.isBloodMoon = w.day % 4 === 0;
+
+    // Blood Moons occur strictly every 15 days and mark climate/season transitions!
+    w.isBloodMoon = w.day % 15 === 0;
+    const prevSeason = w.season;
+    const nextSeason = getSeasonForDay(w.day);
+    w.season = nextSeason;
+    const seasonChanged = nextSeason !== prevSeason;
+    const seasonMod = getSeasonModifiers(w.season);
+    const coinDiffMult = getIslandCoinDifficultyMult(w.currentIsland);
+
+    // Update seasonal Berry Bushes (bloom in Winter & Spring; dormant in Summer & Autumn)
+    for (const bush of w.berryBushes ?? []) {
+      if (seasonMod.hasBerries) {
+        if (w.season === 'spring') {
+          bush.berries = 4;
+        } else {
+          // Winter: initial bloom of 3, gentle daily replenishment up to 3
+          bush.berries = seasonChanged ? 3 : Math.min(3, bush.berries + 1);
+        }
+      } else {
+        bush.berries = 0;
+        bush.marked = false;
+        bush.forageProgress = 0;
+      }
+    }
+
     w.threatLevel = computeThreatLevel(w);
     sound.playHorn(false);
 
@@ -2693,54 +2926,60 @@ function updateDayNightAndWaves(w: WorldState, dt: number): void {
       w.banker.lastDayYield = 0;
     }
 
-    // 2. Passive Hall tribute (scales with Kingdom level Lv 2..10)
-    if (w.hall.level >= 2) {
-      const tribute = Math.min(20, 1 + w.hall.level * 2);
+    // 2. Passive Hall tribute (zero in harsh Winter; tighter on Island 2+)
+    if (w.hall.level >= 2 && seasonMod.farm > 0) {
+      const rawTribute = Math.min(18, 1 + w.hall.level * 1.5);
+      const tribute = Math.max(1, Math.round(rawTribute * coinDiffMult * Math.min(1.2, seasonMod.farm)));
       w.hall.storedTaxCoins = Math.min(80, w.hall.storedTaxCoins + tribute);
     }
 
-    // 3. DAILY FARM GENERATION: scales with Farm level (1..10), farmer count (2+level), storage cap & Freya (+50%)!
+    // 3. DAILY FARM GENERATION:
+    // - ZERO in Winter!
+    // - Scaled by season (low in Autumn, high in Spring), Island 2+ difficulty, and Freya (+50%)
+    // - Stored inside farm.storedCoins up to storageCap so full farms are collected by the Banker each morning!
     const freyaMult = w.activeGod === 'freya' ? 1.5 : 1.0;
     let farmCoinsGenerated = 0;
-    for (const farm of w.farms) {
-      if (farm.level <= 0) continue;
-      const maxFarmers = getFarmMaxFarmers(farm.level);
-      const farmersHere = Math.min(maxFarmers, countFarmersAssignedToFarm(w, farm.id));
-      if (farmersHere <= 0) continue;
-      const yieldCoins = Math.round(farmersHere * (1 + farm.level * 0.85) * freyaMult);
-      const storageCap = getFarmStorageCap(farm.level);
-      farmCoinsGenerated += yieldCoins;
-      const groundDrop = Math.min(8, yieldCoins);
-      for (let c = 0; c < groundDrop; c++) {
-        spawnCoin(
-          w,
-          farm.x + (Math.random() - 0.5) * 28,
-          GROUND_Y - 12,
-          (Math.random() - 0.5) * 45,
-          -55 - Math.random() * 25,
-          false,
-          0.2
-        );
+    if (seasonMod.farm > 0) {
+      for (const farm of w.farms) {
+        if (farm.level <= 0) continue;
+        const maxFarmers = getFarmMaxFarmers(farm.level);
+        const farmersHere = Math.min(maxFarmers, countFarmersAssignedToFarm(w, farm.id));
+        if (farmersHere <= 0) continue;
+        const rawYield = farmersHere * (1 + farm.level * 0.78) * freyaMult * seasonMod.farm * coinDiffMult;
+        const yieldCoins = Math.max(1, Math.round(rawYield));
+        const storageCap = getFarmStorageCap(farm.level);
+        const before = farm.storedCoins;
+        farm.storedCoins = Math.min(storageCap, farm.storedCoins + yieldCoins);
+        farmCoinsGenerated += Math.max(0, farm.storedCoins - before);
+        farm.storedFood = Math.min(storageCap, farm.storedFood + Math.max(1, Math.round(farmersHere * farm.level * seasonMod.farm)));
       }
-      const remainder = yieldCoins - groundDrop;
-      if (remainder > 0) {
-        farm.storedCoins = Math.min(storageCap, farm.storedCoins + remainder);
-      }
-      farm.storedFood = Math.min(storageCap, farm.storedFood + farmersHere * farm.level);
     }
 
-    // 4. Resource renewal is driven by idle workers (Builders plant trees, Swordsmen excavate rocks, Trees spawn wildlife)
+    // 4. Kick off Banker morning farm collection round (LEFT full farms -> Bank -> RIGHT full farms -> Bank)
+    if (w.hall.level >= 1) {
+      w.banker.walkX = w.banker.walkX ?? w.banker.x;
+      w.banker.phase = 'left_sweep';
+      w.banker.targetFarmId = null;
+    }
+
+    // 5. Resource renewal is driven by idle workers (Builders plant trees, Swordsmen excavate rocks, Trees spawn wildlife)
     w.rockRegrowQueue = 0;
     w.treeRegrowQueue = 0;
 
     for (const enemy of w.enemies) enemy.retreating = true;
 
+    // 6. Declining natural vagrant spawns (progressively fewer & spaced further apart by day & island difficulty!)
+    const spawnIntervalDays = Math.max(1, Math.floor(1 + (w.currentIsland - 1) * 0.9 + Math.floor(w.day / 7)));
+    const campWandererCap = w.currentIsland === 1 && w.day <= 6 ? 2 : 1;
     for (const camp of w.camps) {
-      if (!camp.active) continue;
+      if (!camp.active || camp.isBrewery) continue;
+      camp.daysSinceSpawn = (camp.daysSinceSpawn ?? 0) + 1;
+      if (camp.daysSinceSpawn < spawnIntervalDays) continue;
       const nearbyWanderers = w.villagers.filter(
         (v) => v.role === 'wanderer' && v.homeCampId === camp.id
       ).length;
-      if (nearbyWanderers < 2) {
+      if (nearbyWanderers < campWandererCap) {
+        camp.daysSinceSpawn = 0;
         w.villagers.push({
           id: uid(w),
           x: camp.x + (Math.random() - 0.5) * 28,
@@ -2770,14 +3009,33 @@ function updateDayNightAndWaves(w: WorldState, dt: number): void {
     if (bankInterest > 0) notes.push(`Banco +${bankInterest}🪙 (${getBankerDailyRatePct(w.hall.level)}%)`);
     if (farmCoinsGenerated > 0) notes.push(`Fazendas +${farmCoinsGenerated}🪙`);
     const extraNotes = notes.length > 0 ? ` · ${notes.join(' · ')}` : '';
-    showBanner(
-      w,
-      w.isBloodMoon ? `${t('day_short')} ${w.day} — LUA DE SANGUE` : `${t('day_short')} ${w.day} · ${t('threat_lbl')} ${w.threatLevel}`,
-      w.isBloodMoon
-        ? `Ameaça Nv.${w.threatLevel} à noite! Reforce muros e torres${extraNotes}`
-        : `Reino Nv.${w.hall.level}${extraNotes || ` · Dia de ${w.dayHalfMinutes} min`}`,
-      w.isBloodMoon ? '#ff6b6b' : w.crest.secondaryColor
-    );
+    const seasonName = getSeasonLabel(w.season);
+
+    if (seasonChanged) {
+      const seasonDesc: Record<Season, string> = {
+        summer: 'Alta produção de animais e árvores · Baixa produção de pedras',
+        autumn: 'Alta produção de árvores e animais · Baixa produção de fazendas',
+        winter: 'Zero fazendas! Colha frutinhas e pesque no rio para sobreviver',
+        spring: 'Alta produção de fazendas, animais, árvores e frutinhas!',
+      };
+      showBanner(
+        w,
+        `NOVA ESTAÇÃO: ${seasonName} · ${t('day_short')} ${w.day}`,
+        `${seasonDesc[w.season]}${extraNotes}`,
+        w.season === 'winter' ? '#8fd8ff' : w.season === 'autumn' ? '#f09c42' : w.season === 'spring' ? '#7ce88c' : '#ffd86b'
+      );
+    } else {
+      showBanner(
+        w,
+        w.isBloodMoon
+          ? `${t('day_short')} ${w.day} — LUA DE SANGUE (${seasonName})`
+          : `${t('day_short')} ${w.day} · ${seasonName} · ${t('threat_lbl')} ${w.threatLevel}`,
+        w.isBloodMoon
+          ? `Mudança de clima iminente! Ameaça Nv.${w.threatLevel} à noite${extraNotes}`
+          : `Reino Nv.${w.hall.level}${extraNotes || ` · Dia de ${w.dayHalfMinutes} min`}`,
+        w.isBloodMoon ? '#ff6b6b' : w.crest.secondaryColor
+      );
+    }
     syncCurrentIslandProgress(w);
     saveCampaign(w);
   }
@@ -2797,21 +3055,25 @@ function updateDayNightAndWaves(w: WorldState, dt: number): void {
       showBanner(
         w,
         w.isBloodMoon ? `LUA DE SANGUE · ${t('threat_lbl')} ${w.threatLevel}` : `NOITE ${w.day} · ${t('threat_lbl')} ${w.threatLevel}`,
-        'Ataques mais fortes a cada noite — os portais de Helheim se abrem!',
+        w.isBloodMoon
+          ? 'A Lua de Sangue anuncia mudança de estação e invasão massiva!'
+          : 'Ataques mais fortes a cada noite — os portais de Helheim se abrem!',
         w.isBloodMoon ? '#ff5e6c' : '#8cc8ff'
       );
     }
   }
 
-  // Progressive Night Sub-Waves scaled by threatLevel!
+  // Progressive Night Sub-Waves scaled by threatLevel & Island difficulty!
   // Attacks ONLY begin AFTER the first night (Day 2+ on Island 1, or any night on Island 2+)
   const queueSubWave = (multiplier: number) => {
     if (isFirstNightPeaceful) return;
-    const baseCount = Math.min(12, Math.max(1, Math.round((1 + w.threatLevel * 0.85) * multiplier)));
+    const islandBonus = Math.max(0, w.currentIsland - 1) * 0.22;
+    const bloodBonus = w.isBloodMoon ? 1.45 : 1.0;
+    const baseCount = Math.min(18, Math.max(1, Math.round((1 + w.threatLevel * 0.92) * (1 + islandBonus) * multiplier * bloodBonus)));
     for (const portal of w.portals) {
       if (portal.destroyed) continue;
-      portal.spawnQueue += Math.max(1, Math.floor(baseCount * (0.75 + Math.random() * 0.45)));
-      portal.spawnCooldown = 1.1 + Math.random() * 1.4;
+      portal.spawnQueue += Math.max(1, Math.floor(baseCount * (0.78 + Math.random() * 0.44)));
+      portal.spawnCooldown = Math.max(0.55, 1.15 - w.currentIsland * 0.06) + Math.random() * 1.1;
     }
   };
 
@@ -2819,12 +3081,15 @@ function updateDayNightAndWaves(w: WorldState, dt: number): void {
     w.waveTriggeredTonight = true;
     queueSubWave(1.0);
     w.nightWaveStage = 1;
-  } else if (!isFirstNightPeaceful && w.isNight && w.nightWaveStage === 1 && w.timeOfDay >= 0.67) {
-    queueSubWave(w.threatLevel <= 2 ? 0.6 : 0.9);
+  } else if (!isFirstNightPeaceful && w.isNight && w.nightWaveStage === 1 && w.timeOfDay >= 0.65) {
+    queueSubWave(w.threatLevel <= 2 ? 0.65 : 0.95);
     w.nightWaveStage = 2;
-  } else if (!isFirstNightPeaceful && w.isNight && w.nightWaveStage === 2 && w.timeOfDay >= 0.81 && w.threatLevel >= 3) {
-    queueSubWave(0.95);
+  } else if (!isFirstNightPeaceful && w.isNight && w.nightWaveStage === 2 && w.timeOfDay >= 0.78 && w.threatLevel >= 3) {
+    queueSubWave(1.0);
     w.nightWaveStage = 3;
+  } else if (!isFirstNightPeaceful && w.isNight && w.nightWaveStage === 3 && w.timeOfDay >= 0.88 && (w.currentIsland >= 2 || w.isBloodMoon)) {
+    queueSubWave(0.9);
+    w.nightWaveStage = 4;
   }
 
   for (const portal of w.portals) {
@@ -2836,9 +3101,246 @@ function updateDayNightAndWaves(w: WorldState, dt: number): void {
       portal.spawnCooldown -= dt;
       if (portal.spawnCooldown <= 0) {
         portal.spawnQueue -= 1;
-        portal.spawnCooldown = Math.max(0.65, 1.35 - w.threatLevel * 0.05) + Math.random() * 0.9;
+        portal.spawnCooldown = Math.max(0.55, 1.3 - w.threatLevel * 0.05) + Math.random() * 0.85;
         const kind = pickProgressiveEnemyKind(w, portal.spawnQueue);
         spawnProgressiveEnemy(w, portal.x, portal.side, kind);
+      }
+    }
+  }
+}
+
+/**
+ * Banker Morning Farm Collection Rounds:
+ * Every morning, visits ALL full LEFT-side farms -> returns & deposits in Bank
+ * -> visits ALL full RIGHT-side farms -> returns & deposits in Bank.
+ * Only visits farms when they have reached their coin storage cap!
+ */
+function updateBanker(w: WorldState, dt: number): void {
+  const b = w.banker;
+  if (b.walkX === undefined) b.walkX = b.x;
+  if (b.facing === undefined) b.facing = 1;
+  if (b.animTime === undefined) b.animTime = 0;
+  if (b.carriedCoins === undefined) b.carriedCoins = 0;
+  if (!b.phase) b.phase = 'idle';
+
+  if (w.hall.level < 1) {
+    b.walkX = b.x;
+    b.phase = 'idle';
+    return;
+  }
+
+  const walkBankerToward = (targetX: number, speed: number): boolean => {
+    const dx = targetX - (b.walkX ?? b.x);
+    if (Math.abs(dx) <= Math.max(2, speed * dt)) {
+      b.walkX = targetX;
+      return true;
+    }
+    b.facing = dx > 0 ? 1 : -1;
+    b.walkX = (b.walkX ?? b.x) + b.facing * speed * dt;
+    b.animTime = (b.animTime ?? 0) + dt * 8.5;
+    return false;
+  };
+
+  const depositAtVault = () => {
+    if ((b.carriedCoins ?? 0) > 0) {
+      b.balance += b.carriedCoins ?? 0;
+      b.carriedCoins = 0;
+      sound.playCoinPickup();
+      spawnBurst(w, b.x, GROUND_Y - 16, 10, '#f7d265', 'spark', 36);
+    }
+  };
+
+  // Return to vault safely before nightfall
+  const isEveningOrNight = w.timeOfDay >= 0.45 && w.timeOfDay < 0.98;
+  if (isEveningOrNight && b.phase !== 'idle') {
+    if (walkBankerToward(b.x, 58)) {
+      depositAtVault();
+      b.phase = 'idle';
+      b.targetFarmId = null;
+    }
+    return;
+  }
+
+  if (b.phase === 'idle') {
+    if (Math.abs((b.walkX ?? b.x) - b.x) > 2) {
+      walkBankerToward(b.x, 48);
+    } else {
+      b.walkX = b.x;
+      b.animTime = (b.animTime ?? 0) + dt * 2;
+    }
+    return;
+  }
+
+  const isFarmFull = (f: WorldState['farms'][number]) =>
+    f.level >= 1 && f.storedCoins >= getFarmStorageCap(f.level);
+
+  if (b.phase === 'left_sweep') {
+    const fullLeft = w.farms
+      .filter((f) => f.side === -1 && isFarmFull(f))
+      .sort((a, c) => Math.abs(a.x - (b.walkX ?? b.x)) - Math.abs(c.x - (b.walkX ?? b.x)))[0];
+    if (fullLeft) {
+      b.targetFarmId = fullLeft.id;
+      if (walkBankerToward(fullLeft.x, 48)) {
+        b.carriedCoins = (b.carriedCoins ?? 0) + fullLeft.storedCoins;
+        fullLeft.storedCoins = 0;
+        sound.playCoinPickup();
+        spawnBurst(w, fullLeft.x, GROUND_Y - 14, 8, '#f7d265', 'spark', 32);
+      }
+    } else {
+      b.targetFarmId = null;
+      b.phase = (b.carriedCoins ?? 0) > 0 || Math.abs((b.walkX ?? b.x) - b.x) > 4 ? 'return_from_left' : 'right_sweep';
+    }
+    return;
+  }
+
+  if (b.phase === 'return_from_left') {
+    if (walkBankerToward(b.x, 52)) {
+      depositAtVault();
+      b.phase = 'right_sweep';
+    }
+    return;
+  }
+
+  if (b.phase === 'right_sweep') {
+    const fullRight = w.farms
+      .filter((f) => f.side === 1 && isFarmFull(f))
+      .sort((a, c) => Math.abs(a.x - (b.walkX ?? b.x)) - Math.abs(c.x - (b.walkX ?? b.x)))[0];
+    if (fullRight) {
+      b.targetFarmId = fullRight.id;
+      if (walkBankerToward(fullRight.x, 48)) {
+        b.carriedCoins = (b.carriedCoins ?? 0) + fullRight.storedCoins;
+        fullRight.storedCoins = 0;
+        sound.playCoinPickup();
+        spawnBurst(w, fullRight.x, GROUND_Y - 14, 8, '#f7d265', 'spark', 32);
+      }
+    } else {
+      b.targetFarmId = null;
+      b.phase = (b.carriedCoins ?? 0) > 0 || Math.abs((b.walkX ?? b.x) - b.x) > 4 ? 'return_from_right' : 'idle';
+    }
+    return;
+  }
+
+  if (b.phase === 'return_from_right') {
+    if (walkBankerToward(b.x, 52)) {
+      depositAtVault();
+      b.phase = 'idle';
+    }
+  }
+}
+
+/**
+ * Handles:
+ * 1. Built Drakkar sliding/dropping into the fjord water and floating.
+ * 2. Embarked archers & warriors attacking enemies passing near the boat.
+ * 3. Built Breweries stocked with beer automatically attracting wanderers from BOTH sides of the map.
+ */
+function updateBoatAndBreweries(w: WorldState, dt: number): void {
+  // 1. Boat launch animation into water
+  if (w.boat.built) {
+    const prevDrop = w.boat.waterDropProgress ?? 0;
+    if (prevDrop < 1) {
+      const nextDrop = Math.min(1, prevDrop + dt * 0.85);
+      w.boat.waterDropProgress = nextDrop;
+      if (prevDrop < 0.72 && nextDrop >= 0.72) {
+        sound.playCoinPickup();
+        spawnBurst(w, w.boat.x, GROUND_Y + 6, 18, '#a6e4ff', 'breath', 52);
+      }
+    }
+
+    // 2. Embarked crew defense (archers shoot passing enemies, warriors strike nearby ground enemies!)
+    w.boat.attackCooldown = Math.max(0, (w.boat.attackCooldown ?? 0) - dt);
+    if (w.boat.attackCooldown <= 0 && w.enemies.length > 0) {
+      let attacked = false;
+
+      if (w.boat.crewArchers > 0) {
+        let bestEnemy: Enemy | null = null;
+        let bestDist = 205;
+        for (const e of w.enemies) {
+          const d = Math.abs(e.x - w.boat.x);
+          if (d < bestDist) {
+            bestDist = d;
+            bestEnemy = e;
+          }
+        }
+        if (bestEnemy) {
+          const shots = Math.min(2, w.boat.crewArchers);
+          for (let s = 0; s < shots; s++) {
+            const aimY = bestEnemy.kind === 'hel_crow' ? bestEnemy.y - 4 : GROUND_Y - 10;
+            fireArrow(
+              w,
+              w.boat.x + (s === 0 ? -6 : 6),
+              GROUND_Y - 10,
+              bestEnemy.x + bestEnemy.vx * 0.18,
+              aimY,
+              12
+            );
+          }
+          w.boat.attackCooldown = Math.max(0.35, 0.85 - w.boat.crewArchers * 0.1);
+          attacked = true;
+        }
+      }
+
+      if (w.boat.crewWarriors > 0) {
+        let closeGroundEnemy: Enemy | null = null;
+        let closeDist = 60;
+        for (const e of w.enemies) {
+          if (e.kind === 'hel_crow') continue;
+          const d = Math.abs(e.x - w.boat.x);
+          if (d < closeDist) {
+            closeDist = d;
+            closeGroundEnemy = e;
+          }
+        }
+        if (closeGroundEnemy) {
+          const dmg = (w.activeGod === 'thor' ? 20 : 14) * Math.min(2, w.boat.crewWarriors);
+          closeGroundEnemy.hp -= dmg;
+          closeGroundEnemy.hitFlash = 0.14;
+          sound.playHit();
+          spawnBurst(w, closeGroundEnemy.x, GROUND_Y - 12, 8, '#ffd15c', 'spark', 40);
+          if (closeGroundEnemy.hp <= 0) handleEnemyKilled(w, closeGroundEnemy);
+          if (!attacked) {
+            w.boat.attackCooldown = Math.max(0.4, 0.78 - w.boat.crewWarriors * 0.08);
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Built Breweries with beer stock attract fresh wanderers from both sides of the map!
+  if (!w.isNight) {
+    const stockedBreweries = w.camps.filter((c) => c.isBrewery && (c.beerStock ?? 0) > 0);
+    if (stockedBreweries.length > 0) {
+      const activeWanderers = w.villagers.filter((v) => v.role === 'wanderer').length;
+      for (const brew of stockedBreweries) {
+        brew.breweryAttractTimer = (brew.breweryAttractTimer ?? 0) + dt;
+        if (brew.breweryAttractTimer >= 16 && activeWanderers < 4) {
+          brew.breweryAttractTimer = 0;
+          // Draw wanderer from either left or right far edge (alternating sides!)
+          const spawnFromLeft = Math.random() < 0.5;
+          const edgeX = spawnFromLeft ? 230 : WORLD_WIDTH - 230;
+          w.villagers.push({
+            id: uid(w),
+            x: edgeX,
+            y: GROUND_Y,
+            vx: 0,
+            facing: spawnFromLeft ? 1 : -1,
+            role: 'wanderer',
+            state: 'seeking_coin',
+            hp: 20,
+            maxHp: 20,
+            targetX: brew.x,
+            targetId: brew.id,
+            homeCampId: brew.id,
+            assignedFarmId: null,
+            assignedTowerId: null,
+            side: brew.x < CENTER_X ? -1 : 1,
+            actionTimer: 2,
+            animTime: 0,
+            carriedCoins: 0,
+            orderFlashTimer: 0,
+            orderDir: 0,
+          });
+        }
       }
     }
   }
@@ -3049,6 +3551,17 @@ function buildBuilderTaskAssignments(
       });
     }
   }
+  for (const camp of w.camps) {
+    if (camp.breweryUnderConstruction && !camp.isBrewery && !isEveningOrNight) {
+      tasks.push({
+        kind: 'brewery',
+        id: camp.id,
+        x: camp.x,
+        side: camp.x < CENTER_X ? -1 : 1,
+        orderedAt: camp.orderedAt ?? camp.id,
+      });
+    }
+  }
   if (!isEveningOrNight) {
     for (const r of w.rocks) {
       if (r.marked && !r.mined) {
@@ -3193,8 +3706,28 @@ function updateVillagers(w: WorldState, dt: number): void {
       spawnBurst(w, v.x, GROUND_Y - 16, 4, '#f7d265', 'spark', 24);
     }
 
-    // --- WANDERER (must be hired with 1 coin -> becomes Peasant with NO profession yet!) ---
+    // --- WANDERER (must be hired with 1 coin OR attracted by a Brewery beer -> becomes Peasant!) ---
     if (v.role === 'wanderer') {
+      // 1. Breweries stocked with beer automatically attract wanderers from BOTH sides of the map!
+      const nearestBrewery = w.camps
+        .filter((c) => c.isBrewery && (c.beerStock ?? 0) > 0)
+        .sort((a, b) => Math.abs(a.x - v.x) - Math.abs(b.x - v.x))[0];
+      if (nearestBrewery) {
+        v.state = 'seeking_coin';
+        if (moveToward(v, nearestBrewery.x, 40, dt)) {
+          if ((nearestBrewery.beerStock ?? 0) > 0) {
+            nearestBrewery.beerStock = (nearestBrewery.beerStock ?? 1) - 1;
+            v.role = 'peasant';
+            v.state = 'walking_to_center';
+            w.stats.villagersRecruited += 1;
+            markActionClassCompleted(w, 'wanderer');
+            sound.playCoinPickup();
+            spawnBurst(w, nearestBrewery.x, GROUND_Y - 14, 10, '#f7d265', 'spark', 36);
+          }
+        }
+        continue;
+      }
+
       let nearestCoin: Coin | null = null;
       let nearestDist = 95;
       for (const c of w.coins) {
@@ -3408,10 +3941,11 @@ function updateVillagers(w: WorldState, dt: number): void {
             w.boat.buildProgress = 1;
             w.boat.underConstruction = false;
             w.boat.built = true;
+            w.boat.waterDropProgress = 0;
             clearPriorityIfMatches(w, 'boat', 0);
             sound.playBuildComplete();
             spawnBurst(w, w.boat.x, GROUND_Y - 24, 18, '#ffe066', 'spark', 55);
-            showBanner(w, 'DRAKKAR PRONTO!', 'Toque o Sino (1 moeda) e pague 10 moedas para zarpar!', '#ffe066');
+            showBanner(w, 'DRAKKAR NA ÁGUA!', 'Toque o Sino (1🪙) e pague 10🪙 para zarpar!', '#ffe066');
             syncCurrentIslandProgress(w);
             saveCampaign(w);
           }
@@ -3465,6 +3999,42 @@ function updateVillagers(w: WorldState, dt: number): void {
               clearPriorityIfMatches(w, 'farm', buildFarm.id);
               sound.playBuildComplete();
               spawnBurst(w, buildFarm.x, GROUND_Y - 16, 12, '#82e08a', 'spark', 40);
+            }
+          }
+          continue;
+        }
+      }
+
+      if (assigned?.kind === 'brewery') {
+        const buildBrew = w.camps.find((c) => c.id === assigned.id && c.breweryUnderConstruction && !c.isBrewery);
+        if (buildBrew) {
+          v.state = 'working';
+          v.targetId = buildBrew.id;
+          const brewSide = buildBrew.x < CENTER_X ? -1 : 1;
+          if (moveToward(v, buildBrew.x - brewSide * (12 + (v.id % 3) * 3), 50, dt)) {
+            v.facing = brewSide;
+            buildBrew.breweryBuildProgress = (buildBrew.breweryBuildProgress ?? 0) + dt * 0.25 * workMult;
+            if (v.actionTimer <= 0) {
+              v.actionTimer = 0.45;
+              sound.playHammer();
+              spawnBurst(w, buildBrew.x, GROUND_Y - 14, 4, '#c7935b', 'wood', 26);
+            }
+            if ((buildBrew.breweryBuildProgress ?? 0) >= 1) {
+              buildBrew.breweryUnderConstruction = false;
+              buildBrew.breweryBuildProgress = 1;
+              buildBrew.isBrewery = true;
+              buildBrew.beerStock = 0;
+              buildBrew.beerCoinsPaid = 0;
+              clearPriorityIfMatches(w, 'brewery', buildBrew.id);
+              sound.playBuildComplete();
+              spawnBurst(w, buildBrew.x, GROUND_Y - 20, 16, '#f7d265', 'spark', 48);
+              showBanner(
+                w,
+                'CERVEJARIA PRONTA!',
+                'Pague 4🪙 por cerveja (máx. 4) para atrair errantes de ambos os lados!',
+                '#f7d265'
+              );
+              saveCampaign(w);
             }
           }
           continue;
@@ -3603,7 +4173,8 @@ function updateVillagers(w: WorldState, dt: number): void {
           const standX = plantSpot.x + (v.x < plantSpot.x ? -8 : 8);
           if (moveToward(v, standX, 46, dt)) {
             v.facing = plantSpot.x >= v.x ? 1 : -1;
-            plantSpot.chopProgress += dt * 0.2 * workMult;
+            const treeSeasonMult = getSeasonModifiers(w.season).tree;
+            plantSpot.chopProgress += dt * 0.2 * workMult * treeSeasonMult;
             if (v.actionTimer <= 0) {
               v.actionTimer = 0.55;
               spawnBurst(w, plantSpot.x, GROUND_Y - 6, 4, '#6fa86f', 'leaf', 22);
@@ -3707,7 +4278,8 @@ function updateVillagers(w: WorldState, dt: number): void {
           const standX = digSpot.x + (v.x < digSpot.x ? -9 : 9);
           if (moveToward(v, standX, 48, dt)) {
             v.facing = digSpot.x >= v.x ? 1 : -1;
-            digSpot.mineProgress += dt * 0.18;
+            const rockSeasonMult = getSeasonModifiers(w.season).rock;
+            digSpot.mineProgress += dt * 0.18 * rockSeasonMult;
             if (v.actionTimer <= 0) {
               v.actionTimer = 0.58;
               sound.playHammer();
@@ -3858,7 +4430,7 @@ function updateVillagers(w: WorldState, dt: number): void {
       continue;
     }
 
-    // --- PRODUCER (Farmers: work built farms; when idle without farm, collect coins for Banker or fish!) ---
+    // --- PRODUCER (Farmers: harvest farms; in Winter/Spring forage marked Berry Bushes; in Winter become river Fishermen!) ---
     if (v.role === 'producer') {
       if (isEveningOrNight) {
         v.state = 'fleeing';
@@ -3866,6 +4438,76 @@ function updateVillagers(w: WorldState, dt: number): void {
         continue;
       }
 
+      const seasonMod = getSeasonModifiers(w.season);
+      const coinDiffMult = getIslandCoinDifficultyMult(w.currentIsland);
+      const isWinter = w.season === 'winter';
+
+      // 1. In Winter & Spring, forage any player-ordered Berry Bushes first!
+      if (seasonMod.hasBerries) {
+        const sideScore = (wx: number) => ((wx < CENTER_X ? -1 : 1) === v.side ? 0 : 1200);
+        const markedBush = (w.berryBushes ?? [])
+          .filter((b) => b.marked && b.berries > 0)
+          .sort((a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x)))[0];
+
+        if (markedBush) {
+          v.state = 'foraging';
+          v.targetId = markedBush.id;
+          const standX = markedBush.x + ((v.id % 3) - 1) * 5;
+          if (moveToward(v, standX, 46, dt)) {
+            v.facing = markedBush.x >= v.x ? 1 : -1;
+            markedBush.forageProgress += dt * (w.season === 'spring' ? 0.34 : 0.24);
+            if (v.actionTimer <= 0) {
+              v.actionTimer = 0.65;
+              spawnBurst(w, markedBush.x, GROUND_Y - 8, 4, '#ff5c7a', 'leaf', 20);
+            }
+            if (markedBush.forageProgress >= 1) {
+              markedBush.forageProgress = 0;
+              markedBush.berries = Math.max(0, markedBush.berries - 1);
+              markedBush.marked = false;
+              v.targetId = null;
+              const berryCoins = w.season === 'spring' ? 3 : 2;
+              w.resources.food += 1;
+              for (let c = 0; c < berryCoins; c++) {
+                spawnCoin(
+                  w,
+                  markedBush.x,
+                  GROUND_Y - 10,
+                  ((c - (berryCoins - 1) / 2) * 18) + (Math.random() - 0.5) * 10,
+                  -60 - Math.random() * 18,
+                  false,
+                  0.2
+                );
+              }
+              sound.playCoinPickup();
+              spawnBurst(w, markedBush.x, GROUND_Y - 12, 10, '#ff6b8a', 'spark', 34);
+            }
+          }
+          continue;
+        }
+      }
+
+      // 2. WINTER: Zero farm production! Farmers become river Fishermen casting rods into the fjord (1 coin/fish)!
+      if (isWinter) {
+        const defWall = getOuterDefensiveWall(w, v.side);
+        const maxReach = defWall ? Math.max(95, Math.abs(defWall.x - CENTER_X) - 24) : 185;
+        const fishOffset = Math.min(maxReach, 110 + (v.id % 5) * 24);
+        const fishX = CENTER_X + v.side * fishOffset;
+        v.state = 'fishing';
+        v.targetId = null;
+        if (moveToward(v, fishX, 44, dt)) {
+          v.facing = v.side;
+          if (v.actionTimer <= 0) {
+            v.actionTimer = 17 + (w.currentIsland - 1) * 2.5;
+            w.resources.food += 1;
+            spawnCoin(w, v.x + v.facing * 10, GROUND_Y - 4, -v.facing * 14, -56, false, 0.2);
+            sound.playCoinPickup();
+            spawnBurst(w, v.x + v.facing * 12, GROUND_Y + 3, 6, '#9be2ff', 'breath', 24);
+          }
+        }
+        continue;
+      }
+
+      // 3. NON-WINTER (Summer / Autumn / Spring): Work assigned farms and store coins up to cap for the Banker!
       let myFarm = w.farms.find((f) => f.id === v.assignedFarmId && f.level >= 1) ?? null;
       if (!myFarm) {
         const preferred = w.farms.find(
@@ -3880,35 +4522,39 @@ function updateVillagers(w: WorldState, dt: number): void {
 
       if (!myFarm) {
         if (trySweepCoinsToBanker(w, v, dt, isEveningOrNight)) continue;
+        // No farm built yet: cast fishing rod into river for 1 coin each
+        const fishX = CENTER_X + v.side * (120 + (v.id % 4) * 22);
+        v.state = 'fishing';
+        if (moveToward(v, fishX, 44, dt)) {
+          v.facing = v.side;
+          if (v.actionTimer <= 0) {
+            v.actionTimer = 15 + (w.currentIsland - 1) * 2;
+            w.resources.food += 1;
+            spawnCoin(w, v.x + v.facing * 10, GROUND_Y - 4, -v.facing * 14, -56, false, 0.2);
+            sound.playCoinPickup();
+            spawnBurst(w, v.x + v.facing * 12, GROUND_Y + 3, 5, '#89dcff', 'breath', 24);
+          }
+        }
+        continue;
       }
 
-      const workX = myFarm ? myFarm.x + ((v.id % 5) - 2) * 8 : CENTER_X + v.side * 190;
+      const workX = myFarm.x + ((v.id % 5) - 2) * 8;
       v.state = 'producing';
       if (moveToward(v, workX, 44, dt)) {
-        if (myFarm && myFarm.level >= 1) {
-          const freyaSpeed = w.activeGod === 'freya' ? 1.5 : 1.0;
-          const cap = getFarmStorageCap(myFarm.level);
-          myFarm.cropProgress += dt * (0.038 + myFarm.level * 0.018) * freyaSpeed;
+        const freyaSpeed = w.activeGod === 'freya' ? 1.5 : 1.0;
+        const cap = getFarmStorageCap(myFarm.level);
+        if (myFarm.storedCoins < cap) {
+          myFarm.cropProgress += dt * (0.036 + myFarm.level * 0.016) * freyaSpeed * seasonMod.farm * coinDiffMult;
           if (myFarm.cropProgress >= 1) {
             myFarm.cropProgress = 0;
-            const foodGain = Math.max(1, myFarm.level);
-            const coinGain = Math.max(1, Math.ceil(myFarm.level * 0.7));
+            const foodGain = Math.max(1, Math.round(myFarm.level * seasonMod.farm));
+            const coinGain = Math.max(1, Math.round(myFarm.level * 0.7 * seasonMod.farm * coinDiffMult));
             w.resources.food += foodGain;
             myFarm.storedFood = Math.min(cap, myFarm.storedFood + foodGain);
-            if (v.carriedCoins < 6) {
-              v.carriedCoins = Math.min(6, v.carriedCoins + coinGain);
-            } else {
-              myFarm.storedCoins = Math.min(cap, myFarm.storedCoins + coinGain);
-            }
+            myFarm.storedCoins = Math.min(cap, myFarm.storedCoins + coinGain);
             sound.playCoinPickup();
             spawnBurst(w, myFarm.x, GROUND_Y - 12, 8, '#f7d265', 'spark', 32);
           }
-        } else if (v.actionTimer <= 0) {
-          // Fjord fishing before farm is built
-          v.actionTimer = 14;
-          w.resources.food += 1;
-          v.carriedCoins = Math.min(6, v.carriedCoins + 1);
-          spawnBurst(w, v.x, GROUND_Y - 6, 5, '#89dcff', 'spark', 24);
         }
       }
     }
@@ -4053,6 +4699,12 @@ function updateEnemies(w: WorldState, dt: number): void {
       continue;
     }
 
+    const enemyDmgScale =
+      1 +
+      Math.max(0, w.currentIsland - 1) * 0.24 +
+      Math.floor(w.day / 15) * 0.12 +
+      (w.isBloodMoon ? 0.25 : 0);
+
     const blockingWarrior = w.villagers.find(
       (v) => v.role === 'warrior' && v.state !== 'embarked' && Math.abs(v.x - e.x) < 14
     );
@@ -4061,8 +4713,8 @@ function updateEnemies(w: WorldState, dt: number): void {
       e.facing = blockingWarrior.x >= e.x ? 1 : -1;
       if (e.attackCooldown <= 0) {
         e.attackCooldown = e.kind === 'frost_troll' ? 1.3 : 0.9;
-        const dmg = e.kind === 'frost_troll' ? 24 : e.kind === 'draugr_brute' ? 14 : 7;
-        blockingWarrior.hp -= dmg;
+        const baseDmg = e.kind === 'frost_troll' ? 24 : e.kind === 'draugr_brute' ? 14 : 7;
+        blockingWarrior.hp -= Math.round(baseDmg * enemyDmgScale);
         sound.playHit();
         spawnBurst(w, blockingWarrior.x, GROUND_Y - 12, 4, '#d9e3ed', 'spark', 26);
         if (blockingWarrior.hp <= 0) {
@@ -4092,8 +4744,8 @@ function updateEnemies(w: WorldState, dt: number): void {
       e.facing = dirToCenter;
       if (e.attackCooldown <= 0) {
         e.attackCooldown = e.kind === 'frost_troll' ? 1.4 : e.kind === 'draugr_brute' ? 1.1 : 0.85;
-        const dmg = e.kind === 'frost_troll' ? 32 : e.kind === 'draugr_brute' ? 18 : 8;
-        blockingWall.hp -= dmg;
+        const baseDmg = e.kind === 'frost_troll' ? 32 : e.kind === 'draugr_brute' ? 18 : 8;
+        blockingWall.hp -= Math.round(baseDmg * enemyDmgScale);
         blockingWall.hitFlash = 0.14;
         sound.playHit();
         spawnBurst(w, blockingWall.x - dirToCenter * 4, GROUND_Y - 14, 5, '#c48f58', 'wood', 32);
@@ -4127,8 +4779,8 @@ function updateEnemies(w: WorldState, dt: number): void {
       e.facing = dirToCenter;
       if (e.attackCooldown <= 0) {
         e.attackCooldown = e.kind === 'frost_troll' ? 1.4 : e.kind === 'draugr_brute' ? 1.1 : 0.85;
-        const dmg = e.kind === 'frost_troll' ? 30 : e.kind === 'draugr_brute' ? 16 : 7;
-        blockingTower.hp -= dmg;
+        const baseDmg = e.kind === 'frost_troll' ? 30 : e.kind === 'draugr_brute' ? 16 : 7;
+        blockingTower.hp -= Math.round(baseDmg * enemyDmgScale);
         blockingTower.hitFlash = 0.14;
         sound.playHit();
         spawnBurst(w, blockingTower.x - dirToCenter * 4, GROUND_Y - 16, 5, '#c48f58', 'wood', 30);
@@ -4317,10 +4969,15 @@ function updateCoins(w: WorldState, dt: number): void {
 }
 
 function updateWildlife(w: WorldState, dt: number): void {
-  // New animals depend on standing trees to spawn!
+  // New animals depend on standing trees to spawn and scale with the active season!
   const standingTrees = w.trees.filter((tr) => !tr.chopped);
-  const maxWildlife = standingTrees.length > 0 ? Math.min(8, Math.max(1, Math.ceil(standingTrees.length / 2))) : 0;
-  if (!w.isNight && standingTrees.length > 0 && w.wildlife.length < maxWildlife && Math.random() < dt * 0.45) {
+  const seasonAnimalMult = getSeasonModifiers(w.season).animal;
+  const maxWildlife =
+    standingTrees.length > 0
+      ? Math.min(10, Math.max(w.season === 'winter' ? 1 : 2, Math.round(Math.ceil(standingTrees.length / 2) * seasonAnimalMult)))
+      : 0;
+  const spawnRate = 0.45 * seasonAnimalMult * getIslandCoinDifficultyMult(w.currentIsland);
+  if (!w.isNight && standingTrees.length > 0 && w.wildlife.length < maxWildlife && Math.random() < dt * spawnRate) {
     const homeTree = standingTrees[Math.floor(Math.random() * standingTrees.length)];
     const spawnX = Math.max(320, Math.min(WORLD_WIDTH - 320, homeTree.x + (Math.random() - 0.5) * 30));
     const isDeer = (homeTree.size === 'large' || Math.abs(spawnX - CENTER_X) > 290) && Math.random() < 0.38;
@@ -4716,6 +5373,8 @@ export function stepWorld(
   updateForgeAndRegrowth(w, dt);
   updateFireTrailsAndLightning(w, dt);
   updateDayNightAndWaves(w, dt);
+  updateBanker(w, dt);
+  updateBoatAndBreweries(w, dt);
   updateTutorial(w, dt);
   updateVillagers(w, dt);
   updateEnemies(w, dt);

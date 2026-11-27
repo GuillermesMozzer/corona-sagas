@@ -33,6 +33,7 @@ import {
   countArchersAssignedToTower,
   getBankerDailyRatePct,
   getFarmMaxFarmers,
+  getFarmStorageCap,
   getTowerArcherCap,
   getTowerHeight,
   getTutorialTargetX,
@@ -263,10 +264,11 @@ export class PixelRenderer {
 
     this.drawParallaxMountains(ctx, camX, nightFactor, w.isBloodMoon);
     this.drawParallaxForest(ctx, camX, nightFactor);
-    this.drawGround(ctx, camX, nightFactor);
+    this.drawGround(ctx, w, camX, nightFactor);
 
     this.drawTrees(ctx, w, camX, nightFactor);
     this.drawRocks(ctx, w, camX, nightFactor);
+    this.drawBerryBushes(ctx, w, camX);
     this.drawCamps(ctx, w, camX);
     this.drawChests(ctx, w, camX);
     this.drawPortals(ctx, w, camX);
@@ -300,8 +302,14 @@ export class PixelRenderer {
 
     if (nightFactor > 0.08) this.drawLighting(ctx, w, camX, nightFactor);
 
-    // 3. Fjord Water Reflection filling 100% of bottom
+    // 3. Fjord Water Reflection filling 100% of bottom + Floating Drakkar on water surface
     this.drawWaterReflection(ctx, w, nightFactor);
+    if (w.boat.built) {
+      ctx.save();
+      ctx.translate(0, this.worldOffsetY);
+      this.drawFloatingBoat(ctx, w, camX);
+      ctx.restore();
+    }
     this.drawSnowParticles(ctx, w);
 
     // 4. Floating Coin Placeholder, Flying Coins & Selected Villager Arrow Picker
@@ -1309,10 +1317,13 @@ export class PixelRenderer {
     const snowCap = lerpRGB({ r: 215, g: 229, b: 240 }, { r: 64, g: 88, b: 112 }, nightFactor);
 
     const span = 120;
-    const offset = Math.floor(camX * 0.12) % span;
+    const farScroll = Math.floor(camX * 0.12);
+    const farBaseIdx = Math.floor(farScroll / span);
+    const offset = ((farScroll % span) + span) % span;
     for (let i = -1; i < Math.ceil(this.viewW / span) + 2; i++) {
+      const worldIdx = farBaseIdx + i;
       const bx = i * span - offset;
-      const peakH = 72 + (Math.abs(i * 37) % 3) * 18;
+      const peakH = 72 + (Math.abs(worldIdx * 37 + 11) % 3) * 18;
       const peakX = bx + 54;
       const peakY = GROUND_Y - 26 - peakH;
 
@@ -1337,11 +1348,14 @@ export class PixelRenderer {
 
     const midCol = lerpRGB({ r: 44, g: 64, b: 82 }, { r: 12, g: 22, b: 34 }, nightFactor);
     const midSpan = 96;
-    const midOff = Math.floor(camX * 0.28) % midSpan;
+    const midScroll = Math.floor(camX * 0.28);
+    const midBaseIdx = Math.floor(midScroll / midSpan);
+    const midOff = ((midScroll % midSpan) + midSpan) % midSpan;
     ctx.fillStyle = rgbStr(midCol);
     for (let i = -1; i < Math.ceil(this.viewW / midSpan) + 2; i++) {
+      const worldIdx = midBaseIdx + i;
       const bx = i * midSpan - midOff;
-      const h = 42 + (Math.abs(i * 19) % 3) * 12;
+      const h = 42 + (Math.abs(worldIdx * 19 + 7) % 3) * 12;
       ctx.beginPath();
       ctx.moveTo(bx - 10, GROUND_Y);
       ctx.lineTo(bx + 42, GROUND_Y - h);
@@ -1354,11 +1368,14 @@ export class PixelRenderer {
   private drawParallaxForest(ctx: CanvasRenderingContext2D, camX: number, nightFactor: number): void {
     const pineCol = lerpRGB({ r: 28, g: 46, b: 56 }, { r: 9, g: 16, b: 25 }, nightFactor);
     const step = 20;
-    const off = Math.floor(camX * 0.5) % step;
+    const forestScroll = Math.floor(camX * 0.5);
+    const forestBaseIdx = Math.floor(forestScroll / step);
+    const off = ((forestScroll % step) + step) % step;
     ctx.fillStyle = rgbStr(pineCol);
     for (let i = -1; i < Math.ceil(this.viewW / step) + 2; i++) {
+      const worldIdx = forestBaseIdx + i;
       const tx = i * step - off;
-      const h = 24 + (Math.abs(i * 13) % 4) * 7;
+      const h = 24 + (Math.abs(worldIdx * 13 + 5) % 4) * 7;
       const topY = GROUND_Y - h;
       ctx.fillRect(tx + 8, topY, 3, h);
       ctx.beginPath();
@@ -1376,9 +1393,27 @@ export class PixelRenderer {
     ctx.fillRect(0, GROUND_Y - 26, this.viewW, 26);
   }
 
-  private drawGround(ctx: CanvasRenderingContext2D, camX: number, nightFactor: number): void {
-    const grassTop = lerpRGB({ r: 94, g: 118, b: 102 }, { r: 28, g: 42, b: 48 }, nightFactor);
-    const snowEdge = lerpRGB({ r: 204, g: 222, b: 234 }, { r: 70, g: 94, b: 112 }, nightFactor);
+  private drawGround(ctx: CanvasRenderingContext2D, w: WorldState, camX: number, nightFactor: number): void {
+    const season = w.season ?? 'summer';
+    const dayGrass =
+      season === 'winter'
+        ? { r: 186, g: 208, b: 222 }
+        : season === 'autumn'
+          ? { r: 146, g: 112, b: 58 }
+          : season === 'spring'
+            ? { r: 78, g: 146, b: 84 }
+            : { r: 88, g: 130, b: 78 };
+    const dayAccent =
+      season === 'winter'
+        ? { r: 226, g: 240, b: 250 }
+        : season === 'autumn'
+          ? { r: 196, g: 120, b: 46 }
+          : season === 'spring'
+            ? { r: 120, g: 184, b: 108 }
+            : { r: 114, g: 158, b: 92 };
+
+    const grassTop = lerpRGB(dayGrass, { r: 28, g: 42, b: 48 }, nightFactor);
+    const accentEdge = lerpRGB(dayAccent, { r: 70, g: 94, b: 112 }, nightFactor);
     const soil = lerpRGB({ r: 54, g: 45, b: 42 }, { r: 19, g: 19, b: 26 }, nightFactor);
     const stoneBank = lerpRGB({ r: 74, g: 82, b: 92 }, { r: 24, g: 32, b: 42 }, nightFactor);
 
@@ -1392,22 +1427,43 @@ export class PixelRenderer {
     const startTile = Math.floor(camX / 24);
     for (let tile = startTile; tile <= startTile + Math.ceil(this.viewW / 24) + 1; tile++) {
       const sx = tile * 24 - camX;
-      if ((tile * 7) % 3 === 0) {
-        ctx.fillStyle = rgbStr(snowEdge);
-        ctx.fillRect(sx + 2, GROUND_Y - 2, 10, 2);
+      if (Math.abs(tile * 7) % 3 === 0) {
+        ctx.fillStyle = rgbStr(accentEdge);
+        ctx.fillRect(sx + 2, GROUND_Y - 2, season === 'winter' ? 14 : 10, 2);
       }
-      if ((tile * 11) % 4 === 0) {
+      if (Math.abs(tile * 11) % 4 === 0) {
         ctx.fillStyle = rgbStr(grassTop);
         ctx.fillRect(sx + 14, GROUND_Y - 4, 2, 2);
         ctx.fillRect(sx + 17, GROUND_Y - 3, 1, 2);
+        if (season === 'spring') {
+          ctx.fillStyle = Math.abs(tile) % 2 === 0 ? '#f7b2d4' : '#ffe588';
+          ctx.fillRect(sx + 14, GROUND_Y - 5, 2, 1);
+        }
       }
     }
   }
 
   private drawTrees(ctx: CanvasRenderingContext2D, w: WorldState, camX: number, nightFactor: number): void {
-    const darkGreen = lerpRGB({ r: 30, g: 56, b: 52 }, { r: 11, g: 22, b: 28 }, nightFactor);
-    const midGreen = lerpRGB({ r: 44, g: 76, b: 66 }, { r: 16, g: 31, b: 38 }, nightFactor);
-    const snow = lerpRGB({ r: 212, g: 228, b: 238 }, { r: 72, g: 98, b: 118 }, nightFactor);
+    const season = w.season ?? 'summer';
+    const dayDark =
+      season === 'autumn'
+        ? { r: 118, g: 64, b: 32 }
+        : season === 'winter'
+          ? { r: 30, g: 54, b: 60 }
+          : season === 'spring'
+            ? { r: 32, g: 76, b: 48 }
+            : { r: 28, g: 66, b: 46 };
+    const dayMid =
+      season === 'autumn'
+        ? { r: 168, g: 98, b: 40 }
+        : season === 'winter'
+          ? { r: 44, g: 76, b: 82 }
+          : season === 'spring'
+            ? { r: 52, g: 112, b: 64 }
+            : { r: 44, g: 94, b: 58 };
+    const darkGreen = lerpRGB(dayDark, { r: 11, g: 22, b: 28 }, nightFactor);
+    const midGreen = lerpRGB(dayMid, { r: 16, g: 31, b: 38 }, nightFactor);
+    const snow = lerpRGB({ r: 218, g: 234, b: 244 }, { r: 72, g: 98, b: 118 }, nightFactor);
 
     for (const tr of w.trees) {
       const sx = Math.round(tr.x - camX);
@@ -1419,9 +1475,9 @@ export class PixelRenderer {
           const sproutH = Math.max(3, Math.round(tr.chopProgress * 12));
           ctx.fillStyle = '#4d3625';
           ctx.fillRect(sx - 1, GROUND_Y - sproutH, 2, sproutH);
-          ctx.fillStyle = '#6cc46a';
+          ctx.fillStyle = season === 'autumn' ? '#d4873b' : '#6cc46a';
           ctx.fillRect(sx - 3, GROUND_Y - sproutH - 2, 6, 3);
-          ctx.fillStyle = '#a0ea96';
+          ctx.fillStyle = season === 'autumn' ? '#f2b85c' : '#a0ea96';
           ctx.fillRect(sx - 1, GROUND_Y - sproutH - 3, 2, 2);
         }
         continue;
@@ -1453,9 +1509,17 @@ export class PixelRenderer {
         ctx.closePath();
         ctx.fill();
 
-        ctx.fillStyle = rgbStr(snow, 0.8);
-        ctx.fillRect(bx + shift - 2, topY + 2, 4, 2);
-        ctx.fillRect(bx + shift - Math.floor(halfW * 0.55), topY + 6, Math.floor(halfW * 0.5), 2);
+        if (season === 'winter') {
+          ctx.fillStyle = rgbStr(snow, 0.88);
+          ctx.fillRect(bx + shift - 2, topY + 2, 4, 2);
+          ctx.fillRect(bx + shift - Math.floor(halfW * 0.55), topY + 6, Math.floor(halfW * 0.5), 2);
+        } else if (season === 'autumn') {
+          ctx.fillStyle = 'rgba(235, 165, 62, 0.65)';
+          ctx.fillRect(bx + shift - 2, topY + 3, 4, 2);
+        } else if (season === 'spring') {
+          ctx.fillStyle = 'rgba(146, 224, 134, 0.55)';
+          ctx.fillRect(bx + shift - 1, topY + 2, 3, 2);
+        }
       }
 
       if (tr.marked) {
@@ -1553,11 +1617,124 @@ export class PixelRenderer {
     }
   }
 
+  private drawBerryBushes(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    const bushes = w.berryBushes ?? [];
+    if (bushes.length === 0) return;
+    const isWinter = w.season === 'winter';
+
+    for (const bush of bushes) {
+      if (bush.berries <= 0) continue;
+      const sx = Math.round(bush.x - camX);
+      if (sx < -24 || sx > this.viewW + 24) continue;
+
+      // Leafy berry bush mound
+      ctx.fillStyle = isWinter ? '#2b4d44' : '#2d6e3e';
+      ctx.fillRect(sx - 9, GROUND_Y - 7, 18, 7);
+      ctx.fillStyle = isWinter ? '#3e6b5c' : '#459452';
+      ctx.fillRect(sx - 7, GROUND_Y - 10, 14, 5);
+      ctx.fillRect(sx - 4, GROUND_Y - 12, 8, 3);
+      if (isWinter) {
+        ctx.fillStyle = '#dceef8';
+        ctx.fillRect(sx - 4, GROUND_Y - 12, 6, 2);
+      }
+
+      // Ripe berries (crimson/magenta pixel clusters)
+      const berryOffsets = [
+        [-6, -5],
+        [-2, -9],
+        [3, -6],
+        [6, -4],
+        [0, -4],
+        [-4, -8],
+      ];
+      const count = Math.min(berryOffsets.length, bush.berries * 2);
+      for (let i = 0; i < count; i++) {
+        const [ox, oy] = berryOffsets[i];
+        ctx.fillStyle = i % 2 === 0 ? '#e6395a' : '#ff7096';
+        ctx.fillRect(sx + ox, GROUND_Y + oy, 2, 2);
+      }
+
+      // Marked with coin to forage
+      if (bush.marked) {
+        const bob = Math.round(Math.sin(w.elapsed * 6) * 1.5);
+        ctx.fillStyle = '#f7d265';
+        ctx.fillRect(sx - 3, GROUND_Y - 20 + bob, 6, 6);
+        ctx.fillStyle = '#805212';
+        ctx.fillRect(sx - 2, GROUND_Y - 19 + bob, 4, 4);
+        ctx.fillStyle = '#fff3b8';
+        ctx.fillRect(sx - 1, GROUND_Y - 18 + bob, 2, 2);
+
+        if (bush.forageProgress > 0) {
+          ctx.fillStyle = 'rgba(10,14,20,0.82)';
+          ctx.fillRect(sx - 10, GROUND_Y - 27, 20, 3);
+          ctx.fillStyle = '#ff6b8a';
+          ctx.fillRect(sx - 9, GROUND_Y - 26, Math.max(1, Math.round(18 * Math.min(1, bush.forageProgress))), 1);
+        }
+      }
+    }
+  }
+
   private drawCamps(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     for (const camp of w.camps) {
       const sx = Math.round(camp.x - camX);
-      if (sx < -40 || sx > this.viewW + 40) continue;
+      if (sx < -44 || sx > this.viewW + 44) continue;
 
+      if (camp.isBrewery) {
+        // Upgraded Nordic Brewery Tavern (attracts wanderers from both sides!)
+        ctx.fillStyle = '#5c3c24';
+        ctx.fillRect(sx - 18, GROUND_Y - 20, 36, 20);
+        ctx.fillStyle = '#3d2717';
+        ctx.fillRect(sx - 18, GROUND_Y - 20, 3, 20);
+        ctx.fillRect(sx + 15, GROUND_Y - 20, 3, 20);
+        // Gabled tavern roof
+        ctx.fillStyle = '#36414f';
+        ctx.beginPath();
+        ctx.moveTo(sx - 22, GROUND_Y - 19);
+        ctx.lineTo(sx, GROUND_Y - 32);
+        ctx.lineTo(sx + 22, GROUND_Y - 19);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#d9a738';
+        ctx.fillRect(sx - 20, GROUND_Y - 20, 40, 2);
+        // Warm doorway & glowing tavern window
+        ctx.fillStyle = '#241710';
+        ctx.fillRect(sx - 11, GROUND_Y - 12, 7, 12);
+        ctx.fillStyle = '#ffae42';
+        ctx.fillRect(sx + 2, GROUND_Y - 15, 9, 6);
+        ctx.fillStyle = '#4a311f';
+        ctx.fillRect(sx + 6, GROUND_Y - 15, 1, 6);
+        // Oak beer barrel outside
+        ctx.fillStyle = '#7a4f2d';
+        ctx.fillRect(sx - 23, GROUND_Y - 8, 6, 8);
+        ctx.fillStyle = '#3d4754';
+        ctx.fillRect(sx - 23, GROUND_Y - 6, 6, 1);
+        ctx.fillRect(sx - 23, GROUND_Y - 3, 6, 1);
+
+        // Beer Mug sign on gable
+        ctx.fillStyle = '#f5b82e';
+        ctx.fillRect(sx - 2, GROUND_Y - 28, 4, 5);
+        ctx.fillStyle = '#fff9e6';
+        ctx.fillRect(sx - 2, GROUND_Y - 29, 4, 2);
+
+        // Stocked Golden Beer Mugs (0..4) displayed cleanly above bar counter!
+        const beers = camp.beerStock ?? 0;
+        for (let b = 0; b < 4; b++) {
+          const mx = sx - 11 + b * 6;
+          const my = GROUND_Y - 38;
+          if (b < beers) {
+            ctx.fillStyle = '#f5b82e';
+            ctx.fillRect(mx, my + 1, 4, 5);
+            ctx.fillStyle = '#fff9e6';
+            ctx.fillRect(mx, my, 4, 2);
+          } else {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.fillRect(mx, my + 1, 4, 5);
+          }
+        }
+        continue;
+      }
+
+      // Standard Vagrant Camp
       ctx.fillStyle = '#5c4638';
       ctx.beginPath();
       ctx.moveTo(sx - 18, GROUND_Y);
@@ -1575,6 +1752,22 @@ export class PixelRenderer {
       ctx.fillRect(sx + 10, GROUND_Y - 6 - flick, 4, 4 + flick);
       ctx.fillStyle = '#ffe066';
       ctx.fillRect(sx + 11, GROUND_Y - 5, 2, 3);
+
+      // Subtle barrel hint on Brewery-eligible first camp of each side
+      if (camp.isBrewerySite) {
+        ctx.fillStyle = '#7a4f2d';
+        ctx.fillRect(sx - 22, GROUND_Y - 6, 5, 6);
+        ctx.fillStyle = '#4c5764';
+        ctx.fillRect(sx - 22, GROUND_Y - 4, 5, 1);
+      }
+
+      if (camp.breweryUnderConstruction) {
+        const prog = Math.min(1, camp.breweryBuildProgress ?? 0);
+        ctx.fillStyle = 'rgba(10,14,20,0.82)';
+        ctx.fillRect(sx - 14, GROUND_Y - 26, 28, 4);
+        ctx.fillStyle = '#f5c469';
+        ctx.fillRect(sx - 13, GROUND_Y - 25, Math.max(1, Math.round(26 * prog)), 2);
+      }
     }
   }
 
@@ -1778,32 +1971,58 @@ export class PixelRenderer {
 
   private drawBanker(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     if (w.hall.level < 1) return;
-    const sx = Math.round(w.banker.x - camX);
-    if (sx < -32 || sx > this.viewW + 32) return;
 
-    // Banker's wooden vault stand with golden canopy
-    ctx.fillStyle = '#4a311f';
-    ctx.fillRect(sx - 11, GROUND_Y - 10, 22, 10);
-    ctx.fillStyle = '#d9a738';
-    ctx.fillRect(sx - 11, GROUND_Y - 10, 22, 2);
-    ctx.fillRect(sx - 1, GROUND_Y - 8, 2, 8);
+    // 1. Fixed wooden vault stand & coin stacks at w.banker.x
+    const deskX = Math.round(w.banker.x - camX);
+    if (deskX >= -32 && deskX <= this.viewW + 32) {
+      ctx.fillStyle = '#4a311f';
+      ctx.fillRect(deskX - 11, GROUND_Y - 10, 22, 10);
+      ctx.fillStyle = '#d9a738';
+      ctx.fillRect(deskX - 11, GROUND_Y - 10, 22, 2);
+      ctx.fillRect(deskX - 1, GROUND_Y - 8, 2, 8);
 
-    // Banker NPC behind desk
-    const bob = Math.round(Math.sin(w.elapsed * 2.5) * 0.6);
+      // Coin stacks proportional to balance
+      const stacks = Math.min(5, Math.ceil(w.banker.balance / 10));
+      for (let i = 0; i < stacks; i++) {
+        ctx.fillStyle = '#f7d265';
+        ctx.fillRect(deskX + 5 + (i % 2) * 3, GROUND_Y - 12 - Math.floor(i / 2) * 2, 2, 2);
+      }
+    }
+
+    // 2. Banker NPC (stands behind desk when idle; walks to full farms every morning!)
+    const walkWorldX = w.banker.walkX ?? w.banker.x;
+    const bx = Math.round(walkWorldX - camX);
+    if (bx < -24 || bx > this.viewW + 24) return;
+
+    const isWalking = Math.abs(walkWorldX - w.banker.x) > 3 || (w.banker.phase && w.banker.phase !== 'idle');
+    const anim = w.banker.animTime ?? w.elapsed * 2.5;
+    const bob = isWalking ? Math.round(Math.abs(Math.sin(anim)) * 1.5) : Math.round(Math.sin(w.elapsed * 2.5) * 0.6);
+    const stride = isWalking ? Math.round(Math.sin(anim) * 2) : 0;
+    const face = w.banker.facing ?? 1;
+
+    if (isWalking) {
+      // Walking boots on the ground
+      ctx.fillStyle = '#2b1e16';
+      ctx.fillRect(bx - 2 + stride, GROUND_Y - 4, 2, 4);
+      ctx.fillRect(bx + 1 - stride, GROUND_Y - 4, 2, 4);
+    }
+
+    const baseY = isWalking ? GROUND_Y - 4 : GROUND_Y - 10;
     ctx.fillStyle = '#2d4b3c';
-    ctx.fillRect(sx - 3, GROUND_Y - 17 + bob, 6, 7);
+    ctx.fillRect(bx - 3, baseY - 7 - bob, 6, 7);
     ctx.fillStyle = '#efc462';
-    ctx.fillRect(sx - 3, GROUND_Y - 13 + bob, 6, 1);
+    ctx.fillRect(bx - 3, baseY - 3 - bob, 6, 1);
     ctx.fillStyle = '#e5be9e';
-    ctx.fillRect(sx - 2, GROUND_Y - 21 + bob, 4, 4);
+    ctx.fillRect(bx - 2, baseY - 11 - bob, 4, 4);
     ctx.fillStyle = '#1f362b';
-    ctx.fillRect(sx - 3, GROUND_Y - 23 + bob, 6, 2);
+    ctx.fillRect(bx - 3, baseY - 13 - bob, 6, 2);
 
-    // Coin stacks proportional to balance
-    const stacks = Math.min(5, Math.ceil(w.banker.balance / 10));
-    for (let i = 0; i < stacks; i++) {
-      ctx.fillStyle = '#f7d265';
-      ctx.fillRect(sx + 5 + (i % 2) * 3, GROUND_Y - 12 - Math.floor(i / 2) * 2, 2, 2);
+    // Golden coin pouch when carrying collected farm coins back to the Bank!
+    if ((w.banker.carriedCoins ?? 0) > 0) {
+      ctx.fillStyle = '#c48f29';
+      ctx.fillRect(bx + face * 3, baseY - 6 - bob, 4, 4);
+      ctx.fillStyle = '#ffe58a';
+      ctx.fillRect(bx + face * 3 + 1, baseY - 5 - bob, 2, 2);
     }
   }
 
@@ -2057,10 +2276,21 @@ export class PixelRenderer {
         ctx.fillRect(sx + span - 2, GROUND_Y - 10, 2, 10);
         ctx.fillRect(sx - span, GROUND_Y - 7, span * 2, 2);
 
-        const stalkH = Math.max(2, Math.round(3 + farm.cropProgress * 9));
-        for (let bx = -span + 4; bx <= span - 6; bx += 4) {
-          ctx.fillStyle = farm.cropProgress > 0.7 ? '#e6c050' : '#73b359';
-          ctx.fillRect(sx + bx, GROUND_Y - 3 - stalkH, 2, stalkH);
+        if (w.season === 'winter') {
+          // Dormant snow-dusted farmland in Winter (ZERO farm production!)
+          ctx.fillStyle = '#c8deed';
+          ctx.fillRect(sx - span + 2, GROUND_Y - 4, span * 2 - 4, 2);
+        } else {
+          const stalkH = Math.max(2, Math.round(3 + farm.cropProgress * 9));
+          for (let bx = -span + 4; bx <= span - 6; bx += 4) {
+            ctx.fillStyle =
+              w.season === 'autumn'
+                ? '#d49a42'
+                : farm.cropProgress > 0.7
+                  ? '#e6c050'
+                  : '#73b359';
+            ctx.fillRect(sx + bx, GROUND_Y - 3 - stalkH, 2, stalkH);
+          }
         }
 
         if (farm.level >= 2) {
@@ -2098,10 +2328,15 @@ export class PixelRenderer {
         ctx.fillText(`F${farm.level} ${count}/${maxF}`, sx, badgeY + 6);
         ctx.textAlign = 'left';
 
-        // Stored coins pile visual
+        // Stored coins pile visual (grows up to full cap ready for Banker morning rounds!)
         if (farm.storedCoins > 0) {
-          ctx.fillStyle = '#f7d265';
-          ctx.fillRect(sx - 14, GROUND_Y - 6, 4, 4);
+          const cap = Math.max(1, getFarmStorageCap(farm.level));
+          const ratio = Math.min(1, farm.storedCoins / cap);
+          const coinsDraw = Math.max(1, Math.ceil(ratio * 4));
+          for (let c = 0; c < coinsDraw; c++) {
+            ctx.fillStyle = ratio >= 1 ? '#fff08a' : '#f7d265';
+            ctx.fillRect(sx - 15 + (c % 2) * 3, GROUND_Y - 5 - Math.floor(c / 2) * 2, 2, 2);
+          }
         }
       }
 
@@ -2152,22 +2387,20 @@ export class PixelRenderer {
       }
     }
 
-    // 2. Drakkar Viking Longship
+    // 2. Unbuilt Drakkar Viking Longship on shore (once built, drawFloatingBoat renders it in the fjord water!)
     const bx = Math.round(w.boat.x - camX);
-    if (bx > -64 && bx < this.viewW + 64) {
-      const prog = w.boat.built ? 1 : w.boat.buildProgress;
-      // Hull
+    if (!w.boat.built && bx > -64 && bx < this.viewW + 64) {
+      const prog = w.boat.buildProgress;
+      // Hull on land while under construction
       ctx.fillStyle = '#4e331f';
       ctx.fillRect(bx - 22, GROUND_Y - 8, 44, 8);
       if (prog > 0.25) {
         ctx.fillStyle = '#6e492c';
         ctx.fillRect(bx - 26, GROUND_Y - 11, 52, 5);
-        // Curved Nordic prows
         ctx.fillRect(bx - 29, GROUND_Y - 17, 4, 8);
         ctx.fillRect(bx + 25, GROUND_Y - 17, 4, 8);
       }
       if (prog > 0.6) {
-        // Dragon head prow + Mast
         ctx.fillStyle = '#8c603a';
         ctx.fillRect(bx + 27, GROUND_Y - 22, 5, 6);
         ctx.fillStyle = w.crest.secondaryColor;
@@ -2175,39 +2408,7 @@ export class PixelRenderer {
         ctx.fillStyle = '#4a311e';
         ctx.fillRect(bx - 1, GROUND_Y - 38, 3, 28);
       }
-      if (w.boat.built) {
-        // Striped Clan-Colored Viking Sail!
-        ctx.fillStyle = w.crest.primaryColor;
-        ctx.fillRect(bx - 14, GROUND_Y - 35, 28, 18);
-        ctx.fillStyle = w.crest.secondaryColor;
-        for (let sx = -10; sx <= 10; sx += 8) {
-          ctx.fillRect(bx + sx, GROUND_Y - 35, 3, 18);
-        }
-        // Mini shields lining the Drakkar hull
-        for (let sx = -16; sx <= 16; sx += 8) {
-          ctx.fillStyle = w.crest.primaryColor;
-          ctx.fillRect(bx + sx - 2, GROUND_Y - 11, 5, 5);
-          ctx.fillStyle = w.crest.secondaryColor;
-          ctx.fillRect(bx + sx - 1, GROUND_Y - 10, 3, 3);
-        }
-
-        // Embarked Crew summary badge above boat when anyone boarded
-        const totalCrew =
-          w.boat.crewArchers + w.boat.crewWarriors + w.boat.crewProducers + w.boat.crewBuilders;
-        if (totalCrew > 0) {
-          ctx.fillStyle = 'rgba(8, 14, 24, 0.8)';
-          ctx.fillRect(bx - 28, GROUND_Y - 47, 56, 9);
-          ctx.fillStyle = '#ffe58a';
-          ctx.font = '6px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText(
-            `A${w.boat.crewArchers} E${w.boat.crewWarriors} F${w.boat.crewProducers} C${w.boat.crewBuilders}`,
-            bx,
-            GROUND_Y - 40
-          );
-          ctx.textAlign = 'left';
-        }
-      } else if (w.boat.coinsPaid > 0 || w.boat.underConstruction) {
+      if (w.boat.coinsPaid > 0 || w.boat.underConstruction) {
         ctx.fillStyle = 'rgba(10,14,20,0.82)';
         ctx.fillRect(bx - 18, GROUND_Y - 22, 36, 4);
         ctx.fillStyle = '#efc462';
@@ -2227,6 +2428,106 @@ export class PixelRenderer {
         ctx.fillRect(bellX - 2 + swing, GROUND_Y - 18, 5, 5);
         ctx.fillStyle = '#fff3b0';
         ctx.fillRect(bellX - 1 + swing, GROUND_Y - 17, 2, 2);
+      }
+    }
+  }
+
+  private drawFloatingBoat(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    const bx = Math.round(w.boat.x - camX);
+    if (bx < -72 || bx > this.viewW + 72) return;
+
+    // Smooth launch drop into fjord water + gentle floating bob on the waves!
+    const dropP = Math.max(0, Math.min(1, w.boat.waterDropProgress ?? 1));
+    const easeDrop = dropP < 0.72 ? (dropP / 0.72) * (dropP / 0.72) : 1 + Math.sin(((dropP - 0.72) / 0.28) * Math.PI) * 0.12;
+    const waveBob = dropP >= 0.85 ? Math.sin(w.elapsed * 2.6) * 1.6 : 0;
+    const baseY = Math.round(GROUND_Y + easeDrop * 15 + waveBob);
+
+    // Water shadow & floating foam ripples underneath the Drakkar
+    if (dropP > 0.55) {
+      ctx.fillStyle = 'rgba(8, 22, 36, 0.38)';
+      ctx.fillRect(bx - 26, baseY, 52, 4);
+      const rippleShift = Math.round(Math.sin(w.elapsed * 3.5) * 3);
+      ctx.fillStyle = 'rgba(204, 238, 255, 0.58)';
+      ctx.fillRect(bx - 29 + rippleShift, baseY - 1, 14, 1);
+      ctx.fillRect(bx + 15 - rippleShift, baseY - 1, 14, 1);
+      ctx.fillRect(bx - 18 - rippleShift, baseY + 2, 36, 1);
+    }
+
+    // Hull & curved Nordic prows
+    ctx.fillStyle = '#4e331f';
+    ctx.fillRect(bx - 22, baseY - 8, 44, 8);
+    ctx.fillStyle = '#6e492c';
+    ctx.fillRect(bx - 26, baseY - 11, 52, 5);
+    ctx.fillRect(bx - 29, baseY - 17, 4, 8);
+    ctx.fillRect(bx + 25, baseY - 17, 4, 8);
+
+    // Dragon head prow + Mast
+    ctx.fillStyle = '#8c603a';
+    ctx.fillRect(bx + 27, baseY - 22, 5, 6);
+    ctx.fillStyle = w.crest.secondaryColor;
+    ctx.fillRect(bx + 29, baseY - 21, 2, 2);
+    ctx.fillStyle = '#4a311e';
+    ctx.fillRect(bx - 1, baseY - 38, 3, 28);
+
+    // Striped Clan-Colored Viking Sail
+    ctx.fillStyle = w.crest.primaryColor;
+    ctx.fillRect(bx - 14, baseY - 35, 28, 18);
+    ctx.fillStyle = w.crest.secondaryColor;
+    for (let sx = -10; sx <= 10; sx += 8) {
+      ctx.fillRect(bx + sx, baseY - 35, 3, 18);
+    }
+
+    // Mini shields lining the Drakkar hull
+    for (let sx = -16; sx <= 16; sx += 8) {
+      ctx.fillStyle = w.crest.primaryColor;
+      ctx.fillRect(bx + sx - 2, baseY - 11, 5, 5);
+      ctx.fillStyle = w.crest.secondaryColor;
+      ctx.fillRect(bx + sx - 1, baseY - 10, 3, 3);
+    }
+
+    // Visible embarked defenders standing on deck (archers & warriors who defend the boat!)
+    if (w.boat.crewArchers > 0) {
+      ctx.fillStyle = w.crest.primaryColor;
+      ctx.fillRect(bx - 16, baseY - 17, 4, 6);
+      ctx.fillStyle = '#e5be9e';
+      ctx.fillRect(bx - 15, baseY - 20, 3, 3);
+      ctx.fillStyle = '#c48d4e';
+      ctx.fillRect(bx - 18, baseY - 18, 2, 5);
+    }
+    if (w.boat.crewWarriors > 0) {
+      ctx.fillStyle = w.crest.primaryColor;
+      ctx.fillRect(bx + 12, baseY - 17, 4, 6);
+      ctx.fillStyle = '#9aa8b8';
+      ctx.fillRect(bx + 12, baseY - 20, 4, 3);
+      ctx.fillStyle = '#d4e2f0';
+      ctx.fillRect(bx + 16, baseY - 20, 2, 6);
+    }
+
+    // Whenever the player passes by the built boat, show Bow, Sword, Hammer, Seed icons + count of each embarked worker!
+    const localMonarch = this.getLocalMonarch(w);
+    if (localMonarch && Math.abs(localMonarch.x - w.boat.x) < 68) {
+      const crewItems: Array<{ kind: 'bow' | 'sword' | 'hammer' | 'seed'; count: number }> = [
+        { kind: 'bow', count: w.boat.crewArchers },
+        { kind: 'sword', count: w.boat.crewWarriors },
+        { kind: 'hammer', count: w.boat.crewBuilders },
+        { kind: 'seed', count: w.boat.crewProducers },
+      ];
+      const itemGap = 20;
+      const totalW = (crewItems.length - 1) * itemGap + 14;
+      const startX = Math.round(bx - totalW / 2);
+      const rowY = baseY - 49;
+
+      ctx.font = 'bold 7px monospace';
+      ctx.textAlign = 'left';
+      for (let i = 0; i < crewItems.length; i++) {
+        const item = crewItems[i];
+        const ix = startX + i * itemGap;
+        this.drawPixelIcon(ctx, item.kind, ix, rowY);
+        const countTxt = String(item.count);
+        ctx.fillStyle = 'rgba(4, 8, 16, 0.85)';
+        ctx.fillText(countTxt, ix + 10.5, rowY + 8);
+        ctx.fillStyle = item.count > 0 ? '#ffe58a' : '#b8c8d8';
+        ctx.fillText(countTxt, ix + 10, rowY + 7.5);
       }
     }
   }
@@ -2766,7 +3067,7 @@ export class PixelRenderer {
 
     const prio = w.priorityTask;
     const registerTarget = (
-      kind: 'wall' | 'tower' | 'forge' | 'boat' | 'dock' | 'farm' | 'rock' | 'tree',
+      kind: 'wall' | 'tower' | 'forge' | 'boat' | 'dock' | 'farm' | 'brewery' | 'rock' | 'tree',
       id: number,
       worldX: number,
       halfW: number,
@@ -2807,6 +3108,11 @@ export class PixelRenderer {
     for (const farm of w.farms) {
       if (farm.underConstruction) {
         registerTarget('farm', farm.id, farm.x, 22, 24);
+      }
+    }
+    for (const camp of w.camps) {
+      if (camp.breweryUnderConstruction && !camp.isBrewery) {
+        registerTarget('brewery', camp.id, camp.x, 20, 26);
       }
     }
     if (w.forge && w.forge.underConstruction && !w.forge.built) {
@@ -2892,8 +3198,35 @@ export class PixelRenderer {
       ctx.fillRect(sx - 4, baseY - 16 - walkBob, 8, 2);
       ctx.fillStyle = primary;
       ctx.fillRect(sx - 2, baseY - 11 - walkBob, 4, 2);
-      ctx.fillStyle = '#7bd468';
-      ctx.fillRect(sx + v.facing * 3, baseY - 10 - walkBob, 2, 3);
+      if (v.state === 'fishing' && Math.abs(v.vx) < 2) {
+        // Pixel fishing rod casting into the fjord river!
+        const dir = v.facing;
+        const rodTipX = sx + dir * 14;
+        const rodTipY = baseY - 17;
+        ctx.strokeStyle = '#9c6e3b';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(sx + dir * 2, baseY - 9);
+        ctx.lineTo(rodTipX, rodTipY);
+        ctx.stroke();
+
+        // Fishing line dropping down into water with bobbing float
+        const bob = Math.round(Math.sin(w.elapsed * 4 + v.id) * 1);
+        const floatY = GROUND_Y + 9 + bob;
+        ctx.strokeStyle = 'rgba(220, 240, 255, 0.72)';
+        ctx.beginPath();
+        ctx.moveTo(rodTipX, rodTipY);
+        ctx.lineTo(rodTipX + dir * 2, floatY);
+        ctx.stroke();
+
+        ctx.fillStyle = '#ff5768';
+        ctx.fillRect(rodTipX + dir * 2 - 1, floatY - 1, 2, 2);
+        ctx.fillStyle = 'rgba(205, 240, 255, 0.6)';
+        ctx.fillRect(rodTipX + dir * 2 - 3, floatY + 1, 6, 1);
+      } else {
+        ctx.fillStyle = '#7bd468';
+        ctx.fillRect(sx + v.facing * 3, baseY - 10 - walkBob, 2, 3);
+      }
     } else if (v.role === 'wanderer') {
       ctx.fillStyle = '#4a3d34';
       ctx.fillRect(sx - 2, baseY - 16 - walkBob, 4, 2);
@@ -3599,10 +3932,26 @@ export class PixelRenderer {
   }
 
   private drawSnowParticles(ctx: CanvasRenderingContext2D, w: WorldState): void {
-    for (const p of w.particles) {
+    const season = w.season ?? 'summer';
+    for (let i = 0; i < w.particles.length; i++) {
+      const p = w.particles[i];
       if (p.kind !== 'snow') continue;
-      ctx.globalAlpha = p.alpha;
-      ctx.fillStyle = p.color;
+      if (season === 'winter') {
+        ctx.globalAlpha = Math.min(1, p.alpha * 1.15);
+        ctx.fillStyle = '#e4f2fc';
+      } else if (season === 'autumn') {
+        ctx.globalAlpha = p.alpha * 0.85;
+        ctx.fillStyle = i % 2 === 0 ? '#e8933d' : '#c95c2b';
+      } else if (season === 'spring') {
+        if (i % 2 === 1) continue;
+        ctx.globalAlpha = p.alpha * 0.65;
+        ctx.fillStyle = i % 4 === 0 ? '#ffd1e6' : '#fff3b0';
+      } else {
+        // Summer: light sparse warm pollen/firefly motes
+        if (i % 3 !== 0) continue;
+        ctx.globalAlpha = p.alpha * 0.42;
+        ctx.fillStyle = '#ffe999';
+      }
       ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
     }
     ctx.globalAlpha = 1;

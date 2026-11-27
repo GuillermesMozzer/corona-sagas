@@ -7,6 +7,7 @@ import {
   WORLD_WIDTH,
   type ArcherTower,
   type BankerState,
+  type BerryBush,
   type BoatState,
   type CharacterAppearance,
   type Chest,
@@ -248,6 +249,8 @@ export function generateIslandSnapshot(
     crewWarriors: 0,
     crewProducers: 0,
     crewBuilders: 0,
+    waterDropProgress: islandId > 1 ? 1 : 0,
+    attackCooldown: 0,
   };
 
   const dock: DockState = {
@@ -260,10 +263,38 @@ export function generateIslandSnapshot(
   };
 
   const camps: VagrantCamp[] = [
-    { id: uid(), x: CENTER_X - 425, spawnTimer: 16, active: true },
-    { id: uid(), x: CENTER_X + 475, spawnTimer: 16, active: true },
-    { id: uid(), x: CENTER_X - 820, spawnTimer: 22, active: true },
-    { id: uid(), x: CENTER_X + 820, spawnTimer: 22, active: true },
+    {
+      id: uid(),
+      x: CENTER_X - 425,
+      spawnTimer: 16,
+      active: true,
+      isBrewerySite: true,
+      isBrewery: false,
+      breweryCoinsPaid: 0,
+      breweryUnderConstruction: false,
+      breweryBuildProgress: 0,
+      beerStock: 0,
+      beerCoinsPaid: 0,
+      breweryAttractTimer: 0,
+      daysSinceSpawn: 0,
+    },
+    {
+      id: uid(),
+      x: CENTER_X + 475,
+      spawnTimer: 16,
+      active: true,
+      isBrewerySite: true,
+      isBrewery: false,
+      breweryCoinsPaid: 0,
+      breweryUnderConstruction: false,
+      breweryBuildProgress: 0,
+      beerStock: 0,
+      beerCoinsPaid: 0,
+      breweryAttractTimer: 0,
+      daysSinceSpawn: 0,
+    },
+    { id: uid(), x: CENTER_X - 820, spawnTimer: 22, active: true, isBrewerySite: false, daysSinceSpawn: 0 },
+    { id: uid(), x: CENTER_X + 820, spawnTimer: 22, active: true, isBrewerySite: false, daysSinceSpawn: 0 },
   ];
 
   // God Shrine (strictly 1 per island where present, none on Island 1)
@@ -471,6 +502,23 @@ export function generateIslandSnapshot(
     storedTaxCoins: 0,
   };
 
+  // Berry bushes bloom in Winter and Spring (dormant in Summer/Autumn)
+  const berryBushPositions = [
+    CENTER_X - 310,
+    CENTER_X - 590,
+    CENTER_X - 755,
+    CENTER_X + 310,
+    CENTER_X + 590,
+    CENTER_X + 755,
+  ];
+  const berryBushes: BerryBush[] = berryBushPositions.map((bx) => ({
+    id: uid(),
+    x: bx,
+    berries: 0,
+    marked: false,
+    forageProgress: 0,
+  }));
+
   return {
     hall,
     forge,
@@ -487,6 +535,7 @@ export function generateIslandSnapshot(
     camps,
     trees,
     rocks,
+    berryBushes,
     chests,
     portals,
     villagers,
@@ -575,6 +624,12 @@ export function createInitialWorld(
 
   const banker: BankerState = {
     x: CENTER_X + 68,
+    walkX: CENTER_X + 68,
+    facing: 1,
+    animTime: 0,
+    carriedCoins: 0,
+    phase: 'idle',
+    targetFarmId: null,
     balance: 0,
     interestFraction: 0,
     lastDayYield: 0,
@@ -624,6 +679,7 @@ export function createInitialWorld(
     thorActivated: false,
     unlockedMounts: ['starter'],
     day: 1,
+    season: 'summer',
     dayHalfMinutes: getSavedDayHalfMinutes(),
     timeOfDay: 0.03,
     threatLevel: 1,

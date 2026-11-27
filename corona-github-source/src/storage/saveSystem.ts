@@ -136,6 +136,54 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
     interestFraction: 0,
     lastDayYield: 0,
   };
+  state.banker.walkX = state.banker.walkX ?? state.banker.x;
+  state.banker.facing = state.banker.facing ?? -1;
+  state.banker.animTime = state.banker.animTime ?? 0;
+  state.banker.carriedCoins = state.banker.carriedCoins ?? 0;
+  state.banker.phase = state.banker.phase ?? 'idle';
+  state.banker.targetFarmId = state.banker.targetFarmId ?? null;
+
+  if (state.boat) {
+    state.boat.waterDropProgress = state.boat.waterDropProgress ?? (state.boat.built ? 1 : 0);
+    state.boat.attackCooldown = state.boat.attackCooldown ?? 0;
+  }
+
+  const seasonIdx = Math.floor((Math.max(1, state.day ?? 1) - 1) / 15) % 4;
+  const seasonOrder = ['summer', 'autumn', 'winter', 'spring'] as const;
+  state.season = state.season ?? seasonOrder[seasonIdx];
+
+  if (!state.berryBushes || state.berryBushes.length === 0) {
+    let bid = (state.nextId ?? 6000) + 1;
+    const xs = [
+      CENTER_X - 310,
+      CENTER_X - 595,
+      CENTER_X - 755,
+      CENTER_X + 295,
+      CENTER_X + 585,
+      CENTER_X + 760,
+    ];
+    const bloomNow = state.season === 'winter' || state.season === 'spring';
+    state.berryBushes = xs.map((bx) => ({
+      id: bid++,
+      x: bx,
+      berries: bloomNow ? 3 : 0,
+      marked: false,
+      forageProgress: 0,
+    }));
+    state.nextId = bid + 1;
+  }
+
+  // Ensure the innermost camp on each side is eligible to become a Brewery!
+  if (state.camps && state.camps.length > 0 && !state.camps.some((c) => c.isBrewerySite)) {
+    const leftInner = state.camps
+      .filter((c) => c.x < CENTER_X)
+      .sort((a, b) => Math.abs(a.x - CENTER_X) - Math.abs(b.x - CENTER_X))[0];
+    const rightInner = state.camps
+      .filter((c) => c.x >= CENTER_X)
+      .sort((a, b) => Math.abs(a.x - CENTER_X) - Math.abs(b.x - CENTER_X))[0];
+    if (leftInner) leftInner.isBrewerySite = true;
+    if (rightInner) rightInner.isBrewerySite = true;
+  }
   if (state.currentIsland >= 2 && !state.forge) {
     state.forge = {
       x: CENTER_X - 68,
