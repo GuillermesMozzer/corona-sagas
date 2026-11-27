@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" shape-rendering="crispEdges">
+  <rect width="32" height="32" rx="6" fill="#07101c"/>
+  <rect x="1" y="1" width="30" height="30" rx="5" fill="none" stroke="#efc462" stroke-opacity="0.45" stroke-width="1"/>
+  <!-- Exact pixel-art Golden Crown from Corona Login Screen -->
+  <rect x="4" y="19" width="24" height="6" fill="#f7c948"/>
+  <rect x="4" y="11" width="5" height="8" fill="#f7c948"/>
+  <rect x="14" y="7" width="4" height="12" fill="#f7c948"/>
+  <rect x="23" y="11" width="5" height="8" fill="#f7c948"/>
+  <rect x="6" y="21" width="20" height="2" fill="#fff5bd"/>
+</svg>
