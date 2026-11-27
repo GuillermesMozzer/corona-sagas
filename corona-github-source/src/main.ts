@@ -2053,10 +2053,15 @@ function syncCharNameInput(): void {
   }
 }
 
+// Unlock remote teammate voice playback automatically on any tap/click/key press
+window.addEventListener('pointerdown', () => resumeRemoteCoopAudio(), { passive: true });
+window.addEventListener('touchstart', () => resumeRemoteCoopAudio(), { passive: true });
+
 // =========================================================================
 // KEYBOARD CONTROLS (with Double-Tap Arrow/A/D Sprint & ESC handling)
 // =========================================================================
 window.addEventListener('keydown', (e) => {
+  resumeRemoteCoopAudio();
   const activeTag = (document.activeElement?.tagName ?? '').toUpperCase();
   if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') {
     return;

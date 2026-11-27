@@ -132,11 +132,18 @@ let lastGuestInputMs = 0;
 let latestGuestWorldSnapshot: WorldState | null = null;
 let onGuestForceExit: ((reason: string) => void) | null = null;
 
-// WebRTC Voice Chat state
+// WebRTC + Automatic Firestore Opus Relay Voice Chat state
 let localAudioStream: MediaStream | null = null;
 let micAudioCtx: AudioContext | null = null;
 let micMeterTimer: number | null = null;
+let lastVoiceDetectedMs = 0;
+let roomConnectedAtMs = 0;
+let relayLoopTimer: number | null = null;
+let activeRelayRecorder: MediaRecorder | null = null;
+let remotePlaybackCtx: AudioContext | null = null;
+let remoteChunkPlayCursor = 0;
 const peerConnections = new Map<string, RTCPeerConnection>();
+const peerSignalChains = new Map<string, Promise<void>>();
 const pendingIceCandidates = new Map<string, RTCIceCandidateInit[]>();
 const remoteAudioEls = new Map<string, HTMLAudioElement>();
 const processedSignalIds = new Set<string>();
@@ -145,6 +152,9 @@ const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
   ],
 };
 
@@ -285,6 +295,7 @@ function cleanupSubscriptionsAndAudio(): void {
   latestGuestWorldSnapshot = null;
   lastSentInputKey = '';
 
+  stopVoiceRelayLoop();
   for (const pc of peerConnections.values()) {
     try {
       pc.close();
@@ -293,6 +304,7 @@ function cleanupSubscriptionsAndAudio(): void {
     }
   }
   peerConnections.clear();
+  peerSignalChains.clear();
   pendingIceCandidates.clear();
   for (const el of remoteAudioEls.values()) {
     try {
@@ -341,6 +353,8 @@ function makeSlimSnapshot(w: WorldState): string {
 function subscribeCommonRoomChannels(code: string, myUid: string): void {
   const db = getFirestoreDb();
   if (!db) return;
+
+  roomConnectedAtMs = Date.now();
 
   // 1. Live Members list
   membersUnsub = onSnapshot(collection(db, 'coop_rooms', code, 'members'), (snap) => {
@@ -397,6 +411,7 @@ function subscribeCommonRoomChannels(code: string, myUid: string): void {
           void attachLocalAudioAndOffer(code, myUid, m.uid);
         }
       }
+      startVoiceRelayLoopIfNeeded();
     }
     notify();
   });
@@ -437,18 +452,51 @@ function subscribeCommonRoomChannels(code: string, myUid: string): void {
     }
   );
 
-  // 3. Live WebRTC Signaling channel for Voice Chat
-  signalsUnsub = onSnapshot(
+  // 3. Ordered Live Voice Signaling & Relay channel (WebRTC offer/answer/ICE + CGNAT-proof Opus voice_chunk!)
+  const sigQ = query(
     collection(db, 'coop_rooms', code, 'signals'),
+    orderBy('createdAtMs', 'asc')
+  );
+  signalsUnsub = onSnapshot(
+    sigQ,
     (snap) => {
       snap.docChanges().forEach((chg) => {
         if (chg.type !== 'added') return;
         const sigId = chg.doc.id;
         if (processedSignalIds.has(sigId)) return;
         const d = chg.doc.data() as Record<string, unknown>;
-        if (d.to !== myUid) return;
+        const createdAtMs = typeof d.createdAtMs === 'number' ? d.createdAtMs : 0;
+        const toUid = String(d.to ?? '');
+        const fromUid = String(d.from ?? '');
+        const sigType = String(d.type ?? '');
+
+        // Ignore & prune stale signals from earlier sessions
+        if (createdAtMs > 0 && createdAtMs < roomConnectedAtMs - 10000) {
+          processedSignalIds.add(sigId);
+          if (Date.now() - createdAtMs > 25000) {
+            void deleteDoc(chg.doc.ref).catch(() => {});
+          }
+          return;
+        }
+
+        if (fromUid === myUid) return;
+        if (toUid !== myUid && toUid !== 'all') return;
         processedSignalIds.add(sigId);
-        void handleIncomingVoiceSignal(code, myUid, String(d.from ?? ''), d);
+
+        if (sigType === 'voice_chunk') {
+          if (typeof d.b64 === 'string' && !isPeerWebRtcConnected(fromUid)) {
+            void playIncomingRelayChunk(fromUid, String(d.mime ?? 'audio/webm'), d.b64);
+          }
+          return;
+        }
+
+        // Serialize WebRTC offer/answer/ICE strictly in chronological order per peer!
+        enqueuePeerSignal(fromUid, async () => {
+          await handleIncomingVoiceSignal(code, myUid, fromUid, d);
+          if (toUid === myUid) {
+            void deleteDoc(chg.doc.ref).catch(() => {});
+          }
+        });
       });
     },
     (err) => {
@@ -615,7 +663,7 @@ export async function joinCoopRoomAsGuest(
   if (!user || !db) return { ok: false, error: 'Conta Google necessária.' };
 
   const code = validation.code;
-  resetCoopState();
+  resetCoopState(true);
 
   try {
     const roomSnap = await getDoc(doc(db, 'coop_rooms', code));
@@ -635,7 +683,7 @@ export async function joinCoopRoomAsGuest(
       photoURL: user.photoURL,
       role: 'guest',
       appearance: memberAppearance,
-      micOn: false,
+      micOn: coopState.micOn,
       joinedAtMs: Date.now(),
     });
 
@@ -1087,8 +1135,50 @@ export async function adminUnbanCommunityPlayer(targetUid: string): Promise<bool
 }
 
 // =========================================================================
-// WEBRTC PEER-TO-PEER VOICE CHAT (MICROPHONE) VIA FIRESTORE SIGNALING
+// HYBRID VOICE CHAT ENGINE:
+// 1. WebRTC P2P (explicit sendrecv transceivers + ordered signaling + ICE restart)
+// 2. Automatic CGNAT/4G-proof Opus Voice Relay via Firestore when P2P is blocked!
 // =========================================================================
+
+function enqueuePeerSignal(peerUid: string, task: () => Promise<void>): void {
+  const prev = peerSignalChains.get(peerUid) ?? Promise.resolve();
+  const next = prev
+    .catch(() => {})
+    .then(task)
+    .catch((err) => {
+      console.warn('[Corona Co-op] Peer signal queue error:', err);
+    });
+  peerSignalChains.set(peerUid, next);
+}
+
+function isPeerWebRtcConnected(peerUid: string): boolean {
+  const pc = peerConnections.get(peerUid);
+  if (!pc) return false;
+  const connected =
+    pc.iceConnectionState === 'connected' ||
+    pc.iceConnectionState === 'completed' ||
+    pc.connectionState === 'connected';
+  if (!connected) return false;
+  const el = remoteAudioEls.get(peerUid);
+  return Boolean(el && el.srcObject);
+}
+
+function getOrUnlockRemotePlaybackCtx(): AudioContext | null {
+  try {
+    const AudioCtxCtor =
+      window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtxCtor) return null;
+    if (!remotePlaybackCtx) {
+      remotePlaybackCtx = new AudioCtxCtor();
+    }
+    if (remotePlaybackCtx.state === 'suspended') {
+      void remotePlaybackCtx.resume().catch(() => {});
+    }
+    return remotePlaybackCtx;
+  } catch {
+    return null;
+  }
+}
 
 function stopMicLevelMonitor(): void {
   if (micMeterTimer !== null) {
@@ -1111,6 +1201,9 @@ function startMicLevelMonitor(stream: MediaStream): void {
       window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioCtxCtor) return;
     micAudioCtx = new AudioCtxCtor();
+    if (micAudioCtx.state === 'suspended') {
+      void micAudioCtx.resume().catch(() => {});
+    }
     const src = micAudioCtx.createMediaStreamSource(stream);
     const analyser = micAudioCtx.createAnalyser();
     analyser.fftSize = 256;
@@ -1131,19 +1224,220 @@ function startMicLevelMonitor(stream: MediaStream): void {
         sum += d * d;
       }
       const rms = Math.sqrt(sum / buf.length);
-      const isNowSpeaking = rms > 0.025;
+      const isNowSpeaking = rms > 0.018;
+      if (isNowSpeaking) {
+        lastVoiceDetectedMs = Date.now();
+      }
       if (isNowSpeaking !== coopState.speaking) {
         coopState.speaking = isNowSpeaking;
         notify();
       }
-    }, 120);
+    }, 100);
   } catch {
     // Voice level visual is optional; never block mic transmission
   }
 }
 
+function pickSupportedRelayMime(): string {
+  if (typeof MediaRecorder === 'undefined') return '';
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/ogg;codecs=opus',
+  ];
+  for (const mime of candidates) {
+    try {
+      if (MediaRecorder.isTypeSupported(mime)) return mime;
+    } catch {
+      // Ignore
+    }
+  }
+  return '';
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const res = typeof reader.result === 'string' ? reader.result : '';
+      const comma = res.indexOf(',');
+      resolve(comma >= 0 ? res.slice(comma + 1) : res);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+function base64ToUint8Array(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    bytes[i] = bin.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function stopVoiceRelayLoop(): void {
+  if (relayLoopTimer !== null) {
+    window.clearTimeout(relayLoopTimer);
+    relayLoopTimer = null;
+  }
+  if (activeRelayRecorder) {
+    try {
+      if (activeRelayRecorder.state !== 'inactive') activeRelayRecorder.stop();
+    } catch {
+      // Ignore
+    }
+    activeRelayRecorder = null;
+  }
+}
+
+function needsRelayForAnyPeer(myUid: string): boolean {
+  const others = coopState.members.filter((m) => m.uid !== myUid);
+  if (others.length === 0) return false;
+  return others.some((m) => !isPeerWebRtcConnected(m.uid));
+}
+
+function startVoiceRelayLoopIfNeeded(): void {
+  if (relayLoopTimer !== null || activeRelayRecorder !== null) return;
+  if (!coopState.active || !coopState.roomCode || !coopState.micOn || !localAudioStream) return;
+  if (typeof MediaRecorder === 'undefined') return;
+
+  const scheduleNextSegment = (delayMs: number) => {
+    if (relayLoopTimer !== null) window.clearTimeout(relayLoopTimer);
+    relayLoopTimer = window.setTimeout(() => {
+      relayLoopTimer = null;
+      runSingleRelaySegment();
+    }, delayMs);
+  };
+
+  const runSingleRelaySegment = () => {
+    const user = authCloudState.user;
+    const db = getFirestoreDb();
+    const code = coopState.roomCode;
+    if (!coopState.active || !code || !coopState.micOn || !localAudioStream || !user || !db) {
+      stopVoiceRelayLoop();
+      return;
+    }
+
+    // If all teammates are already connected via direct WebRTC P2P, stay dormant and re-check gently!
+    if (!needsRelayForAnyPeer(user.uid)) {
+      scheduleNextSegment(1400);
+      return;
+    }
+
+    const mime = pickSupportedRelayMime();
+    const chunks: Blob[] = [];
+    const segStartMs = Date.now();
+    try {
+      const options: MediaRecorderOptions = mime
+        ? { mimeType: mime, audioBitsPerSecond: 16000 }
+        : { audioBitsPerSecond: 16000 };
+      const rec = new MediaRecorder(localAudioStream, options);
+      activeRelayRecorder = rec;
+
+      rec.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+      };
+
+      rec.onstop = () => {
+        if (activeRelayRecorder === rec) activeRelayRecorder = null;
+        const stillLive = Boolean(coopState.active && coopState.roomCode === code && coopState.micOn && localAudioStream);
+        // Only transmit chunk if voice was detected recently (or meter wasn't available), saving bandwidth!
+        const heardVoiceRecently =
+          !micAudioCtx || Date.now() - lastVoiceDetectedMs < 1500 || lastVoiceDetectedMs >= segStartMs - 600;
+        if (stillLive && heardVoiceRecently && chunks.length > 0 && needsRelayForAnyPeer(user.uid)) {
+          const finalMime = rec.mimeType || mime || 'audio/webm';
+          const blob = new Blob(chunks, { type: finalMime });
+          if (blob.size > 200 && blob.size < 45000) {
+            void blobToBase64(blob)
+              .then(async (b64) => {
+                if (!coopState.active || coopState.roomCode !== code || !coopState.micOn) return;
+                const docRef = await addDoc(collection(db, 'coop_rooms', code, 'signals'), {
+                  from: user.uid,
+                  to: 'all',
+                  type: 'voice_chunk',
+                  mime: finalMime,
+                  b64,
+                  createdAtMs: Date.now(),
+                });
+                // Auto-expire relay chunk after 10s so Firestore stays clean & tiny
+                window.setTimeout(() => {
+                  void deleteDoc(docRef).catch(() => {});
+                }, 10000);
+              })
+              .catch(() => {});
+          }
+        }
+        if (stillLive) {
+          scheduleNextSegment(60);
+        }
+      };
+
+      rec.onerror = () => {
+        if (activeRelayRecorder === rec) activeRelayRecorder = null;
+        if (coopState.active && coopState.micOn) scheduleNextSegment(900);
+      };
+
+      rec.start();
+      relayLoopTimer = window.setTimeout(() => {
+        relayLoopTimer = null;
+        try {
+          if (rec.state !== 'inactive') rec.stop();
+        } catch {
+          // Ignore
+        }
+      }, 850);
+    } catch {
+      activeRelayRecorder = null;
+      scheduleNextSegment(1500);
+    }
+  };
+
+  // Give WebRTC P2P a short head start (1.2s) before starting relay segments
+  scheduleNextSegment(1200);
+}
+
+async function playIncomingRelayChunk(_fromUid: string, mime: string, b64: string): Promise<void> {
+  try {
+    const bytes = base64ToUint8Array(b64);
+    const ctx = getOrUnlockRemotePlaybackCtx();
+    if (ctx && ctx.state === 'running') {
+      try {
+        const arrBuf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+        const audioBuf = await ctx.decodeAudioData(arrBuf);
+        const src = ctx.createBufferSource();
+        src.buffer = audioBuf;
+        src.connect(ctx.destination);
+        const startAt = Math.max(ctx.currentTime + 0.01, remoteChunkPlayCursor);
+        src.start(startAt);
+        remoteChunkPlayCursor = startAt + audioBuf.duration;
+        return;
+      } catch {
+        // Fallback to HTMLAudioElement if decodeAudioData doesn't support this container
+      }
+    }
+
+    const blob = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], {
+      type: mime || 'audio/webm',
+    });
+    const url = URL.createObjectURL(blob);
+    const el = new Audio(url);
+    el.volume = 1;
+    el.onended = () => URL.revokeObjectURL(url);
+    el.onerror = () => URL.revokeObjectURL(url);
+    await el.play().catch(() => {
+      URL.revokeObjectURL(url);
+    });
+  } catch {
+    // Ignore malformed/unsupported chunk
+  }
+}
+
 function stopLocalMicrophoneInternal(): void {
   stopMicLevelMonitor();
+  stopVoiceRelayLoop();
   if (localAudioStream) {
     for (const track of localAudioStream.getTracks()) {
       track.stop();
@@ -1161,9 +1455,10 @@ function stopLocalMicrophoneInternal(): void {
 }
 
 /**
- * Unlocks/resumes any remote teammate <audio> streams after a user gesture (mobile/desktop autoplay safeguard).
+ * Unlocks/resumes Web Audio + any remote teammate <audio> streams after ANY user gesture.
  */
 export function resumeRemoteCoopAudio(): void {
+  getOrUnlockRemotePlaybackCtx();
   for (const el of remoteAudioEls.values()) {
     if (el.paused && el.srcObject) {
       void el.play().catch(() => {});
@@ -1184,6 +1479,27 @@ async function flushPendingIceCandidates(peerUid: string, pc: RTCPeerConnection)
   }
 }
 
+async function ensureSendRecvAudioTrack(pc: RTCPeerConnection): Promise<void> {
+  if (!localAudioStream || !coopState.micOn) return;
+  const audioTrack = localAudioStream.getAudioTracks()[0];
+  if (!audioTrack) return;
+
+  const transceivers = pc.getTransceivers();
+  const audioTransceiver = transceivers.find(
+    (tr) => tr.sender.track?.kind === 'audio' || tr.receiver.track?.kind === 'audio'
+  );
+  if (audioTransceiver) {
+    // CRITICAL: Flip recvonly -> sendrecv so replying peers actually transmit audio back!
+    audioTransceiver.direction = 'sendrecv';
+    await audioTransceiver.sender.replaceTrack(audioTrack);
+  } else {
+    pc.addTransceiver(audioTrack, {
+      direction: 'sendrecv',
+      streams: [localAudioStream],
+    });
+  }
+}
+
 function getOrCreatePeerConnection(code: string, myUid: string, peerUid: string): RTCPeerConnection {
   const existing = peerConnections.get(peerUid);
   if (existing && existing.connectionState !== 'closed' && existing.connectionState !== 'failed') {
@@ -1201,12 +1517,6 @@ function getOrCreatePeerConnection(code: string, myUid: string, peerUid: string)
   const pc = new RTCPeerConnection(RTC_CONFIG);
   peerConnections.set(peerUid, pc);
 
-  if (localAudioStream) {
-    for (const track of localAudioStream.getAudioTracks()) {
-      pc.addTrack(track, localAudioStream);
-    }
-  }
-
   pc.onicecandidate = (ev) => {
     if (!ev.candidate) return;
     const db = getFirestoreDb();
@@ -1218,6 +1528,12 @@ function getOrCreatePeerConnection(code: string, myUid: string, peerUid: string)
       candidate: ev.candidate.toJSON(),
       createdAtMs: Date.now(),
     }).catch(() => {});
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    if (pc.iceConnectionState === 'failed' && coopState.active && coopState.micOn) {
+      void attachLocalAudioAndOffer(code, myUid, peerUid, true);
+    }
   };
 
   pc.ontrack = (ev) => {
@@ -1240,25 +1556,18 @@ function getOrCreatePeerConnection(code: string, myUid: string, peerUid: string)
   return pc;
 }
 
-async function attachLocalAudioAndOffer(code: string, myUid: string, peerUid: string): Promise<void> {
+async function attachLocalAudioAndOffer(
+  code: string,
+  myUid: string,
+  peerUid: string,
+  iceRestart = false
+): Promise<void> {
   const db = getFirestoreDb();
   if (!db) return;
   try {
     const pc = getOrCreatePeerConnection(code, myUid, peerUid);
-    if (localAudioStream) {
-      const audioTrack = localAudioStream.getAudioTracks()[0];
-      if (audioTrack) {
-        const audioSender = pc
-          .getSenders()
-          .find((s) => s.track?.kind === 'audio' || (s.track === null && pc.getSenders().length > 0));
-        if (audioSender) {
-          await audioSender.replaceTrack(audioTrack);
-        } else {
-          pc.addTrack(audioTrack, localAudioStream);
-        }
-      }
-    }
-    const offer = await pc.createOffer({ offerToReceiveAudio: true });
+    await ensureSendRecvAudioTrack(pc);
+    const offer = await pc.createOffer({ offerToReceiveAudio: true, iceRestart });
     await pc.setLocalDescription(offer);
     await addDoc(collection(db, 'coop_rooms', code, 'signals'), {
       from: myUid,
@@ -1293,18 +1602,8 @@ async function handleIncomingVoiceSignal(
       await pc.setRemoteDescription({ type: 'offer', sdp: data.sdp });
       await flushPendingIceCandidates(fromUid, pc);
 
-      // Ensure our local mic track is attached in our answer if our mic is already ON
-      if (localAudioStream && coopState.micOn) {
-        const audioTrack = localAudioStream.getAudioTracks()[0];
-        if (audioTrack) {
-          const existingSender = pc.getSenders().find((s) => s.track?.kind === 'audio' || s.track === null);
-          if (existingSender) {
-            await existingSender.replaceTrack(audioTrack);
-          } else {
-            pc.addTrack(audioTrack, localAudioStream);
-          }
-        }
-      }
+      // Attach local mic track in sendrecv mode if our mic is already ON
+      await ensureSendRecvAudioTrack(pc);
 
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
@@ -1337,8 +1636,7 @@ async function handleIncomingVoiceSignal(
 
 /**
  * Toggles the player's microphone ON / OFF immediately during gameplay.
- * Works right away (opens browser microphone with live voice indicator) and automatically
- * transmits peer-to-peer audio whenever inside a Co-op room!
+ * Uses direct WebRTC P2P when possible + automatic Firestore Opus relay fallback across CGNAT/4G/5G/firewalls!
  */
 export async function toggleCoopMicrophone(): Promise<{
   ok: boolean;
@@ -1380,6 +1678,7 @@ export async function toggleCoopMicrophone(): Promise<{
       video: false,
     });
     coopState.micOn = true;
+    lastVoiceDetectedMs = Date.now();
     startMicLevelMonitor(localAudioStream);
 
     if (inRoom && coopState.roomCode && user && db) {
@@ -1394,6 +1693,7 @@ export async function toggleCoopMicrophone(): Promise<{
         if (m.uid === user.uid) continue;
         await attachLocalAudioAndOffer(code, user.uid, m.uid);
       }
+      startVoiceRelayLoopIfNeeded();
     }
 
     notify();
