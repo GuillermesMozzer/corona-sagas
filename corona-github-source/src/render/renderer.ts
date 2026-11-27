@@ -33,7 +33,6 @@ import {
   countArchersAssignedToTower,
   getBankerDailyRatePct,
   getFarmMaxFarmers,
-  getIslandMaxKingdomLevel,
   getTowerArcherCap,
   getTowerHeight,
   getTutorialTargetX,
@@ -3769,18 +3768,78 @@ export class PixelRenderer {
     }
   }
 
+  private toRoman(num: number): string {
+    const n = Math.max(1, Math.floor(num));
+    const table: Array<[number, string]> = [
+      [1000, 'M'],
+      [900, 'CM'],
+      [500, 'D'],
+      [400, 'CD'],
+      [100, 'C'],
+      [90, 'XC'],
+      [50, 'L'],
+      [40, 'XL'],
+      [10, 'X'],
+      [9, 'IX'],
+      [5, 'V'],
+      [4, 'IV'],
+      [1, 'I'],
+    ];
+    let rem = n;
+    let out = '';
+    for (const [val, sym] of table) {
+      while (rem >= val) {
+        out += sym;
+        rem -= val;
+      }
+    }
+    return out;
+  }
+
+  private drawMinimalCoinIcon(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+    const rx = Math.round(x);
+    const ry = Math.round(y);
+    ctx.fillStyle = 'rgba(8, 12, 18, 0.72)';
+    ctx.fillRect(rx + 1, ry, 5, 7);
+    ctx.fillRect(rx, ry + 1, 7, 5);
+    ctx.fillStyle = '#c98d1e';
+    ctx.fillRect(rx + 1, ry + 1, 5, 5);
+    ctx.fillStyle = '#f7d265';
+    ctx.fillRect(rx + 1, ry + 1, 4, 4);
+    ctx.fillStyle = '#fff6c4';
+    ctx.fillRect(rx + 2, ry + 1, 2, 2);
+  }
+
+  private drawMinimalDiamondIcon(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+    const rx = Math.round(x);
+    const ry = Math.round(y);
+    ctx.fillStyle = 'rgba(8, 12, 18, 0.72)';
+    ctx.fillRect(rx + 2, ry - 1, 3, 9);
+    ctx.fillRect(rx + 1, ry, 5, 7);
+    ctx.fillRect(rx, ry + 2, 7, 3);
+    ctx.fillStyle = '#1f98c7';
+    ctx.fillRect(rx + 2, ry, 3, 7);
+    ctx.fillRect(rx + 1, ry + 1, 5, 5);
+    ctx.fillRect(rx, ry + 2, 7, 3);
+    ctx.fillStyle = '#6cf0ff';
+    ctx.fillRect(rx + 2, ry + 1, 3, 5);
+    ctx.fillRect(rx + 1, ry + 2, 5, 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(rx + 2, ry + 1, 1, 2);
+  }
+
   private drawHud(ctx: CanvasRenderingContext2D, w: WorldState): void {
     const monarch = w.monarchs[0];
     if (!monarch) return;
 
-    const isNarrow = this.viewW < 420;
-    const menuReserve = 34; // Space for top-right Menu button (☰)
+    const isNarrow = this.viewW < 380;
+    const menuReserve = isNarrow ? 38 : 26; // Space for top-right Menu button (☰)
 
     const countRole = (role: Villager['role']) => {
       let left = 0;
       let right = 0;
       for (const v of w.villagers) {
-        if (v.role === role) {
+        if (v.role === role && v.state !== 'embarked') {
           if (v.side === -1) left++;
           else right++;
         }
@@ -3788,229 +3847,171 @@ export class PixelRenderer {
       return { left, right, total: left + right };
     };
 
-    const builders = countRole('builder');
     const warriors = countRole('warrior');
+    const builders = countRole('builder');
     const archers = countRole('archer');
     const producers = countRole('producer');
 
-    // Top-left Clan Crest + Day badge + Day/Night bar
-    ctx.fillStyle = 'rgba(8, 14, 24, 0.8)';
-    ctx.fillRect(6, 5, 76, 26);
-    ctx.strokeStyle = w.isBloodMoon ? 'rgba(255, 94, 108, 0.7)' : 'rgba(205, 224, 242, 0.25)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(6.5, 5.5, 75, 25);
+    // Track progressive discovery: icons only appear once the player has obtained at least 1!
+    const disc = (w.discoveredHud = w.discoveredHud ?? {});
+    if (monarch.diamonds > 0) disc.diamond = true;
+    if (monarch.coins > 0) disc.coin = true;
+    if (w.resources.wood > 0) disc.wood = true;
+    if (w.resources.stone > 0) disc.stone = true;
+    if (w.resources.iron > 0) disc.iron = true;
+    if (warriors.total > 0) disc.sword = true;
+    if (builders.total > 0) disc.hammer = true;
+    if (archers.total > 0) disc.bow = true;
+    if (producers.total > 0) disc.seed = true;
 
-    drawShieldEmblem(ctx, w.crest, 18, 18, 7);
+    // 1. TOP-RIGHT: Current Day as a clean Roman Numeral directly to the left of the Menu button (NO dark box!)
+    const dayRoman = this.toRoman(w.day);
+    ctx.font = 'bold 10px "Pixelify Sans", monospace';
+    const romanW = Math.ceil(ctx.measureText(dayRoman).width);
+    const romanRightX = this.viewW - menuReserve - 4;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = w.isBloodMoon ? '#ff6b78' : w.isNight ? '#a8d8ff' : '#ffe89c';
+    ctx.fillText(dayRoman, romanRightX, 16);
+    ctx.textAlign = 'left';
 
-    ctx.fillStyle = w.isNight ? (w.isBloodMoon ? '#ff6464' : '#9ed4ff') : '#ffd966';
-    ctx.fillRect(29, 11, 5, 5);
-    ctx.fillStyle = '#e8f0f8';
-    ctx.font = 'bold 8px monospace';
-    ctx.fillText(`${t('day_short')} ${w.day}`, 37, 17);
+    const rightLimit = romanRightX - romanW - 10;
+    const row1Y = 15;
+    const row2Y = 30;
+    let cx = 8;
+    let cy = row1Y;
 
-    const phaseProg = w.timeOfDay < 0.5 ? w.timeOfDay / 0.5 : (w.timeOfDay - 0.5) / 0.5;
-    ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fillRect(29, 22, 47, 3);
-    ctx.fillStyle = w.isNight ? (w.isBloodMoon ? '#ff6464' : '#74b9ff') : '#f7d265';
-    ctx.fillRect(29, 22, Math.max(1, Math.round(47 * phaseProg)), 3);
+    const ensureRoom = (neededW: number) => {
+      if (cx > 8 && cx + neededW > rightLimit) {
+        cx = 8;
+        cy = row2Y;
+      }
+    };
 
-    // Gold & Diamond Resource Pouch (cleanly left of Top-Right Menu button!)
-    const showDiamonds = monarch.diamonds > 0 || w.currentIsland > 1;
-    const goldW = showDiamonds ? 76 : 50;
-    const goldX = this.viewW - menuReserve - goldW - 4;
-    ctx.fillStyle = 'rgba(8, 14, 24, 0.82)';
-    ctx.fillRect(goldX, 5, goldW, 26);
-    ctx.strokeStyle = 'rgba(239, 196, 98, 0.5)';
-    ctx.strokeRect(goldX + 0.5, 5.5, goldW - 1, 25);
+    // 2. TOP-LEFT GROUP 1: Diamond + count, Coin + count (NO dark backgrounds!)
+    let drewGroup1 = false;
+    ctx.font = 'bold 8.5px monospace';
 
-    ctx.fillStyle = '#f7d265';
-    ctx.fillRect(goldX + 6, 14, 7, 7);
-    ctx.fillStyle = '#fff5bd';
-    ctx.fillRect(goldX + 7, 15, 2, 2);
-
-    ctx.fillStyle = '#ffe58a';
-    ctx.font = 'bold 9px monospace';
-    ctx.fillText(`${monarch.coins}`, goldX + 16, 21);
-
-    if (showDiamonds) {
-      const dx = goldX + 43;
-      ctx.fillStyle = '#7ef5ff';
-      ctx.fillRect(dx, 14, 6, 6);
-      ctx.fillStyle = '#e8feff';
-      ctx.fillRect(dx + 1, 15, 2, 2);
+    if (disc.diamond) {
+      const txt = `${monarch.diamonds}`;
+      const wItem = 9 + Math.ceil(ctx.measureText(txt).width);
+      ensureRoom(wItem);
+      this.drawMinimalDiamondIcon(ctx, cx, cy - 6);
       ctx.fillStyle = '#a8f8ff';
-      ctx.font = 'bold 9px monospace';
-      ctx.fillText(`${monarch.diamonds}`, dx + 9, 21);
+      ctx.fillText(txt, cx + 9, cy);
+      cx += wItem + 8;
+      drewGroup1 = true;
     }
 
-    // Compact Wood / Stone / Iron / Banker strip below Top-Right pouch
-    const showIron = w.resources.iron > 0 || w.currentIsland >= 2;
-    const showBank = w.banker.balance > 0;
-    const resStripW = 60 + (showIron ? 28 : 0) + (showBank ? 32 : 0);
-    const resStripX = this.viewW - resStripW - 6;
-    const resStripY = isNarrow ? 65 : 34;
-    ctx.fillStyle = 'rgba(8, 14, 24, 0.82)';
-    ctx.fillRect(resStripX, resStripY, resStripW, 13);
-    ctx.strokeStyle = 'rgba(195, 215, 236, 0.25)';
-    ctx.strokeRect(resStripX + 0.5, resStripY + 0.5, resStripW - 1, 12);
-
-    let rx = resStripX + 4;
-    ctx.font = 'bold 6.5px monospace';
-    this.drawMaterialIcon(ctx, 'wood', rx, resStripY + 4);
-    ctx.fillStyle = '#e3b578';
-    ctx.fillText(`${w.resources.wood}`, rx + 8, resStripY + 9);
-    rx += 28;
-
-    this.drawMaterialIcon(ctx, 'stone', rx, resStripY + 4);
-    ctx.fillStyle = '#cbd8e6';
-    ctx.fillText(`${w.resources.stone}`, rx + 8, resStripY + 9);
-    rx += 28;
-
-    if (showIron) {
-      this.drawMaterialIcon(ctx, 'iron', rx, resStripY + 4);
-      ctx.fillStyle = '#9ecfff';
-      ctx.fillText(`${w.resources.iron}`, rx + 8, resStripY + 9);
-      rx += 28;
-    }
-
-    if (showBank) {
-      this.drawMaterialIcon(ctx, 'bank', rx, resStripY + 4);
+    if (disc.coin) {
+      const txt = `${monarch.coins}`;
+      const wItem = 9 + Math.ceil(ctx.measureText(txt).width);
+      ensureRoom(wItem);
+      this.drawMinimalCoinIcon(ctx, cx, cy - 6);
       ctx.fillStyle = '#ffe58a';
-      ctx.fillText(`${w.banker.balance}`, rx + 8, resStripY + 9);
+      ctx.fillText(txt, cx + 9, cy);
+      cx += wItem + 6;
+      drewGroup1 = true;
     }
 
-    // Active Kingdom Lv, Monarch Name, God blessing & Night Threat mini-pills below Top-Left Day box
-    let subY = isNarrow ? 65 : 34;
-    const maxK = getIslandMaxKingdomLevel(w);
-    const roleLabel = w.appearance.gender === 'queen' ? t('gender_queen') : t('gender_king');
-    const monarchTag = w.appearance.name.trim()
-      ? `♛ ${roleLabel} ${w.appearance.name.trim().toUpperCase()} · ${w.hall.level}/${maxK}`
-      : `♛ REINO ${w.hall.level}/${maxK}`;
-    ctx.font = 'bold 6px monospace';
-    const kPillW = Math.min(138, Math.max(76, Math.ceil(ctx.measureText(monarchTag).width) + 10));
-    ctx.fillStyle = 'rgba(8, 14, 24, 0.8)';
-    ctx.fillRect(6, subY, kPillW, 12);
-    ctx.strokeStyle = 'rgba(239, 196, 98, 0.35)';
-    ctx.strokeRect(6.5, subY + 0.5, kPillW - 1, 11);
-    ctx.fillStyle = '#ffe58a';
-    ctx.fillText(monarchTag, 10, subY + 8, kPillW - 8);
-    subY += 14;
+    // 3. TOP-LEFT GROUP 2 (after breathing space): small Wood, Stone, Iron icons + counts
+    const resItems: Array<{ kind: 'wood' | 'stone' | 'iron'; count: number; color: string }> = [];
+    if (disc.wood) resItems.push({ kind: 'wood', count: w.resources.wood, color: '#e8bc82' });
+    if (disc.stone) resItems.push({ kind: 'stone', count: w.resources.stone, color: '#d4e0ec' });
+    if (disc.iron) resItems.push({ kind: 'iron', count: w.resources.iron, color: '#9ed2ff' });
 
-    if (w.activeGod) {
-      const god = GOD_DEFS[w.activeGod];
-      ctx.fillStyle = 'rgba(8, 14, 24, 0.82)';
-      ctx.fillRect(6, subY, 76, 13);
-      ctx.strokeStyle = god.color;
-      ctx.strokeRect(6.5, subY + 0.5, 75, 12);
-      ctx.fillStyle = god.color;
-      ctx.font = 'bold 6.5px monospace';
-      ctx.fillText(`★ ${god.name.toUpperCase()}`, 11, subY + 9);
-      subY += 15;
-    }
-    if (w.threatLevel >= 2) {
-      ctx.fillStyle = 'rgba(8, 14, 24, 0.78)';
-      ctx.fillRect(6, subY, 76, 12);
-      ctx.fillStyle = w.isBloodMoon ? '#ff646c' : '#9cc5e3';
-      ctx.font = '6px monospace';
-      ctx.fillText(`☠ ${t('threat_lbl')} ${w.threatLevel}`, 11, subY + 8);
+    if (resItems.length > 0) {
+      if (drewGroup1 && cx > 8) cx += isNarrow ? 10 : 16; // Respiro maior
+      ctx.font = 'bold 7px monospace';
+      const group2EstW = resItems.reduce(
+        (acc, it) => acc + 8 + Math.ceil(ctx.measureText(`${it.count}`).width) + 7,
+        0
+      );
+      if (cx > 8 && cx + group2EstW > rightLimit) {
+        cx = 8;
+        cy = row2Y;
+      }
+      for (const item of resItems) {
+        const txt = `${item.count}`;
+        const wItem = 8 + Math.ceil(ctx.measureText(txt).width);
+        ensureRoom(wItem);
+        this.drawMaterialIcon(ctx, item.kind, cx, cy - 5);
+        ctx.fillStyle = item.color;
+        ctx.fillText(txt, cx + 8, cy);
+        cx += wItem + 7;
+      }
     }
 
-    // 4 CLICKABLE/TAPPABLE PIXEL-ART CLASS ICONS (Single row on landscape, Row 2 on narrow/portrait!)
-    const badges: Array<{
+    // 4. TOP-LEFT GROUP 3 (after breathing space): Sword, Hammer, Bow, Seed with LEFT count & RIGHT count!
+    const unitItems: Array<{
       id: string;
-      icon: 'hammer' | 'sword' | 'bow' | 'seed';
-      key: string;
+      icon: 'sword' | 'hammer' | 'bow' | 'seed';
       cmd: CommandMode;
       counts: { left: number; right: number; total: number };
-    }> = [
-      { id: 'hud_cmd_build', icon: 'hammer', key: 'C', cmd: 'build', counts: builders },
-      { id: 'hud_cmd_attack', icon: 'sword', key: 'Z', cmd: 'attack', counts: warriors },
-      { id: 'hud_cmd_archer', icon: 'bow', key: 'X', cmd: 'archer', counts: archers },
-      { id: 'hud_cmd_produce', icon: 'seed', key: 'V', cmd: 'produce', counts: producers },
-    ];
+    }> = [];
+    if (disc.sword) unitItems.push({ id: 'hud_cmd_attack', icon: 'sword', cmd: 'attack', counts: warriors });
+    if (disc.hammer) unitItems.push({ id: 'hud_cmd_build', icon: 'hammer', cmd: 'build', counts: builders });
+    if (disc.bow) unitItems.push({ id: 'hud_cmd_archer', icon: 'bow', cmd: 'archer', counts: archers });
+    if (disc.seed) unitItems.push({ id: 'hud_cmd_produce', icon: 'seed', cmd: 'produce', counts: producers });
 
-    const badgeH = 26;
-    const badgeGap = 3;
-    const badgeW = isNarrow ? Math.min(62, Math.floor((this.viewW - 12 - badgeGap * 3) / 4)) : 56;
-    const totalW = badges.length * badgeW + (badges.length - 1) * badgeGap;
-    const badgeY = isNarrow ? 35 : 5;
-    const badgeStartX = isNarrow
-      ? Math.round((this.viewW - totalW) / 2)
-      : Math.round(84 + (goldX - 88 - totalW) / 2);
-
-    badges.forEach((b, idx) => {
-      const bx = badgeStartX + idx * (badgeW + badgeGap);
-      const active = w.activeCommand === b.cmd;
-
-      this.addHit(b.id, bx - 1, badgeY - 2, badgeW + 2, badgeH + 4);
-
-      ctx.fillStyle = active ? 'rgba(46, 36, 12, 0.96)' : 'rgba(8, 14, 24, 0.8)';
-      ctx.fillRect(bx, badgeY, badgeW, badgeH);
-      ctx.strokeStyle = active ? '#ffe066' : 'rgba(195, 215, 236, 0.28)';
-      ctx.strokeRect(bx + 0.5, badgeY + 0.5, badgeW - 1, badgeH - 1);
-
-      this.drawPixelIcon(ctx, b.icon, bx + 4, badgeY + 8);
-
-      ctx.fillStyle = active ? '#ffe58a' : '#eef4fa';
-      ctx.font = 'bold 8px monospace';
-      ctx.fillText(`${b.counts.total}`, bx + 16, badgeY + 14);
-
-      ctx.fillStyle = '#90a8bf';
-      ctx.font = '6px monospace';
-      ctx.fillText(`${b.counts.left}◀|▶${b.counts.right}`, bx + 14, badgeY + 23);
-
-      ctx.fillStyle = active ? '#ffe066' : 'rgba(160, 185, 210, 0.65)';
-      ctx.font = 'bold 6px monospace';
-      ctx.textAlign = 'right';
-      ctx.fillText(`[${b.key}]`, bx + badgeW - 3, badgeY + 11);
-      ctx.textAlign = 'left';
-    });
-
-    // Active Tactical Command Banner
-    if (w.activeCommand !== 'none' || w.commandFeedback) {
-      const cmdLabels: Record<Exclude<CommandMode, 'none'>, string> = {
-        attack: t('cmd_attack'),
-        archer: t('cmd_archer'),
-        build: t('cmd_build'),
-        produce: t('cmd_produce'),
+    if (unitItems.length > 0) {
+      if ((drewGroup1 || resItems.length > 0) && cx > 8) cx += isNarrow ? 10 : 16; // Respiro
+      ctx.font = 'bold 7px monospace';
+      const measureUnit = (u: (typeof unitItems)[number]) => {
+        const lw = Math.ceil(ctx.measureText(`${u.counts.left}`).width);
+        const rw = Math.ceil(ctx.measureText(`${u.counts.right}`).width);
+        return { lw, rw, totalW: lw + 1 + 9 + 1 + rw };
       };
-      const showMode = w.activeCommand !== 'none' ? w.activeCommand : w.commandFeedback!.mode;
-      const barW = Math.min(300, this.viewW - 16);
-      const barX = Math.round((this.viewW - barW) / 2);
-      const barY = isNarrow ? 65 : 35;
+      const group3EstW = unitItems.reduce((acc, u) => acc + measureUnit(u).totalW + 8, 0);
+      if (cx > 8 && cx + group3EstW > rightLimit) {
+        cx = 8;
+        cy = cy === row1Y ? row2Y : row2Y + 14;
+      }
 
-      ctx.fillStyle = 'rgba(10, 16, 26, 0.9)';
-      ctx.fillRect(barX, barY, barW, 24);
-      ctx.strokeStyle = '#efc462';
-      ctx.strokeRect(barX + 0.5, barY + 0.5, barW - 1, 23);
+      for (const u of unitItems) {
+        const { lw, totalW } = measureUnit(u);
+        ensureRoom(totalW);
+        const active = w.activeCommand === u.cmd;
 
+        // Tappable hit area directly over the transparent icon + numbers (zero dark box!)
+        this.addHit(u.id, cx - 2, cy - 10, totalW + 4, 15);
+
+        // Left count (to the LEFT of the icon)
+        ctx.fillStyle = active ? '#ffe58a' : '#dcebf7';
+        ctx.fillText(`${u.counts.left}`, cx, cy);
+
+        // Pixel icon centered between the two numbers
+        const iconX = cx + lw + 1;
+        this.drawPixelIcon(ctx, u.icon, iconX, cy - 7);
+
+        // Right count (to the RIGHT of the icon)
+        ctx.fillStyle = active ? '#ffe58a' : '#dcebf7';
+        ctx.fillText(`${u.counts.right}`, iconX + 10, cy);
+
+        // Subtle golden pixel underline only when actively giving a tactical command
+        if (active) {
+          ctx.fillStyle = '#ffe066';
+          ctx.fillRect(cx, cy + 2, totalW, 1);
+        }
+
+        cx += totalW + 8;
+      }
+    }
+
+    // Minimalist Floating Tactical Command Feedback (text only, no heavy box)
+    if (w.activeCommand !== 'none' || w.commandFeedback) {
+      const msgY = cy + 14;
       ctx.textAlign = 'center';
       ctx.fillStyle = '#ffe58a';
       ctx.font = 'bold 7px monospace';
-      ctx.fillText(
-        showMode !== 'none' ? cmdLabels[showMode] : '',
-        Math.round(this.viewW / 2) - (w.touchCommandMode !== 'none' ? 10 : 0),
-        barY + 10
-      );
-      ctx.fillStyle = '#d4e6f7';
-      ctx.font = '7px monospace';
-      ctx.fillText(
-        w.commandFeedback ? w.commandFeedback.text : t('cmd_hint'),
-        Math.round(this.viewW / 2) - (w.touchCommandMode !== 'none' ? 10 : 0),
-        barY + 20
-      );
+      const feedbackTxt = w.commandFeedback ? w.commandFeedback.text : t('cmd_hint');
+      ctx.fillText(feedbackTxt, Math.round(this.viewW / 2), msgY);
 
       if (w.touchCommandMode !== 'none') {
-        const closeX = barX + barW - 22;
-        const closeY = barY + 4;
-        ctx.fillStyle = '#2b2412';
-        ctx.fillRect(closeX, closeY, 18, 16);
-        ctx.strokeStyle = '#efc462';
-        ctx.strokeRect(closeX + 0.5, closeY + 0.5, 17, 15);
-        ctx.fillStyle = '#ffe58a';
+        const closeX = Math.round(this.viewW / 2 + ctx.measureText(feedbackTxt).width / 2 + 8);
+        ctx.fillStyle = '#ff9aa2';
         ctx.font = 'bold 8px monospace';
-        ctx.fillText('×', closeX + 9, closeY + 11);
-        this.addHit('hud_cmd_close', closeX - 4, closeY - 4, 26, 24);
+        ctx.fillText('×', closeX, msgY);
+        this.addHit('hud_cmd_close', closeX - 8, msgY - 9, 16, 14);
       }
       ctx.textAlign = 'left';
     }
@@ -4035,41 +4036,22 @@ export class PixelRenderer {
       ctx.textAlign = 'left';
     }
 
-    // Clickable/Tappable Mount Active Power Button (⚡) in Bottom-Right when riding a special mount!
+    // Minimal Mount Active Power Indicator (⚡) in Bottom-Right ONLY when riding a special mount
     if (monarch.mount !== 'starter') {
       const mDef = MOUNT_DEFS[monarch.mount];
-      const maxCd = Math.max(0.5, mDef.powerCooldown * (w.activeGod === 'loki' ? 0.65 : 1));
       const ready = monarch.mountPowerCooldown <= 0;
-      const pw = 42;
-      const ph = 26;
-      const px = this.viewW - pw - 8;
-      const py = this.viewH - ph - 8;
-
-      this.addHit('hud_mount_power', px - 4, py - 4, pw + 8, ph + 8);
-
-      ctx.fillStyle = ready ? 'rgba(18, 28, 44, 0.92)' : 'rgba(10, 14, 22, 0.78)';
-      ctx.fillRect(px, py, pw, ph);
-      ctx.strokeStyle = ready ? mDef.accentColor : 'rgba(150, 170, 195, 0.35)';
-      ctx.strokeRect(px + 0.5, py + 0.5, pw - 1, ph - 1);
-
-      if (!ready) {
-        const fill = 1 - Math.min(1, monarch.mountPowerCooldown / maxCd);
-        ctx.fillStyle = 'rgba(126, 245, 255, 0.22)';
-        ctx.fillRect(px + 1, py + ph - 4, Math.round((pw - 2) * fill), 3);
-      }
-
+      const px = this.viewW - 22;
+      const py = this.viewH - 14;
+      this.addHit('hud_mount_power', px - 12, py - 12, 26, 22);
       ctx.textAlign = 'center';
       ctx.fillStyle = ready ? mDef.accentColor : '#8ba0b5';
       ctx.font = 'bold 9px monospace';
-      ctx.fillText(ready ? '⚡' : `${Math.ceil(monarch.mountPowerCooldown)}s`, px + pw / 2, py + 12);
-      ctx.fillStyle = '#c8dceb';
-      ctx.font = '5.5px monospace';
-      ctx.fillText('SHIFT', px + pw / 2, py + 21);
+      ctx.fillText(ready ? '⚡' : `${Math.ceil(monarch.mountPowerCooldown)}s`, px, py);
       ctx.textAlign = 'left';
     }
 
-    // Minimap bar along bottom of fjord water
-    const mapW = Math.min(160, this.viewW - (monarch.mount !== 'starter' ? 116 : 36));
+    // Horizontal Minimap bar preserved along bottom of fjord water
+    const mapW = Math.min(160, this.viewW - (monarch.mount !== 'starter' ? 84 : 36));
     const mapX = Math.round((this.viewW - mapW) / 2);
     const mapY = this.viewH - 10;
     ctx.fillStyle = 'rgba(6, 12, 20, 0.62)';
@@ -4183,8 +4165,8 @@ export class PixelRenderer {
     else text = t('tut_farewell');
 
     const isNarrow = this.viewW < 420;
-    const baseY = isNarrow ? 66 : 36;
-    const yOff = w.activeCommand !== 'none' || w.commandFeedback ? baseY + 28 : baseY;
+    const baseY = isNarrow ? 42 : 26;
+    const yOff = w.activeCommand !== 'none' || w.commandFeedback ? baseY + 18 : baseY;
     const bw = Math.min(352, this.viewW - 14);
     const bx = Math.round((this.viewW - bw) / 2);
 
@@ -4258,8 +4240,8 @@ export class PixelRenderer {
     const fadeOut = Math.min(1, b.timer / 0.55);
     const alpha = Math.min(fadeIn, fadeOut);
     const isNarrow = this.viewW < 420;
-    const baseY = isNarrow ? 66 : 36;
-    const yOff = w.activeCommand !== 'none' || w.commandFeedback ? baseY + 28 : baseY;
+    const baseY = isNarrow ? 42 : 26;
+    const yOff = w.activeCommand !== 'none' || w.commandFeedback ? baseY + 18 : baseY;
     const bw = Math.min(304, this.viewW - 16);
     const bx = Math.round((this.viewW - bw) / 2);
 

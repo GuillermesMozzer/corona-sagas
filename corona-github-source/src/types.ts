@@ -595,6 +595,18 @@ export interface TutorialState {
   bowTributeGiven: boolean;
 }
 
+export interface DiscoveredHudItems {
+  diamond?: boolean;
+  coin?: boolean;
+  wood?: boolean;
+  stone?: boolean;
+  iron?: boolean;
+  sword?: boolean;
+  hammer?: boolean;
+  bow?: boolean;
+  seed?: boolean;
+}
+
 export interface WorldState {
   mode: GameMode;
   saveSlot: number;
@@ -603,6 +615,7 @@ export interface WorldState {
   hasOrderedVillager?: boolean;
   nextOrderSeq?: number;
   priorityTask?: PriorityTaskRef | null;
+  discoveredHud?: DiscoveredHudItems;
   worldMapContext: 'inspect' | 'sail';
   viewWidth: number;
   viewHeight: number;

@@ -97,6 +97,7 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
   state.hasOrderedVillager = state.hasOrderedVillager ?? (state.day > 1);
   state.nextOrderSeq = state.nextOrderSeq ?? 1;
   state.priorityTask = state.priorityTask ?? null;
+  state.discoveredHud = state.discoveredHud ?? {};
   if (state.appearance) {
     state.appearance.gender = state.appearance.gender ?? 'king';
     state.appearance.name = state.appearance.name ?? '';
