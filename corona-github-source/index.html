@@ -212,7 +212,7 @@
     }
 
     .menu-section-label {
-      font-size: 11px;
+      font-size: calc(10px * var(--ui-font-scale, 1.14));
       font-weight: 700;
       letter-spacing: 0.1em;
       color: #82b4d9;
@@ -234,7 +234,7 @@
       background: #122034;
       color: #eaf3fc;
       font-family: 'Pixelify Sans', ui-monospace, monospace;
-      font-size: 13px;
+      font-size: calc(12px * var(--ui-font-scale, 1.14));
       font-weight: 600;
       cursor: pointer;
       text-align: left;
@@ -1824,13 +1824,26 @@
         <div id="coop-members-list"></div>
       </div>
 
-      <!-- CAMERA ZOOM IN / ZOOM OUT -->
-      <div class="menu-section-label">CÂMERA</div>
+      <!-- CAMERA ZOOM & FONT SIZE -->
+      <div class="menu-section-label">CÂMERA &amp; FONTE</div>
       <div class="pixel-control-card">
         <div class="pixel-zoom-row">
           <button id="btn-zoom-out" class="pixel-zoom-btn" type="button">ZOOM -</button>
           <span id="val-zoom" class="pixel-zoom-val">100%</span>
           <button id="btn-zoom-in" class="pixel-zoom-btn" type="button">ZOOM +</button>
+        </div>
+      </div>
+
+      <div class="pixel-control-card">
+        <div class="pixel-control-top">
+          <span id="lbl-font-size" class="pixel-control-name">Tamanho da Fonte</span>
+          <span id="badge-font-size" class="menu-badge on">Padrão</span>
+        </div>
+        <div class="pixel-vol-row">
+          <button id="btn-font-down" class="pixel-step-btn" type="button" aria-label="Diminuir fonte">A-</button>
+          <div id="font-size-bars" class="pixel-vol-bars"></div>
+          <button id="btn-font-up" class="pixel-step-btn" type="button" aria-label="Aumentar fonte">A+</button>
+          <span id="val-font-size" class="pixel-vol-num">4/6</span>
         </div>
       </div>
 
@@ -1937,7 +1950,7 @@
       </button>
       <input id="import-file-input" type="file" accept=".json,application/json" style="display:none;" />
       <div id="lbl-esc-hint" class="menu-hint">ESC ou toque aqui para sair da Tela Cheia</div>
-      <div style="font-size:9px;color:#5a758f;text-align:center;margin-top:2px;">build v2.15 · Anciões &amp; Companhias</div>
+      <div style="font-size:9px;color:#5a758f;text-align:center;margin-top:2px;">build v2.16 · Fontes 1–6</div>
     </div>
 
     <!-- Nordic Jukebox (Discoteca) Modal: 10 Original Nordic Tracks with Live Preview -->

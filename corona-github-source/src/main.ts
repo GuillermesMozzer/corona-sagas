@@ -118,25 +118,81 @@ const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d');
 if (!ctx) throw new Error('Canvas 2D context unavailable');
 
+const FONT_LEVEL_KEY = 'corona_font_level_v1';
+const MIN_FONT_LEVEL = 1;
+const MAX_FONT_LEVEL = 6;
+const DEFAULT_FONT_LEVEL = 4;
+// Level 2 = 1.00x (exact original size); Level 4 (Default) = 1.28x for crisp readability!
+const CANVAS_FONT_SCALES = [0.88, 1.0, 1.14, 1.28, 1.42, 1.58] as const;
+const UI_FONT_SCALES = [0.92, 1.0, 1.07, 1.14, 1.22, 1.3] as const;
+const FONT_LEVEL_LABELS = ['Pequena', 'Original', 'Média', 'Padrão', 'Grande', 'Extra'] as const;
+
+function loadSavedFontLevel(): number {
+  try {
+    const raw = window.localStorage.getItem(FONT_LEVEL_KEY);
+    if (raw) {
+      const parsed = Math.round(Number(raw));
+      if (Number.isFinite(parsed) && parsed >= MIN_FONT_LEVEL && parsed <= MAX_FONT_LEVEL) {
+        return parsed;
+      }
+    }
+  } catch {
+    // Ignore storage read error
+  }
+  return DEFAULT_FONT_LEVEL;
+}
+
+let fontLevel = loadSavedFontLevel();
+
+function applyUiFontScale(): void {
+  const uiScale = UI_FONT_SCALES[fontLevel - 1] ?? UI_FONT_SCALES[DEFAULT_FONT_LEVEL - 1];
+  document.documentElement.style.setProperty('--ui-font-scale', uiScale.toFixed(2));
+}
+applyUiFontScale();
+
+function getCanvasFontScale(): number {
+  return CANVAS_FONT_SCALES[fontLevel - 1] ?? CANVAS_FONT_SCALES[DEFAULT_FONT_LEVEL - 1];
+}
+
+function setFontLevel(nextLevel: number): void {
+  const clamped = Math.max(MIN_FONT_LEVEL, Math.min(MAX_FONT_LEVEL, Math.round(nextLevel)));
+  if (clamped === fontLevel) return;
+  fontLevel = clamped;
+  try {
+    window.localStorage.setItem(FONT_LEVEL_KEY, String(fontLevel));
+  } catch {
+    // Ignore storage write error
+  }
+  applyUiFontScale();
+  sound.playCoinDrop();
+  updateMenuUI();
+}
+
 /**
- * Enhances every canvas text draw with crisp pixel-art typography:
- * - Maps generic `monospace` fonts to Google Fonts `Pixelify Sans` (authentic pixel-art geometry with full PT/ES accents)
- * - Gently boosts microscopic 5.5px–7px labels so they remain effortless to read without overflowing buttons
+ * Enhances every canvas text draw with crisp pixel-art typography & player-chosen 6-level Font Scale:
+ * - Maps all canvas fonts to Google Fonts `Pixelify Sans` (authentic pixel-art geometry with full PT/ES accents)
+ * - Scales all text cleanly according to the 6-level Font Scale (Level 2 = original 1.00x, Level 4 default = 1.28x)
  * - Adds a crisp 1-logical-pixel dark drop shadow behind light text so labels pop over snow, torches, sky, and water
  */
 function installCrispPixelText(targetCtx: CanvasRenderingContext2D): void {
   const upgradeFontString = (raw: string): string => {
-    if (!raw.includes('monospace')) return raw;
+    const scale = getCanvasFontScale();
     return raw.replace(
-      /(bold\s+|normal\s+|\d{3}\s+)?(\d+(?:\.\d+)?)px\s+monospace\b/i,
-      (_match, weight = '', sizeStr: string) => {
+      /(bold\s+|normal\s+|\d{3}\s+)?(\d+(?:\.\d+)?)px(\s+.*)$/i,
+      (_match, weight = '', sizeStr: string, familyRest: string) => {
         const size = parseFloat(sizeStr);
-        let nextSize = size;
-        if (size <= 5.6) nextSize = 6.3;
-        else if (size <= 6.1) nextSize = 6.7;
-        else if (size <= 6.6) nextSize = 7.1;
-        else if (size <= 7.1) nextSize = 7.5;
-        return `${weight}${nextSize}px "Pixelify Sans", "Trebuchet MS", ui-monospace, monospace`;
+        // Preserve gentle minimum boost for microscopic <=6px labels at Level 2+,
+        // and gently dampen giant decorative splash titles (>16px) so they never overflow.
+        const effectiveScale = size > 16 ? 1 + (scale - 1) * 0.45 : scale;
+        let baseSize = size;
+        if (size <= 5.6) baseSize = 6.2;
+        else if (size <= 6.1) baseSize = 6.6;
+        else if (size <= 6.6) baseSize = 7.0;
+        const scaledSize = Math.max(5.5, Math.round(baseSize * effectiveScale * 2) / 2);
+        const family = familyRest.includes('Pixelify Sans')
+          ? familyRest
+          : ' "Pixelify Sans", "Trebuchet MS", ui-monospace, monospace';
+        return `${weight}${scaledSize}px${family}`;
       }
     );
   };
@@ -184,7 +240,7 @@ function installCrispPixelText(targetCtx: CanvasRenderingContext2D): void {
     const ry = Math.round(y * 2) / 2;
     const prevFill = targetCtx.fillStyle;
     if (isLightFill(prevFill)) {
-      targetCtx.fillStyle = 'rgba(2, 6, 14, 0.8)';
+      targetCtx.fillStyle = 'rgba(2, 6, 14, 0.84)';
       if (maxWidth !== undefined) {
         rawFillText(text, rx + 0.5, ry + 0.75, maxWidth);
       } else {
@@ -249,6 +305,11 @@ const lblMicVol = document.getElementById('lbl-mic-vol');
 const btnZoomOut = document.getElementById('btn-zoom-out') as HTMLButtonElement | null;
 const btnZoomIn = document.getElementById('btn-zoom-in') as HTMLButtonElement | null;
 const valZoom = document.getElementById('val-zoom');
+const btnFontDown = document.getElementById('btn-font-down') as HTMLButtonElement | null;
+const btnFontUp = document.getElementById('btn-font-up') as HTMLButtonElement | null;
+const fontSizeBars = document.getElementById('font-size-bars') as HTMLDivElement | null;
+const valFontSize = document.getElementById('val-font-size');
+const badgeFontSize = document.getElementById('badge-font-size');
 const btnFullscreen = document.getElementById('menu-fullscreen') as HTMLButtonElement | null;
 const btnAdmin = document.getElementById('menu-admin') as HTMLButtonElement | null;
 const btnExport = document.getElementById('menu-export') as HTMLButtonElement | null;
@@ -727,6 +788,23 @@ function renderPixelVolumeBars(
     pip.type = 'button';
     pip.className = `pixel-vol-pip${i <= effectiveVol ? ' filled' : ''}`;
     pip.title = `Volume ${i}/5`;
+    pip.addEventListener('click', () => onSelect(i));
+    container.appendChild(pip);
+  }
+}
+
+function renderFontSizeBars(
+  container: HTMLDivElement | null,
+  currentLevel: number,
+  onSelect: (level: number) => void
+): void {
+  if (!container) return;
+  container.innerHTML = '';
+  for (let i = MIN_FONT_LEVEL; i <= MAX_FONT_LEVEL; i++) {
+    const pip = document.createElement('button');
+    pip.type = 'button';
+    pip.className = `pixel-vol-pip${i <= currentLevel ? ' filled' : ''}`;
+    pip.title = `Fonte Nível ${i}/${MAX_FONT_LEVEL} (${FONT_LEVEL_LABELS[i - 1]})`;
     pip.addEventListener('click', () => onSelect(i));
     container.appendChild(pip);
   }
@@ -1338,8 +1416,15 @@ function updateMenuUI(): void {
     updateMenuUI();
   });
 
-  // Zoom level indicator
+  // Zoom & Font Size level indicators
   if (valZoom) valZoom.textContent = `${Math.round(targetZoom * 100)}%`;
+  if (valFontSize) valFontSize.textContent = `${fontLevel}/${MAX_FONT_LEVEL}`;
+  if (badgeFontSize) {
+    badgeFontSize.textContent = FONT_LEVEL_LABELS[fontLevel - 1] ?? 'Padrão';
+  }
+  renderFontSizeBars(fontSizeBars, fontLevel, (lvl) => {
+    setFontLevel(lvl);
+  });
 
   if (lblFullscreen) lblFullscreen.textContent = fs ? t('menu_exit_fullscreen') : t('menu_fullscreen');
   if (valFullscreen) {
@@ -2179,6 +2264,14 @@ btnZoomOut?.addEventListener('click', () => {
 
 btnZoomIn?.addEventListener('click', () => {
   adjustCameraZoom(1);
+});
+
+btnFontDown?.addEventListener('click', () => {
+  setFontLevel(fontLevel - 1);
+});
+
+btnFontUp?.addEventListener('click', () => {
+  setFontLevel(fontLevel + 1);
 });
 
 // Co-op Online Menu Controls (Host open/close, Guest leave, Copy Code)

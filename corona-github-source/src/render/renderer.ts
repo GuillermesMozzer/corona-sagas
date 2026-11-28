@@ -6681,27 +6681,34 @@ export class PixelRenderer {
     const fadeOut = Math.min(1, b.timer / 0.55);
     const alpha = Math.min(fadeIn, fadeOut);
     const isNarrow = this.viewW < 420;
-    const baseY = isNarrow ? 42 : 26;
+    const baseY = isNarrow ? 44 : 28;
     const yOff = w.activeCommand !== 'none' || w.commandFeedback ? baseY + 18 : baseY;
-    const bw = Math.min(304, this.viewW - 16);
-    const bx = Math.round((this.viewW - bw) / 2);
 
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = 'rgba(8, 14, 24, 0.82)';
-    ctx.fillRect(bx, yOff, bw, 30);
+    ctx.font = 'bold 8px "Pixelify Sans", monospace';
+    const titleW = ctx.measureText(b.title).width;
+    ctx.font = '6.5px "Pixelify Sans", monospace';
+    const subW = ctx.measureText(b.subtitle).width;
+    const maxAllowedW = this.viewW - 14;
+    const bw = Math.round(Math.min(maxAllowedW, Math.max(240, Math.max(titleW, subW) + 22)));
+    const bh = 35;
+    const bx = Math.round((this.viewW - bw) / 2);
+
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.86)';
+    ctx.fillRect(bx, yOff, bw, bh);
     ctx.fillStyle = b.accent;
     ctx.fillRect(bx, yOff, bw, 1);
-    ctx.fillRect(bx, yOff + 29, bw, 1);
+    ctx.fillRect(bx, yOff + bh - 1, bw, 1);
 
     ctx.textAlign = 'center';
     ctx.fillStyle = b.accent;
     ctx.font = 'bold 8px "Pixelify Sans", monospace';
-    ctx.fillText(b.title, Math.round(this.viewW / 2), yOff + 12);
+    ctx.fillText(b.title, Math.round(this.viewW / 2), yOff + 14, bw - 12);
 
-    ctx.fillStyle = '#d4e2ef';
+    ctx.fillStyle = '#e0ecf7';
     ctx.font = '6.5px "Pixelify Sans", monospace';
-    ctx.fillText(b.subtitle, Math.round(this.viewW / 2), yOff + 23);
+    ctx.fillText(b.subtitle, Math.round(this.viewW / 2), yOff + 28, bw - 12);
     ctx.restore();
     ctx.textAlign = 'left';
   }
