@@ -1426,6 +1426,199 @@
       border-color: #ffe58a;
     }
 
+    /* Menu Wiki Button & Full Encyclopedia Modal */
+    .menu-item.wiki-btn {
+      background: #13223a;
+      border-color: #84c5ff;
+      color: #e4f3ff;
+      font-weight: 700;
+    }
+    .menu-item.wiki-btn:hover {
+      background: #1b3154;
+      border-color: #ffe58a;
+      color: #fff2c2;
+    }
+    #wiki-modal .pixel-modal-card {
+      width: min(720px, 96vw);
+      max-height: 92vh;
+      border-color: #efc462;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px;
+    }
+    .wiki-search-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: #071121;
+      border: 2px solid #355075;
+      padding: 4px 8px;
+      box-shadow: 2px 2px 0 #000;
+    }
+    .wiki-search-wrap:focus-within {
+      border-color: #efc462;
+    }
+    #wiki-search-input {
+      width: 100%;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #eef6ff;
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: calc(13px * var(--ui-font-scale, 1));
+    }
+    #wiki-search-input::placeholder {
+      color: #6b88a8;
+    }
+    #wiki-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      padding-bottom: 2px;
+    }
+    .wiki-tab-btn {
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: calc(11px * var(--ui-font-scale, 1));
+      font-weight: 700;
+      padding: 4px 8px;
+      background: #0d1a2e;
+      border: 2px solid #2a4366;
+      color: #a9c6e2;
+      cursor: pointer;
+      box-shadow: 2px 2px 0 #000;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+    }
+    .wiki-tab-btn:hover {
+      background: #162a47;
+      border-color: #7ab8eb;
+      color: #eef7ff;
+    }
+    .wiki-tab-btn.active {
+      background: #2b210e;
+      border-color: #efc462;
+      color: #ffe89e;
+    }
+    #wiki-body {
+      flex: 1;
+      min-height: 180px;
+      max-height: min(64vh, 520px);
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-right: 4px;
+      scrollbar-width: thin;
+      scrollbar-color: #efc462 #081222;
+    }
+    .wiki-intro {
+      padding: 8px 10px;
+      background: #081324;
+      border: 2px solid #284266;
+      color: #b7d3ec;
+      font-size: calc(12px * var(--ui-font-scale, 1));
+      line-height: 1.45;
+    }
+    .wiki-card {
+      padding: 9px 10px;
+      background: #0c1729;
+      border: 2px solid #243b5a;
+      border-left: 4px solid #efc462;
+      box-shadow: 2px 2px 0 #000;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .wiki-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .wiki-card-title {
+      margin: 0;
+      font-size: calc(13.5px * var(--ui-font-scale, 1));
+      font-weight: 700;
+      color: #fff2c4;
+      line-height: 1.25;
+    }
+    .wiki-card-sub {
+      font-size: calc(11px * var(--ui-font-scale, 1));
+      color: #88accf;
+      margin-top: 1px;
+    }
+    .wiki-sec-badge {
+      font-size: calc(10px * var(--ui-font-scale, 1));
+      padding: 2px 6px;
+      background: #142540;
+      border: 1px solid #41638f;
+      color: #b8dcff;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .wiki-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .wiki-tag {
+      font-size: calc(10.5px * var(--ui-font-scale, 1));
+      font-weight: 700;
+      padding: 1px 6px;
+      border: 1px solid #3c5473;
+      background: #122036;
+      color: #cde1f5;
+    }
+    .wiki-tag.gold {
+      border-color: #d9a738;
+      background: #29200d;
+      color: #ffe58a;
+    }
+    .wiki-tag.cyan {
+      border-color: #3cb8d4;
+      background: #0b2330;
+      color: #8ff4ff;
+    }
+    .wiki-tag.green {
+      border-color: #4dc46a;
+      background: #0e2918;
+      color: #9effb3;
+    }
+    .wiki-tag.red {
+      border-color: #d95965;
+      background: #2e1118;
+      color: #ffadb6;
+    }
+    .wiki-tag.purple {
+      border-color: #9e75e8;
+      background: #201436;
+      color: #dfccff;
+    }
+    .wiki-card-text {
+      margin: 0;
+      font-size: calc(12px * var(--ui-font-scale, 1));
+      color: #dce9f5;
+      line-height: 1.45;
+    }
+    .wiki-bullets {
+      margin: 2px 0 0 0;
+      padding-left: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      font-size: calc(11.5px * var(--ui-font-scale, 1));
+      color: #b9d1e8;
+      line-height: 1.4;
+    }
+    .wiki-empty {
+      padding: 18px 12px;
+      text-align: center;
+      color: #9ab6d1;
+      font-size: calc(12.5px * var(--ui-font-scale, 1));
+      background: #091323;
+      border: 2px dashed #2e486b;
+    }
+
     /* Nordic Jukebox (Discoteca) Modal */
     #jukebox-modal .pixel-modal-card {
       width: min(500px, 96vw);
@@ -1767,6 +1960,22 @@
         <span id="lbl-map">Mapa das Ilhas</span>
         <span id="val-map" class="menu-badge on">I/IX</span>
       </button>
+      <button id="menu-wiki" class="menu-item wiki-btn" type="button">
+        <span class="whatsapp-menu-left">
+          <svg width="16" height="16" viewBox="0 0 12 12" shape-rendering="crispEdges" aria-hidden="true">
+            <rect x="1" y="2" width="10" height="8" fill="#84c5ff"/>
+            <rect x="2" y="3" width="3" height="6" fill="#fff5d6"/>
+            <rect x="7" y="3" width="3" height="6" fill="#fff5d6"/>
+            <rect x="5" y="2" width="2" height="8" fill="#efc462"/>
+            <rect x="2" y="4" width="2" height="1" fill="#41638f"/>
+            <rect x="2" y="6" width="2" height="1" fill="#41638f"/>
+            <rect x="8" y="4" width="2" height="1" fill="#41638f"/>
+            <rect x="8" y="6" width="2" height="1" fill="#41638f"/>
+          </svg>
+          <span id="lbl-wiki">Wiki Completa do Jogo</span>
+        </span>
+        <span class="menu-badge on">GUIA</span>
+      </button>
 
       <!-- WHATSAPP COMMUNITY + CO-OP ONLINE SECTION -->
       <div id="menu-coop-section-lbl" class="menu-section-label" style="display:none;">CO-OP ONLINE (MÁX 4)</div>
@@ -1950,7 +2159,23 @@
       </button>
       <input id="import-file-input" type="file" accept=".json,application/json" style="display:none;" />
       <div id="lbl-esc-hint" class="menu-hint">ESC ou toque aqui para sair da Tela Cheia</div>
-      <div style="font-size:9px;color:#5a758f;text-align:center;margin-top:2px;">build v2.18 · Ícones das Campanhas</div>
+      <div style="font-size:9px;color:#5a758f;text-align:center;margin-top:2px;">build v2.19 · Wiki Completa</div>
+    </div>
+
+    <!-- Complete In-Game Wiki Modal (Searchable 9-Category Encyclopedia) -->
+    <div id="wiki-modal" class="pixel-modal" role="dialog" aria-modal="true" aria-label="Wiki Completa de Corona">
+      <div class="pixel-modal-card">
+        <div class="ref-modal-header">
+          <div class="ref-modal-title" style="color:#ffe58a;">📖 WIKI COMPLETA · CORONA SAGAS DO NORTE</div>
+          <button id="btn-wiki-close" class="ref-close-btn" type="button" aria-label="Fechar">✕</button>
+        </div>
+        <div class="wiki-search-wrap">
+          <span style="color:#efc462;font-size:13px;" aria-hidden="true">🔍</span>
+          <input id="wiki-search-input" type="search" placeholder="Buscar armas, cajados, ilhas, anciões, puzzles, sacrifícios..." autocomplete="off" />
+        </div>
+        <div id="wiki-tabs" role="tablist" aria-label="Categorias da Wiki"></div>
+        <div id="wiki-body"></div>
+      </div>
     </div>
 
     <!-- Nordic Jukebox (Discoteca) Modal: 10 Original Nordic Tracks with Live Preview -->

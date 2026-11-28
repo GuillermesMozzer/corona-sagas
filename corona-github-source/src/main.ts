@@ -13,6 +13,7 @@ import {
 } from './customization/presets';
 import { LANGUAGE_LABELS, cycleLanguage, getLanguage, t } from './i18n/translations';
 import { PixelRenderer } from './render/renderer';
+import { createWikiController } from './ui/wikiModal';
 import {
   deleteCampaignSlot,
   exportAllSavesJson,
@@ -1127,6 +1128,36 @@ function closeJukeboxModal(): void {
   canvas.focus();
 }
 
+const btnWiki = document.getElementById('menu-wiki') as HTMLButtonElement | null;
+let pausedByWiki = false;
+const wikiController = createWikiController((open) => {
+  if (!open) {
+    if (pausedByWiki && world.mode === 'paused') {
+      world.mode = 'playing';
+    }
+    pausedByWiki = false;
+    sound.playCoinDrop();
+    updateMenuUI();
+    canvas.focus();
+  }
+});
+
+function openWikiModal(): void {
+  sound.unlock();
+  const wasPaused = pausedByMenu || world.mode === 'paused';
+  if (menuOpen) setMenuOpen(false);
+  if ((wasPaused || world.mode === 'playing') && !coopState.active) {
+    world.mode = 'paused';
+    pausedByWiki = true;
+  }
+  wikiController.open();
+  sound.playCoinPickup();
+}
+
+btnWiki?.addEventListener('click', () => {
+  openWikiModal();
+});
+
 sound.setOnMusicStateChange(() => {
   updateMenuUI();
   if (jukeboxModalOpen) renderJukeboxModal();
@@ -1757,6 +1788,11 @@ function handleCanvasHit(hitId: string): boolean {
 
   if (hitId === 'login_invite') {
     openReferralModal();
+    return true;
+  }
+
+  if (hitId === 'login_wiki') {
+    openWikiModal();
     return true;
   }
 
@@ -2857,6 +2893,10 @@ window.addEventListener('keydown', (e) => {
       closeJukeboxModal();
       return;
     }
+    if (wikiController.isOpen()) {
+      wikiController.close();
+      return;
+    }
     if (coopState.chatOpen) {
       setCoopChatOpen(false);
       return;
@@ -2896,7 +2936,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
-  if (menuOpen || feedbackUi.open || adminOpen || joinModalOpen || reportModalOpen || referralModalOpen || jukeboxModalOpen) return;
+  if (menuOpen || feedbackUi.open || adminOpen || joinModalOpen || reportModalOpen || referralModalOpen || jukeboxModalOpen || wikiController.isOpen()) return;
 
   if (world.mode === 'login') {
     if (!isPlayerAuthorizedToPlay()) return;

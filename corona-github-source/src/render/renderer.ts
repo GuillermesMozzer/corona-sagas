@@ -387,7 +387,7 @@ export class PixelRenderer {
     const cy = Math.round(this.viewH * 0.43);
     const saved = getSavedCampaignSummary();
 
-    const titleY = Math.max(54, cy - 50);
+    const titleY = this.viewH < 320 ? Math.max(46, cy - 60) : Math.max(54, cy - 50);
 
     // Golden Crown Emblem
     ctx.fillStyle = '#f7c948';
@@ -540,6 +540,37 @@ export class PixelRenderer {
       ctx.font = 'bold 7.2px "Pixelify Sans", monospace';
       ctx.fillText(t('invite_btn'), cx, byInvite + 12.5);
       this.addHit('login_invite', bx, byInvite, btnW, inviteH);
+
+      // Row 6: Full-Width Complete Game Wiki Button (Encyclopedia)
+      const byWiki = byInvite + 22;
+      const wikiH = 19;
+      ctx.fillStyle = 'rgba(18, 33, 56, 0.96)';
+      ctx.fillRect(bx, byWiki, btnW, wikiH);
+      ctx.strokeStyle = '#84c5ff';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx + 0.5, byWiki + 0.5, btnW - 1, wikiH - 1);
+
+      // Pixel-art open book icon on the left of the Wiki button
+      const bkx = bx + 6;
+      const bky = byWiki + 5;
+      ctx.fillStyle = '#84c5ff';
+      ctx.fillRect(bkx, bky, 10, 8);
+      ctx.fillStyle = '#fff5d6';
+      ctx.fillRect(bkx + 1, bky + 1, 3, 6);
+      ctx.fillRect(bkx + 6, bky + 1, 3, 6);
+      ctx.fillStyle = '#efc462';
+      ctx.fillRect(bkx + 4, bky, 2, 8);
+      ctx.fillStyle = '#3b5c85';
+      ctx.fillRect(bkx + 2, bky + 2, 2, 1);
+      ctx.fillRect(bkx + 2, bky + 4, 2, 1);
+      ctx.fillRect(bkx + 6, bky + 2, 2, 1);
+      ctx.fillRect(bkx + 6, bky + 4, 2, 1);
+
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#e6f5ff';
+      ctx.font = 'bold 7.2px "Pixelify Sans", monospace';
+      ctx.fillText('WIKI COMPLETA DO JOGO', cx + 4, byWiki + 12.5, btnW - 24);
+      this.addHit('login_wiki', bx, byWiki, btnW, wikiH);
     }
 
     // Google Technology Disclaimer Badge with Pixel-Art Google "G" Logo
