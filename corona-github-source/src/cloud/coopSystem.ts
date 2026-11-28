@@ -19,6 +19,7 @@ import {
   buildCommunityReportFormUrl,
   isCustomReportFormConfigured,
 } from '../config/reportForm';
+import { FIREBASE_CONFIG } from '../config/firebase';
 import {
   CENTER_X,
   GROUND_Y,
@@ -27,7 +28,7 @@ import {
   type Monarch,
   type WorldState,
 } from '../types';
-import { authCloudState, getFirestoreDb } from './googleAuthCloud';
+import { authCloudState, getCurrentAuthIdToken, getFirestoreDb } from './googleAuthCloud';
 
 export const MAX_COOP_PLAYERS = 4;
 
@@ -147,7 +148,9 @@ let activeRelayRecorder: MediaRecorder | null = null;
 let remotePlaybackCtx: AudioContext | null = null;
 let remotePlaybackGain: GainNode | null = null;
 let remoteChunkPlayCursor = 0;
+let lastHostP2pBroadcastMs = 0;
 const peerConnections = new Map<string, RTCPeerConnection>();
+const peerDataChannels = new Map<string, RTCDataChannel>();
 const peerSignalChains = new Map<string, Promise<void>>();
 const pendingIceCandidates = new Map<string, RTCIceCandidateInit[]>();
 const remoteAudioEls = new Map<string, HTMLAudioElement>();
@@ -353,6 +356,14 @@ function cleanupSubscriptionsAndAudio(): void {
   lastSentInputKey = '';
 
   stopVoiceRelayLoop();
+  for (const dc of peerDataChannels.values()) {
+    try {
+      dc.close();
+    } catch {
+      // Ignore
+    }
+  }
+  peerDataChannels.clear();
   for (const pc of peerConnections.values()) {
     try {
       pc.close();
@@ -465,6 +476,15 @@ function subscribeCommonRoomChannels(code: string, myUid: string): void {
           // Ignore
         }
         peerConnections.delete(peerUid);
+        const dc = peerDataChannels.get(peerUid);
+        if (dc) {
+          try {
+            dc.close();
+          } catch {
+            // Ignore
+          }
+          peerDataChannels.delete(peerUid);
+        }
         pendingIceCandidates.delete(peerUid);
         const aEl = remoteAudioEls.get(peerUid);
         if (aEl) {
@@ -475,13 +495,17 @@ function subscribeCommonRoomChannels(code: string, myUid: string): void {
         }
       }
     }
-    if (localAudioStream && coopState.micOn) {
+    // Host proactively opens P2P (DataChannel + audio) to newly joined guests to avoid Firestore write quota burn!
+    const shouldOfferToPeers = (localAudioStream && coopState.micOn) || coopState.role === 'host';
+    if (shouldOfferToPeers) {
       for (const m of list) {
         if (m.uid !== myUid && !peerConnections.has(m.uid)) {
           void attachLocalAudioAndOffer(code, myUid, m.uid);
         }
       }
-      startVoiceRelayLoopIfNeeded();
+      if (localAudioStream && coopState.micOn) {
+        startVoiceRelayLoopIfNeeded();
+      }
     }
     notify();
   });
@@ -693,15 +717,65 @@ export async function hostOpenCoopRoom(
     resetCoopState(true);
     const errCode = (err as { code?: string })?.code ?? '';
     const errMsg = (err as { message?: string })?.message ?? '';
-    const detail =
-      errCode === 'permission-denied'
-        ? 'Permissão negada no Firestore (publique as Regras do Firestore).'
-        : errMsg.startsWith('timeout-')
-          ? 'Tempo esgotado no Firestore. Verifique sua internet ou Regras do Firestore.'
-          : errCode
-            ? `Erro Firebase (${errCode}): ${errMsg.slice(0, 80)}`
-            : `Erro ao criar sala: ${errMsg.slice(0, 90) || 'verifique sua conexão.'}`;
+    if (errCode === 'resource-exhausted') {
+      return {
+        ok: false,
+        error:
+          'Cota diária gratuita do Firestore atingida (20.000 gravações/dia)! Reinicia às 04h (Brasília) ou ative o plano Blaze no Firebase.',
+      };
+    }
+    if (errCode === 'permission-denied') {
+      return {
+        ok: false,
+        error: 'Permissão negada no Firestore (publique as Regras do Firestore para coop_rooms).',
+      };
+    }
+    if (errMsg.startsWith('timeout-')) {
+      onProgress?.('Diagnosticando resposta do Firestore...');
+      const diag = await diagnoseFirestoreTimeout(code);
+      return { ok: false, error: diag };
+    }
+    const detail = errCode
+      ? `Erro Firebase (${errCode}): ${errMsg.slice(0, 80)}`
+      : `Erro ao criar sala: ${errMsg.slice(0, 90) || 'verifique sua conexão.'}`;
     return { ok: false, error: detail };
+  }
+}
+
+async function diagnoseFirestoreTimeout(code: string): Promise<string> {
+  try {
+    const token = await getCurrentAuthIdToken();
+    const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(FIREBASE_CONFIG.projectId)}/databases/(default)/documents/coop_rooms/${encodeURIComponent(code)}?updateMask.fieldPaths=active`;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await withTimeout(
+      fetch(url, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ fields: { active: { booleanValue: false } } }),
+      }),
+      5000,
+      'rest-timeout'
+    );
+    if (res.status === 429) {
+      return 'Cota diária gratuita do Firestore atingida (20.000 gravações/dia)! Reinicia às 04h (Brasília) ou ative o plano Blaze no Firebase.';
+    }
+    if (res.status === 403) {
+      return 'Permissão negada no Firestore (HTTP 403). Publique as Regras do Firestore incluindo coop_rooms.';
+    }
+    if (res.status === 401) {
+      return 'Sessão Google expirada (HTTP 401). Saia da conta Google no menu e faça login novamente.';
+    }
+    if (res.status === 404) {
+      return 'Banco Firestore não encontrado (HTTP 404). Verifique se o Cloud Firestore está criado no Firebase.';
+    }
+    if (res.ok) {
+      return 'Firestore respondeu via HTTPS, mas o canal em tempo real demorou. Recarregue a página e tente novamente.';
+    }
+    const bodyText = (await res.text().catch(() => '')).slice(0, 120);
+    return `Firestore respondeu HTTP ${res.status}: ${bodyText || res.statusText}`;
+  } catch {
+    return 'Sem resposta do servidor Firestore. Verifique sua conexão com a internet ou bloqueadores de rede/VPN.';
   }
 }
 
@@ -967,22 +1041,49 @@ export function hostSyncCoopWorld(world: WorldState): Map<string, InputState> {
     });
   });
 
-  // Throttled broadcast of live world snapshot (~10 Hz)
-  const now = performance.now();
-  const db = getFirestoreDb();
-  if (db && now - lastHostBroadcastMs >= 110) {
-    lastHostBroadcastMs = now;
-    const code = coopState.roomCode;
-    void setDoc(
-      doc(db, 'coop_rooms', code),
-      {
-        worldSnapshotJson: makeSlimSnapshot(world),
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    ).catch(() => {
-      // Transient write error ignored
-    });
+  // Zero-write P2P WebRTC DataChannel broadcast (~12 Hz) + quota-safe Firestore fallback (ONLY when guests are present!)
+  if (guests.length > 0) {
+    const now = performance.now();
+    let anyGuestNeedsFirestore = false;
+    const openGuestChannels: RTCDataChannel[] = [];
+    for (const g of guests) {
+      const dc = peerDataChannels.get(g.uid);
+      if (dc && dc.readyState === 'open') {
+        openGuestChannels.push(dc);
+      } else {
+        anyGuestNeedsFirestore = true;
+      }
+    }
+
+    let cachedSnap: string | null = null;
+    if (openGuestChannels.length > 0 && now - lastHostP2pBroadcastMs >= 85) {
+      lastHostP2pBroadcastMs = now;
+      cachedSnap = makeSlimSnapshot(world);
+      const packet = `W:${cachedSnap}`;
+      for (const dc of openGuestChannels) {
+        try {
+          if (dc.bufferedAmount < 262144) dc.send(packet);
+        } catch {
+          // Ignore transient DataChannel error
+        }
+      }
+    }
+
+    const db = getFirestoreDb();
+    if (db && anyGuestNeedsFirestore && now - lastHostBroadcastMs >= 650) {
+      lastHostBroadcastMs = now;
+      const code = coopState.roomCode;
+      void setDoc(
+        doc(db, 'coop_rooms', code),
+        {
+          worldSnapshotJson: cachedSnap ?? makeSlimSnapshot(world),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      ).catch(() => {
+        // Transient write error ignored
+      });
+    }
   }
 
   return remoteInputs;
@@ -1008,19 +1109,31 @@ export function guestSyncCoopFrame(
   const db = getFirestoreDb();
   const user = authCloudState.user;
 
-  if (db && user && (key !== lastSentInputKey || now - lastGuestInputMs > 450)) {
-    lastSentInputKey = key;
-    lastGuestInputMs = now;
-    void setDoc(doc(db, 'coop_rooms', coopState.roomCode, 'inputs', user.uid), {
+  if (user && key !== lastSentInputKey) {
+    const payload = {
       left: localInput.left,
       right: localInput.right,
       sprint: localInput.sprint,
       dropSeq: guestDropSeq,
       powerSeq: guestPowerSeq,
       updatedAtMs: Date.now(),
-    }).catch(() => {
-      // Ignore transient write failures
-    });
+    };
+    const hostDc = coopState.hostUid ? peerDataChannels.get(coopState.hostUid) : undefined;
+    if (hostDc && hostDc.readyState === 'open') {
+      lastSentInputKey = key;
+      lastGuestInputMs = now;
+      try {
+        hostDc.send(`I:${JSON.stringify(payload)}`);
+      } catch {
+        // Ignore transient DataChannel error
+      }
+    } else if (db && now - lastGuestInputMs >= 140) {
+      lastSentInputKey = key;
+      lastGuestInputMs = now;
+      void setDoc(doc(db, 'coop_rooms', coopState.roomCode, 'inputs', user.uid), payload).catch(() => {
+        // Ignore transient write failures
+      });
+    }
   }
 
   if (latestGuestWorldSnapshot) {
@@ -1776,6 +1889,44 @@ async function ensureSendRecvAudioTrack(pc: RTCPeerConnection): Promise<void> {
   }
 }
 
+function setupPeerDataChannel(peerUid: string, dc: RTCDataChannel): void {
+  peerDataChannels.set(peerUid, dc);
+  dc.onmessage = (ev) => {
+    if (typeof ev.data !== 'string') return;
+    if (ev.data.startsWith('W:')) {
+      if (coopState.role !== 'guest') return;
+      try {
+        const parsed = JSON.parse(ev.data.slice(2)) as WorldState;
+        parsed.mode = 'playing';
+        parsed.localPlayerUid = authCloudState.user?.uid;
+        latestGuestWorldSnapshot = parsed;
+      } catch {
+        // Ignore malformed snapshot frame
+      }
+    } else if (ev.data.startsWith('I:')) {
+      if (coopState.role !== 'host') return;
+      try {
+        const d = JSON.parse(ev.data.slice(2)) as Record<string, unknown>;
+        remoteRawInputs.set(peerUid, {
+          left: d.left === true,
+          right: d.right === true,
+          sprint: d.sprint === true,
+          dropSeq: typeof d.dropSeq === 'number' ? d.dropSeq : 0,
+          powerSeq: typeof d.powerSeq === 'number' ? d.powerSeq : 0,
+          updatedAtMs: typeof d.updatedAtMs === 'number' ? d.updatedAtMs : Date.now(),
+        });
+      } catch {
+        // Ignore malformed input frame
+      }
+    }
+  };
+  dc.onclose = () => {
+    if (peerDataChannels.get(peerUid) === dc) {
+      peerDataChannels.delete(peerUid);
+    }
+  };
+}
+
 function getOrCreatePeerConnection(code: string, myUid: string, peerUid: string): RTCPeerConnection {
   const existing = peerConnections.get(peerUid);
   if (existing && existing.connectionState !== 'closed' && existing.connectionState !== 'failed') {
@@ -1788,10 +1939,17 @@ function getOrCreatePeerConnection(code: string, myUid: string, peerUid: string)
       // Ignore
     }
     peerConnections.delete(peerUid);
+    peerDataChannels.delete(peerUid);
   }
 
   const pc = new RTCPeerConnection(RTC_CONFIG);
   peerConnections.set(peerUid, pc);
+
+  pc.ondatachannel = (ev) => {
+    if (ev.channel.label === 'coop_sync') {
+      setupPeerDataChannel(peerUid, ev.channel);
+    }
+  };
 
   pc.onicecandidate = (ev) => {
     if (!ev.candidate) return;
@@ -1807,7 +1965,7 @@ function getOrCreatePeerConnection(code: string, myUid: string, peerUid: string)
   };
 
   pc.oniceconnectionstatechange = () => {
-    if (pc.iceConnectionState === 'failed' && coopState.active && coopState.micOn) {
+    if (pc.iceConnectionState === 'failed' && coopState.active && (coopState.micOn || coopState.role === 'host')) {
       void attachLocalAudioAndOffer(code, myUid, peerUid, true);
     }
   };
@@ -1846,6 +2004,14 @@ async function attachLocalAudioAndOffer(
   if (!db) return;
   try {
     const pc = getOrCreatePeerConnection(code, myUid, peerUid);
+    if (coopState.role === 'host' && !peerDataChannels.has(peerUid)) {
+      try {
+        const dc = pc.createDataChannel('coop_sync', { ordered: false, maxRetransmits: 0 });
+        setupPeerDataChannel(peerUid, dc);
+      } catch {
+        // Ignore if DataChannel cannot be created
+      }
+    }
     await ensureSendRecvAudioTrack(pc);
     const offer = await pc.createOffer({ offerToReceiveAudio: true, iceRestart });
     await pc.setLocalDescription(offer);

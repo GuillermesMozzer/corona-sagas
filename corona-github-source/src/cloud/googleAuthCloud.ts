@@ -124,6 +124,15 @@ export function getFirestoreDb(): Firestore | null {
   return db;
 }
 
+export async function getCurrentAuthIdToken(): Promise<string | null> {
+  try {
+    if (!auth?.currentUser) return null;
+    return await auth.currentUser.getIdToken();
+  } catch {
+    return null;
+  }
+}
+
 export function subscribeAuthCloud(fn: AuthListener): () => void {
   listeners.add(fn);
   fn(authCloudState);
@@ -391,7 +400,7 @@ export function initGoogleAuthCloud(): void {
     app = initializeApp(FIREBASE_CONFIG);
     auth = getAuth(app);
     try {
-      db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
+      db = initializeFirestore(app, { experimentalForceLongPolling: true });
     } catch {
       db = getFirestore(app);
     }
