@@ -8,6 +8,8 @@ import {
   CENTER_X,
   DOCK_BUILD_COST,
   GROUND_Y,
+  LOGICAL_HEIGHT,
+  LOGICAL_WIDTH,
   MAX_CREW_PER_CLASS,
   MAX_KINGDOM_LEVEL,
   WORLD_WIDTH,
@@ -26,6 +28,9 @@ import {
   type ResourceCost,
   type ResourceSize,
   type Season,
+  type SpiritAdviceTopic,
+  type SpiritAdvisorBaseline,
+  type SpiritAdvisorState,
   type ToolShopKind,
   type Villager,
   type VillagerRole,
@@ -5155,12 +5160,60 @@ export function getTutorialTargetX(w: WorldState): number {
   return w.boat.x;
 }
 
+export const SPIRIT_AUTO_TEACH_INTERVAL = 5 * 60; // 5 minutes (300s) of active gameplay
+
+export function getSpiritButtonScreenPos(viewW: number, viewH: number): { x: number; y: number } {
+  return {
+    x: Math.round(Math.max(200, viewW) - 18),
+    y: Math.round(Math.max(180, viewH) - 18),
+  };
+}
+
+export function getSpiritButtonWorldPos(w: WorldState): { x: number; y: number } {
+  const vw = Math.max(200, Math.round(w.viewWidth || LOGICAL_WIDTH));
+  const vh = Math.max(180, Math.round(w.viewHeight || LOGICAL_HEIGHT));
+  const worldOffsetY = Math.round(vh * 0.778) - GROUND_Y;
+  const m = w.monarchs[0];
+  const camX = m ? m.cameraX : Math.max(0, CENTER_X - vw / 2);
+  const btn = getSpiritButtonScreenPos(vw, vh);
+  return {
+    x: camX + btn.x,
+    y: btn.y - worldOffsetY,
+  };
+}
+
+export function ensureSpiritAdvisor(w: WorldState): SpiritAdvisorState {
+  if (!w.spiritAdvisor) {
+    const btnPos = getSpiritButtonWorldPos(w);
+    w.spiritAdvisor = {
+      phase: 'docked',
+      topic: null,
+      message: '',
+      targetX: CENTER_X,
+      spiritX: btnPos.x,
+      spiritY: btnPos.y,
+      spiritFacing: 1,
+      spiritAlpha: 0,
+      animProgress: 0,
+      baseline: null,
+      autoTeachTimer: 0,
+      learnedTopics: {},
+      activeTimer: 0,
+      completedTimer: 0,
+      manualSummon: false,
+    };
+  }
+  return w.spiritAdvisor;
+}
+
 export function skipTutorial(w: WorldState): void {
-  if (!w.tutorial) return;
-  w.tutorial.active = false;
+  if (!w.tutorial || !w.tutorial.active) return;
+  if (w.tutorial.returningToButton) return;
+  w.tutorial.returningToButton = true;
+  w.tutorial.returnProgress = 0;
   w.hasOrderedVillager = true;
-  markTutorialCompleted();
-  saveCampaign(w);
+  sound.playCoinDrop();
+  spawnBurst(w, w.tutorial.spiritX, w.tutorial.spiritY, 12, '#7ef5ff', 'spark', 42);
 }
 
 function updateTutorial(w: WorldState, dt: number): void {
@@ -5169,6 +5222,40 @@ function updateTutorial(w: WorldState, dt: number): void {
 
   const m = w.monarchs[0];
   if (!m) return;
+
+  // Handle graceful fly-back into the bottom-right blue button (on skip or farewell finish!)
+  if (tut.returningToButton) {
+    const btnPos = getSpiritButtonWorldPos(w);
+    tut.returnProgress = Math.min(1, (tut.returnProgress ?? 0) + dt * 2.1);
+    const p = tut.returnProgress;
+    const ease = p * p * (3 - 2 * p);
+    tut.spiritX += (btnPos.x - tut.spiritX) * Math.min(1, dt * (7 + ease * 10));
+    tut.spiritY += (btnPos.y - tut.spiritY) * Math.min(1, dt * (7 + ease * 10));
+    tut.spiritFacing = btnPos.x >= tut.spiritX ? 1 : -1;
+    tut.spiritAlpha = Math.max(0.05, 1 - ease * 0.92);
+    if (Math.random() < dt * 18) {
+      spawnParticle(w, {
+        x: tut.spiritX,
+        y: tut.spiritY,
+        vx: (Math.random() - 0.5) * 16,
+        vy: (Math.random() - 0.5) * 16,
+        size: 1.5,
+        color: '#7ef5ff',
+        alpha: 0.9,
+        life: 0.4,
+        maxLife: 0.4,
+        kind: 'spark',
+      });
+    }
+    if (p >= 1) {
+      spawnBurst(w, btnPos.x, btnPos.y, 16, '#7ef5ff', 'spark', 46);
+      tut.active = false;
+      tut.returningToButton = false;
+      markTutorialCompleted();
+      saveCampaign(w);
+    }
+    return;
+  }
 
   // Tutorial rule: NO enemies on the map during the first-playthrough tutorial!
   if (w.enemies.length > 0) w.enemies = [];
@@ -5217,7 +5304,7 @@ function updateTutorial(w: WorldState, dt: number): void {
     tut.fadeCycle = 0;
     sound.playCoinPickup();
     spawnBurst(w, tut.spiritX, tut.spiritY, 14, '#7ef5ff', 'spark', 50);
-    // Guarantee player can forge the Bow after spending all 10 starting coins on steps 1..5!
+    // Guarantee player can forge the Bow even if they spent coins elsewhere during steps 1..5
     if (!tut.bowTributeGiven && m.coins < 2 && bowShop) {
       tut.bowTributeGiven = true;
       for (let i = 0; i < 2; i++) {
@@ -5231,19 +5318,38 @@ function updateTutorial(w: WorldState, dt: number): void {
     spawnBurst(w, tut.spiritX, tut.spiritY, 16, '#7ef5ff', 'spark', 55);
   } else if (tut.step === 'order_villager' && w.hasOrderedVillager) {
     tut.step = 'farewell';
-    tut.farewellTimer = 7.0;
+    tut.farewellTimer = 6.5;
     tut.fadeCycle = 0;
     sound.playHorn(false);
     spawnBurst(w, tut.spiritX, tut.spiritY, 18, '#7ef5ff', 'spark', 60);
   } else if (tut.step === 'farewell') {
     tut.farewellTimer -= dt;
     if (tut.farewellTimer <= 0) {
-      spawnBurst(w, tut.spiritX, tut.spiritY, 22, '#7ef5ff', 'spark', 68);
-      tut.active = false;
-      markTutorialCompleted();
-      saveCampaign(w);
+      tut.returningToButton = true;
+      tut.returnProgress = 0;
       return;
     }
+  }
+
+  // Initial emerge swoop directly out of the bottom-right blue button!
+  if ((tut.emergingProgress ?? 1) < 1) {
+    const btnPos = getSpiritButtonWorldPos(w);
+    if ((tut.emergingProgress ?? 0) === 0) {
+      tut.spiritX = btnPos.x;
+      tut.spiritY = btnPos.y;
+      spawnBurst(w, btnPos.x, btnPos.y, 14, '#7ef5ff', 'spark', 42);
+    }
+    tut.emergingProgress = Math.min(1, (tut.emergingProgress ?? 0) + dt * 1.8);
+    const p = tut.emergingProgress;
+    const ease = 1 - Math.pow(1 - p, 3);
+    const goalX = m.x + 44;
+    const goalY = GROUND_Y - 38;
+    const arcLift = Math.sin(p * Math.PI) * 28;
+    tut.spiritX = btnPos.x + (goalX - btnPos.x) * ease;
+    tut.spiritY = btnPos.y + (goalY - btnPos.y) * ease - arcLift;
+    tut.spiritAlpha = 0.25 + 0.7 * ease;
+    tut.spiritFacing = goalX >= btnPos.x ? 1 : -1;
+    return;
   }
 
   // Spirit floating position & ethereal vanish/reappear ahead of the horse!
@@ -5258,7 +5364,7 @@ function updateTutorial(w: WorldState, dt: number): void {
     tut.spiritX += (desiredX - tut.spiritX) * Math.min(1, dt * 4.5);
     tut.spiritY += (desiredY - tut.spiritY) * Math.min(1, dt * 5);
     tut.spiritFacing = 1; // Pointing east toward the Drakkar & distant islands!
-    tut.spiritAlpha = Math.min(0.92, tut.farewellTimer < 1.2 ? tut.farewellTimer / 1.2 : 0.92);
+    tut.spiritAlpha = 0.92;
   } else if (nearTarget) {
     // Hover directly above the campfire / camp / tent / palisade!
     const desiredX = targetX;
@@ -5301,6 +5407,723 @@ function updateTutorial(w: WorldState, dt: number): void {
       size: 1,
       color: Math.random() > 0.4 ? '#7ef5ff' : '#d4fbff',
       alpha: tut.spiritAlpha * 0.8,
+      life: 0.55,
+      maxLife: 0.55,
+      kind: 'spark',
+    });
+  }
+}
+
+// =========================================================================
+// SMART CONTEXT-AWARE SPIRIT ADVISOR (ON-DEMAND + EVERY 5 MIN TEACHING)
+// =========================================================================
+
+function captureAdvisorBaseline(w: WorldState): SpiritAdvisorBaseline {
+  const m = w.monarchs[0];
+  return {
+    wood: w.resources.wood,
+    stone: w.resources.stone,
+    iron: w.resources.iron,
+    bankerBalance: w.banker.balance,
+    monarchCoins: m ? m.coins : 0,
+    hallLevel: w.hall.level,
+    totalWallLevels: w.walls.reduce((sum, wall) => sum + wall.level + (wall.underConstruction ? 0.5 : 0), 0),
+    brokenWalls: w.walls.filter((wall) => wall.destroyed).length,
+    archers: w.villagers.filter((v) => v.role === 'archer').length,
+    builders: w.villagers.filter((v) => v.role === 'builder').length,
+    warriors: w.villagers.filter((v) => v.role === 'warrior').length,
+    farmers: w.villagers.filter((v) => v.role === 'producer').length,
+    wanderersRecruited: w.stats.villagersRecruited,
+    farmsBuilt: w.farms.filter((f) => f.level > 0 || f.underConstruction).length,
+    breweriesBuilt: w.camps.filter((c) => c.isBrewery || c.breweryUnderConstruction).length,
+    beersStocked: w.camps.reduce((sum, c) => sum + (c.beerStock ?? 0), 0),
+    boatProgress: w.boat.coinsPaid + w.boat.buildProgress * 10,
+    boatBuilt: w.boat.built,
+    boatCrew: w.boat.crewArchers + w.boat.crewWarriors + w.boat.crewBuilders + w.boat.crewProducers,
+    sailPaid: w.boat.sailCoinsPaid,
+    portalsLeft: w.portals.filter((p) => !p.destroyed).length,
+    berryMarkedCount: (w.berryBushes ?? []).filter((b) => b.marked).length,
+    treesMarked: w.trees.filter((tr) => tr.marked || tr.chopped).length,
+    rocksMarked: w.rocks.filter((rk) => rk.marked || rk.mined).length,
+    forgeBuilt: Boolean(w.forge?.built || w.forge?.underConstruction),
+    towersBuilt: w.towers.filter((tw) => tw.level > 0 || tw.underConstruction).length,
+  };
+}
+
+function syncNaturallyLearnedTopics(w: WorldState, adv: SpiritAdvisorState): void {
+  const learned = adv.learnedTopics;
+  const done = w.completedActionClasses ?? {};
+  if (done.tree || w.trees.some((tr) => tr.chopped || tr.marked)) learned.cut_trees = true;
+  if (done.rock || w.rocks.some((rk) => rk.mined || rk.marked)) learned.mine_stone = true;
+  if (w.hall.level >= 2) learned.upgrade_hall = true;
+  if (w.farms.some((f) => f.level > 0 || f.underConstruction)) learned.build_farm = true;
+  if (w.banker.balance > 0) learned.deposit_banker = true;
+  if (w.towers.some((tw) => tw.level > 0 || tw.underConstruction)) learned.build_tower = true;
+  if (w.camps.some((c) => c.isBrewery || c.breweryUnderConstruction)) learned.build_brewery = true;
+  if (w.camps.some((c) => (c.beerStock ?? 0) > 0)) learned.brew_beer = true;
+  if ((w.berryBushes ?? []).some((b) => b.marked)) learned.winter_berries = true;
+  if (w.forge?.built || w.forge?.underConstruction) learned.build_forge = true;
+  if (w.boat.built || w.boat.underConstruction || w.boat.coinsPaid > 0) learned.build_boat = true;
+  if (w.boat.bellRung || w.boat.crewArchers + w.boat.crewWarriors > 0) learned.board_boat = true;
+  if (w.currentIsland >= 2) learned.sail_island = true;
+  if (w.portals.some((p) => p.destroyed)) learned.attack_portal = true;
+}
+
+function findNearestByX<T extends { x: number }>(items: T[], refX: number): T | undefined {
+  let best: T | undefined;
+  let bestDist = Infinity;
+  for (const item of items) {
+    const d = Math.abs(item.x - refX);
+    if (d < bestDist) {
+      bestDist = d;
+      best = item;
+    }
+  }
+  return best;
+}
+
+interface SpiritRecommendation {
+  topic: SpiritAdviceTopic;
+  targetX: number;
+  message: string;
+}
+
+function selectBestSpiritAdvice(w: WorldState, mode: 'manual' | 'auto_5min'): SpiritRecommendation | null {
+  const m = w.monarchs[0];
+  if (!m) return null;
+  const adv = ensureSpiritAdvisor(w);
+  syncNaturallyLearnedTopics(w, adv);
+  const learned = adv.learnedTopics;
+
+  const archers = w.villagers.filter((v) => v.role === 'archer' && v.state !== 'embarked').length;
+  const builders = w.villagers.filter((v) => v.role === 'builder' && v.state !== 'embarked').length;
+  const warriors = w.villagers.filter((v) => v.role === 'warrior' && v.state !== 'embarked').length;
+  const farmers = w.villagers.filter((v) => v.role === 'producer' && v.state !== 'embarked').length;
+  const totalWorkers = archers + builders + warriors + farmers + w.villagers.filter((v) => v.role === 'peasant').length;
+  const wanderers = w.villagers.filter((v) => v.role === 'wanderer');
+  const brokenWall = findNearestByX(w.walls.filter((wall) => wall.destroyed), m.x);
+  const uncutTree = findNearestByX(w.trees.filter((tr) => !tr.chopped && !tr.marked), m.x);
+  const unminedRock = findNearestByX(w.rocks.filter((rk) => !rk.mined && !rk.marked), m.x);
+  const activePortals = w.portals.filter((p) => !p.destroyed);
+  const nearestPortal = findNearestByX(activePortals, m.x);
+  const unbuiltFarm = findNearestByX(w.farms.filter((f) => f.level === 0 && !f.underConstruction), m.x);
+  const activeFarms = w.farms.filter((f) => f.level > 0).length;
+  const brewerySite = findNearestByX(
+    w.camps.filter((c) => c.active && c.isBrewerySite && !c.isBrewery && !c.breweryUnderConstruction),
+    m.x
+  );
+  const activeBrewery = findNearestByX(
+    w.camps.filter((c) => c.active && c.isBrewery && (c.beerStock ?? 0) < BREWERY_MAX_BEERS),
+    m.x
+  );
+  const unbuiltTower = findNearestByX(w.towers.filter((tw) => tw.level === 0 && !tw.underConstruction), m.x);
+  const ripeBerry = findNearestByX((w.berryBushes ?? []).filter((b) => b.berries > 0 && !b.marked), m.x);
+  const bowShop = w.shops.find((s) => s.kind === 'bow');
+  const hammerShop = w.shops.find((s) => s.kind === 'hammer');
+  const seedShop = w.shops.find((s) => s.kind === 'seed');
+  const swordShop = w.shops.find((s) => s.kind === 'sword');
+  const embarkedTotal = w.boat.crewArchers + w.boat.crewWarriors + w.boat.crewBuilders + w.boat.crewProducers;
+  const daysToBloodMoon = w.day % 15 === 0 ? 0 : 15 - (w.day % 15);
+  const weakestWall = w.walls
+    .filter((wall) => !wall.destroyed && wall.level < Math.min(w.hall.level, MAX_KINGDOM_LEVEL))
+    .sort((a, b) => a.level - b.level || Math.abs(a.x - m.x) - Math.abs(b.x - m.x))[0];
+
+  // =====================================================================
+  // MODE A: AUTOMATIC 5-MINUTE LESSON — teaches something NEW not yet done!
+  // =====================================================================
+  if (mode === 'auto_5min') {
+    if (!learned.cut_trees && uncutTree) {
+      return {
+        topic: 'cut_trees',
+        targetX: uncutTree.x,
+        message: 'Pague 1 moeda em árvores para seus construtores cortarem madeira e abrirem espaço para caça!',
+      };
+    }
+    if (!learned.mine_stone && unminedRock) {
+      return {
+        topic: 'mine_stone',
+        targetX: unminedRock.x,
+        message: 'Minere pedras pagando moedas nas rochas! Pedra é essencial para evoluir muralhas e o Reino.',
+      };
+    }
+    if (!learned.upgrade_hall && w.hall.level < 2) {
+      return {
+        topic: 'upgrade_hall',
+        targetX: w.hall.x,
+        message: 'Evolua seu Salão do Reino para Nv.2! Isso libera Fazendas, Torres e o Banqueiro.',
+      };
+    }
+    if (!learned.build_farm && w.hall.level >= 2 && w.season !== 'winter' && unbuiltFarm) {
+      return {
+        topic: 'build_farm',
+        targetX: unbuiltFarm.x,
+        message: 'Construa uma Fazenda e contrate fazendeiros! Quando ela encher, o Banqueiro recolhe o ouro.',
+      };
+    }
+    if (!learned.deposit_banker && w.hall.level >= 2 && m.coins >= 8) {
+      return {
+        topic: 'deposit_banker',
+        targetX: w.banker.x,
+        message: 'Guarde moedas extras no Banqueiro! Elas rendem juros todo dia e salvam seu reino no Inverno.',
+      };
+    }
+    if (!learned.build_tower && w.hall.level >= 2 && unbuiltTower) {
+      return {
+        topic: 'build_tower',
+        targetX: unbuiltTower.x,
+        message: 'Construa uma Torre de Arqueiros! Arqueiros no alto atiram longe sem levar dano dos Draugrs.',
+      };
+    }
+    if (!learned.build_brewery && w.hall.level >= 2 && brewerySite) {
+      return {
+        topic: 'build_brewery',
+        targetX: brewerySite.x,
+        message: 'Transforme a 1ª barraca em Cervejaria (15 moedas + madeira/pedra) para atrair vagabundos dos dois lados!',
+      };
+    }
+    if (!learned.winter_berries && w.season === 'winter' && ripeBerry) {
+      return {
+        topic: 'winter_berries',
+        targetX: ripeBerry.x,
+        message: 'No Inverno as fazendas congelam! Pague moitas de frutinhas para seus fazendeiros coletarem e pescarem.',
+      };
+    }
+    if (!learned.build_forge && w.currentIsland >= 2 && w.hall.level >= 3 && w.forge && !w.forge.built) {
+      return {
+        topic: 'build_forge',
+        targetX: w.forge.x,
+        message: 'Construa a Forja para fundir Ferro! Você vai precisar dele para muralhas e tropas avançadas.',
+      };
+    }
+    if (!learned.build_boat && w.hall.level >= 2 && !w.boat.built) {
+      return {
+        topic: 'build_boat',
+        targetX: w.boat.x,
+        message: 'Construa o Barco Drakkar na margem! Quando ficar pronto, ele cai na água pronto para levar sua tropa.',
+      };
+    }
+    if (!learned.board_boat && w.boat.built && embarkedTotal < 3) {
+      return {
+        topic: 'board_boat',
+        targetX: w.boat.x,
+        message: 'Toque o sino do Barco Drakkar para chamar arqueiros e guerreiros — eles até defendem do convés!',
+      };
+    }
+    if (!learned.sail_island && w.boat.built && embarkedTotal >= 3) {
+      return {
+        topic: 'sail_island',
+        targetX: w.boat.x,
+        message: 'Deposite 10 moedas no Barco Drakkar para zarpar à próxima ilha e expandir seu império nórdico!',
+      };
+    }
+    if (!learned.attack_portal && warriors >= 4 && archers >= 4 && nearestPortal) {
+      return {
+        topic: 'attack_portal',
+        targetX: nearestPortal.x,
+        message: 'Seu exército já está forte! Use o comando de Ataque [Z] para marchar e destruir o Portal Draugr!',
+      };
+    }
+    return null;
+  }
+
+  // =====================================================================
+  // MODE B: MANUAL SUMMON — real-time strategic recommendation for current state!
+  // =====================================================================
+
+  // 1. Emergency: Broken wall
+  if (brokenWall) {
+    return {
+      topic: 'repair_wall',
+      targetX: brokenWall.x,
+      message: 'Alerta! Muralha destruída — reforme essa defesa imediatamente antes que a noite chegue!',
+    };
+  }
+
+  // 2. Emergency: Blood Moon coming in <= 2 days
+  if (daysToBloodMoon <= 2 && (archers < 3 + w.currentIsland || weakestWall)) {
+    const tgt = weakestWall ? weakestWall.x : (bowShop?.x ?? w.hall.x);
+    return {
+      topic: 'blood_moon_prep',
+      targetX: tgt,
+      message:
+        daysToBloodMoon === 0
+          ? 'Lua de Sangue HOJE! Reforce muralhas e mantenha arqueiros e guerreiros em ambos os lados!'
+          : `Lua de Sangue em ${daysToBloodMoon} dia(s)! Fortifique muralhas e recrute tropas agora!`,
+    };
+  }
+
+  // 3. Overflowing coin pouch -> Deposit in Banker!
+  if (w.hall.level >= 2 && m.coins >= Math.max(18, m.maxCoins - 4)) {
+    return {
+      topic: 'deposit_banker',
+      targetX: w.banker.x,
+      message: 'Você está com muitas moedas na bolsa! Guarde no Banqueiro para não perder ouro e render juros.',
+    };
+  }
+
+  // 4. Winter survival logic
+  if (w.season === 'winter') {
+    if (m.coins <= 4 && w.banker.balance >= 4) {
+      return {
+        topic: 'withdraw_banker',
+        targetX: w.banker.x,
+        message: `Inverno rigoroso sem renda de fazendas! Saque moedas do Banqueiro (${w.banker.balance}g guardadas).`,
+      };
+    }
+    if (ripeBerry && m.coins >= 1) {
+      return {
+        topic: 'winter_berries',
+        targetX: ripeBerry.x,
+        message: 'Inverno: fazendas paradas! Pague moitas de frutinhas para fazendeiros coletarem e pescarem no rio.',
+      };
+    }
+  }
+
+  // 5. Missing essential workers
+  if (builders === 0) {
+    const tgt = wanderers.length > 0 ? findNearestByX(wanderers, m.x)!.x : (hammerShop?.x ?? w.hall.x);
+    return {
+      topic: 'hire_builder',
+      targetX: tgt,
+      message: 'Você está sem Construtores! Recrute um vagabundo e forje um Martelo para construir e reparar.',
+    };
+  }
+  if (archers < Math.min(5, 2 + w.currentIsland)) {
+    const tgt =
+      w.villagers.some((v) => v.role === 'peasant')
+        ? (bowShop?.x ?? w.hall.x)
+        : (findNearestByX(wanderers, m.x)?.x ?? bowShop?.x ?? w.hall.x);
+    return {
+      topic: 'hire_archer',
+      targetX: tgt,
+      message:
+        w.season === 'summer' || w.season === 'spring'
+          ? `Contrate mais Arqueiros (${archers})! Nesta estação há alta caça de animais para gerar ouro rápido.`
+          : `Reforce seus Arqueiros (${archers}) para proteger os muros e caçar animais pelo reino!`,
+    };
+  }
+
+  // 6. Low Wood or Stone -> Cut Trees / Mine Stone (season-aware!)
+  if (w.resources.wood < 6 && uncutTree) {
+    return {
+      topic: 'cut_trees',
+      targetX: uncutTree.x,
+      message:
+        w.season === 'autumn'
+          ? 'Outono tem alta produção de árvores! Corte árvores agora para estocar madeira.'
+          : 'Sua madeira está baixa! Marque árvores próximas para seus construtores cortarem.',
+    };
+  }
+  if (w.resources.stone < 5 && unminedRock) {
+    return {
+      topic: 'mine_stone',
+      targetX: unminedRock.x,
+      message: 'Suas pedras estão baixas! Marque rochas para minerar e conseguir evoluir muralhas e o Reino.',
+    };
+  }
+
+  // 7. Need more population -> Recruit wanderers or build/stock Brewery!
+  if (totalWorkers < 6 + w.hall.level * 2) {
+    const nearWanderer = findNearestByX(wanderers, m.x);
+    if (nearWanderer) {
+      return {
+        topic: 'recruit_wanderers',
+        targetX: nearWanderer.x,
+        message: 'Há vagabundos esperando no acampamento! Pague 1 moeda para aumentar sua população.',
+      };
+    }
+    if (activeBrewery && m.coins >= BREWERY_BEER_COST) {
+      return {
+        topic: 'brew_beer',
+        targetX: activeBrewery.x,
+        message: 'Abasteça sua Cervejaria (4 moedas/cerveja) para atrair novos vagabundos dos dois lados do mapa!',
+      };
+    }
+    if (brewerySite && w.hall.level >= 2) {
+      return {
+        topic: 'build_brewery',
+        targetX: brewerySite.x,
+        message: 'Poucos vagabundos aparecendo! Transforme a 1ª barraca em Cervejaria (15 moedas + madeira/pedra).',
+      };
+    }
+  }
+
+  // 8. Economy: Farms & Farmers (Spring/Summer/Autumn)
+  if (w.season !== 'winter' && w.hall.level >= 2) {
+    if (unbuiltFarm) {
+      return {
+        topic: 'build_farm',
+        targetX: unbuiltFarm.x,
+        message:
+          w.season === 'spring'
+            ? 'Primavera dá alta produção nas fazendas! Construa fazendas agora para multiplicar seu ouro!'
+            : 'Construa uma Fazenda para gerar renda estável — o Banqueiro recolhe tudo de manhã!',
+      };
+    }
+    if (activeFarms > 0 && farmers < activeFarms * 2 && seedShop) {
+      return {
+        topic: 'hire_farmer',
+        targetX: seedShop.x,
+        message: 'Compre bolsas de sementes para colocar mais Fazendeiros produzindo moedas antes do Inverno!',
+      };
+    }
+  }
+
+  // 9. Fortify weak walls
+  if (weakestWall) {
+    return {
+      topic: 'fortify_wall',
+      targetX: weakestWall.x,
+      message: `Fortifique sua muralha (Nv.${weakestWall.level} → Nv.${weakestWall.level + 1}) para segurar invasões mais pesadas!`,
+    };
+  }
+
+  // 10. Strong enough to attack a Portal!
+  if (warriors >= 4 && archers >= 5 && nearestPortal) {
+    return {
+      topic: 'attack_portal',
+      targetX: nearestPortal.x,
+      message: `Exército pronto (${warriors} guerreiros, ${archers} arqueiros)! Ataque o Portal Draugr com [Z] + direção!`,
+    };
+  }
+
+  // 11. Boat construction / Boarding / Sailing to next island
+  if (w.boat.built) {
+    if (embarkedTotal < 4) {
+      return {
+        topic: 'board_boat',
+        targetX: w.boat.x,
+        message: 'Barco Drakkar na água! Toque o sino do barco para embarcar arqueiros e guerreiros antes de zarpar.',
+      };
+    }
+    return {
+      topic: 'sail_island',
+      targetX: w.boat.x,
+      message: 'Barco pronto e tripulado! Deposite 10 moedas no Drakkar para zarpar rumo à próxima ilha!',
+    };
+  }
+  if (!w.boat.built && w.hall.level >= 2 && (w.day >= 4 || w.currentIsland >= 2)) {
+    return {
+      topic: 'build_boat',
+      targetX: w.boat.x,
+      message: 'Já é hora de montar o Barco Drakkar! Invista moedas no casco para poder avançar de ilha.',
+    };
+  }
+
+  // 12. Forge / Towers / Warriors / Kingdom Hall upgrade
+  if (w.currentIsland >= 2 && w.hall.level >= 3 && w.forge && !w.forge.built) {
+    return {
+      topic: 'build_forge',
+      targetX: w.forge.x,
+      message: 'Construa a Forja para fundir Ferro e desbloquear muralhas e tropas mais resistentes!',
+    };
+  }
+  if (unbuiltTower && w.hall.level >= 2) {
+    return {
+      topic: 'build_tower',
+      targetX: unbuiltTower.x,
+      message: 'Construa uma Torre de Arqueiros para reforçar o fogo defensivo nas fronteiras do reino!',
+    };
+  }
+  if (w.currentIsland >= 3 && warriors < 3 && swordShop) {
+    return {
+      topic: 'hire_warrior',
+      targetX: swordShop.x,
+      message: 'Forje Espadas para formar Guerreiros capazes de liderar ataques contra os Portais Draugr!',
+    };
+  }
+  if (w.hall.level < MAX_KINGDOM_LEVEL) {
+    return {
+      topic: 'upgrade_hall',
+      targetX: w.hall.x,
+      message: `Evolua o Salão do Reino (Nv.${w.hall.level + 1}) para desbloquear muralhas e fazendas mais fortes!`,
+    };
+  }
+
+  // 13. Seasonal best-practice fallback
+  if (w.season === 'winter') {
+    return {
+      topic: 'winter_economy',
+      targetX: w.banker.x,
+      message: 'Inverno: sobreviva com o ouro do Banqueiro, frutinhas e peixes até a Primavera chegar!',
+    };
+  }
+  if (w.season === 'autumn') {
+    return {
+      topic: 'autumn_wood',
+      targetX: uncutTree?.x ?? w.hall.x,
+      message: 'Outono: aproveite a alta produção de madeira e animais para preparar reservas para o Inverno!',
+    };
+  }
+  if (w.season === 'spring') {
+    return {
+      topic: 'spring_boom',
+      targetX: w.farms[0]?.x ?? w.hall.x,
+      message: 'Primavera: alta produção em fazendas, animais e árvores! Acumule ouro no Banqueiro!',
+    };
+  }
+  return {
+    topic: 'summer_hunt',
+    targetX: bowShop?.x ?? w.hall.x,
+    message: 'Verão: ótima estação para caçar com arqueiros, expandir muralhas e estocar ouro!',
+  };
+}
+
+function hasPlayerExecutedAdvice(w: WorldState, adv: SpiritAdvisorState): boolean {
+  const b = adv.baseline;
+  const topic = adv.topic;
+  if (!b || !topic) return false;
+  const m = w.monarchs[0];
+
+  switch (topic) {
+    case 'cut_trees':
+    case 'autumn_wood':
+      return w.resources.wood > b.wood || w.trees.filter((tr) => tr.marked || tr.chopped).length > b.treesMarked;
+    case 'mine_stone':
+      return w.resources.stone > b.stone || w.rocks.filter((rk) => rk.marked || rk.mined).length > b.rocksMarked;
+    case 'recruit_wanderers':
+      return w.stats.villagersRecruited > b.wanderersRecruited;
+    case 'hire_archer':
+    case 'summer_hunt':
+      return w.villagers.filter((v) => v.role === 'archer').length > b.archers;
+    case 'hire_builder':
+      return w.villagers.filter((v) => v.role === 'builder').length > b.builders;
+    case 'hire_warrior':
+      return w.villagers.filter((v) => v.role === 'warrior').length > b.warriors;
+    case 'hire_farmer':
+      return w.villagers.filter((v) => v.role === 'producer').length > b.farmers;
+    case 'build_farm':
+    case 'spring_boom':
+      return w.farms.filter((f) => f.level > 0 || f.underConstruction).length > b.farmsBuilt;
+    case 'upgrade_hall':
+      return w.hall.level > b.hallLevel;
+    case 'fortify_wall':
+    case 'blood_moon_prep':
+      return w.walls.reduce((sum, wall) => sum + wall.level + (wall.underConstruction ? 0.5 : 0), 0) > b.totalWallLevels;
+    case 'repair_wall':
+      return w.walls.filter((wall) => wall.destroyed).length < b.brokenWalls;
+    case 'deposit_banker':
+      return w.banker.balance > b.bankerBalance;
+    case 'withdraw_banker':
+    case 'winter_economy':
+      return w.banker.balance < b.bankerBalance || (m ? m.coins > b.monarchCoins + 1 : false);
+    case 'winter_berries':
+      return (w.berryBushes ?? []).filter((bush) => bush.marked).length > b.berryMarkedCount;
+    case 'build_brewery':
+      return w.camps.filter((c) => c.isBrewery || c.breweryUnderConstruction).length > b.breweriesBuilt;
+    case 'brew_beer':
+      return w.camps.reduce((sum, c) => sum + (c.beerStock ?? 0), 0) > b.beersStocked;
+    case 'build_forge':
+      return Boolean(w.forge?.built || w.forge?.underConstruction) && !b.forgeBuilt;
+    case 'build_tower':
+      return w.towers.filter((tw) => tw.level > 0 || tw.underConstruction).length > b.towersBuilt;
+    case 'build_boat':
+      return w.boat.coinsPaid + w.boat.buildProgress * 10 > b.boatProgress || (w.boat.built && !b.boatBuilt);
+    case 'board_boat':
+      return w.boat.crewArchers + w.boat.crewWarriors + w.boat.crewBuilders + w.boat.crewProducers > b.boatCrew;
+    case 'sail_island':
+      return w.boat.sailCoinsPaid > b.sailPaid;
+    case 'attack_portal':
+      return w.portals.filter((p) => !p.destroyed).length < b.portalsLeft || w.activeCommand === 'attack';
+    default:
+      return false;
+  }
+}
+
+function launchSpiritAdvice(w: WorldState, rec: SpiritRecommendation, manualSummon: boolean): void {
+  const adv = ensureSpiritAdvisor(w);
+  const btnPos = getSpiritButtonWorldPos(w);
+  adv.phase = 'emerging';
+  adv.topic = rec.topic;
+  adv.message = rec.message;
+  adv.targetX = rec.targetX;
+  adv.spiritX = btnPos.x;
+  adv.spiritY = btnPos.y;
+  adv.spiritAlpha = 0.2;
+  adv.animProgress = 0;
+  adv.baseline = captureAdvisorBaseline(w);
+  adv.activeTimer = 0;
+  adv.completedTimer = 0;
+  adv.autoTeachTimer = 0;
+  adv.manualSummon = manualSummon;
+  sound.playCoinPickup();
+  spawnBurst(w, btnPos.x, btnPos.y, 16, '#7ef5ff', 'spark', 46);
+}
+
+/**
+ * Dismisses the active Spirit Advisor, swooping it smoothly back into the bottom-right blue button!
+ */
+export function dismissSpiritAdvisor(w: WorldState): void {
+  if (w.tutorial?.active) {
+    skipTutorial(w);
+    return;
+  }
+  const adv = ensureSpiritAdvisor(w);
+  if (adv.phase === 'docked' || adv.phase === 'returning') return;
+  if (adv.topic && !adv.manualSummon) {
+    adv.learnedTopics[adv.topic] = true;
+  }
+  adv.phase = 'returning';
+  adv.animProgress = 0;
+  adv.completedTimer = 0;
+  sound.playCoinDrop();
+  spawnBurst(w, adv.spiritX, adv.spiritY, 10, '#7ef5ff', 'spark', 36);
+}
+
+/**
+ * Bottom-right Blue Spirit Button click handler:
+ * - If Spirit is docked: summons it out of the button with the smartest recommendation for the player's current stage!
+ * - If Spirit is active/emerging (including initial tutorial): recalls it smoothly back into the blue button!
+ */
+export function summonOrDismissSpiritAdvisor(w: WorldState): 'summoned' | 'dismissed' {
+  if (w.tutorial?.active) {
+    skipTutorial(w);
+    return 'dismissed';
+  }
+  const adv = ensureSpiritAdvisor(w);
+  if (adv.phase === 'active' || adv.phase === 'emerging') {
+    dismissSpiritAdvisor(w);
+    return 'dismissed';
+  }
+  const rec = selectBestSpiritAdvice(w, 'manual');
+  if (!rec) return 'dismissed';
+  launchSpiritAdvice(w, rec, true);
+  return 'summoned';
+}
+
+function updateSpiritAdvisor(w: WorldState, dt: number): void {
+  if (w.tutorial?.active) return;
+  const m = w.monarchs[0];
+  if (!m) return;
+
+  const adv = ensureSpiritAdvisor(w);
+  const btnPos = getSpiritButtonWorldPos(w);
+
+  if (adv.phase === 'docked') {
+    adv.spiritX = btnPos.x;
+    adv.spiritY = btnPos.y;
+    adv.spiritAlpha = 0;
+    adv.autoTeachTimer += dt;
+    // Every 5 minutes (300s) of active play, automatically emerge to teach something NEW not yet done!
+    if (adv.autoTeachTimer >= SPIRIT_AUTO_TEACH_INTERVAL) {
+      adv.autoTeachTimer = 0;
+      const rec = selectBestSpiritAdvice(w, 'auto_5min');
+      if (rec) {
+        launchSpiritAdvice(w, rec, false);
+      }
+    }
+    return;
+  }
+
+  if (adv.phase === 'emerging') {
+    adv.animProgress = Math.min(1, adv.animProgress + dt * 1.9);
+    const p = adv.animProgress;
+    const ease = 1 - Math.pow(1 - p, 3);
+    const dxToTarget = adv.targetX - m.x;
+    const dir: 1 | -1 = dxToTarget >= 0 ? 1 : -1;
+    const goalX = Math.abs(dxToTarget) < 58 ? adv.targetX : m.x + dir * 42;
+    const goalY = GROUND_Y - 44;
+    const arcLift = Math.sin(p * Math.PI) * 28;
+    adv.spiritX = btnPos.x + (goalX - btnPos.x) * ease;
+    adv.spiritY = btnPos.y + (goalY - btnPos.y) * ease - arcLift;
+    adv.spiritFacing = dir;
+    adv.spiritAlpha = 0.25 + 0.7 * ease;
+    if (Math.random() < dt * 14) {
+      spawnParticle(w, {
+        x: adv.spiritX,
+        y: adv.spiritY,
+        vx: (Math.random() - 0.5) * 14,
+        vy: -6 - Math.random() * 10,
+        size: 1.4,
+        color: '#7ef5ff',
+        alpha: 0.85,
+        life: 0.42,
+        maxLife: 0.42,
+        kind: 'spark',
+      });
+    }
+    if (p >= 1) {
+      adv.phase = 'active';
+      adv.spiritAlpha = 0.94;
+    }
+    return;
+  }
+
+  if (adv.phase === 'returning') {
+    adv.animProgress = Math.min(1, adv.animProgress + dt * 2.2);
+    const p = adv.animProgress;
+    const ease = p * p * (3 - 2 * p);
+    adv.spiritX += (btnPos.x - adv.spiritX) * Math.min(1, dt * (7.5 + ease * 10));
+    adv.spiritY += (btnPos.y - adv.spiritY) * Math.min(1, dt * (7.5 + ease * 10));
+    adv.spiritFacing = btnPos.x >= adv.spiritX ? 1 : -1;
+    adv.spiritAlpha = Math.max(0.05, 1 - ease * 0.92);
+    if (Math.random() < dt * 18) {
+      spawnParticle(w, {
+        x: adv.spiritX,
+        y: adv.spiritY,
+        vx: (Math.random() - 0.5) * 16,
+        vy: (Math.random() - 0.5) * 16,
+        size: 1.5,
+        color: '#7ef5ff',
+        alpha: 0.9,
+        life: 0.38,
+        maxLife: 0.38,
+        kind: 'spark',
+      });
+    }
+    if (p >= 1) {
+      spawnBurst(w, btnPos.x, btnPos.y, 16, '#7ef5ff', 'spark', 46);
+      adv.phase = 'docked';
+      adv.topic = null;
+      adv.message = '';
+      adv.baseline = null;
+      adv.spiritAlpha = 0;
+    }
+    return;
+  }
+
+  // Phase === 'active'
+  adv.activeTimer += dt;
+
+  // Check if player executed the advised action!
+  if (adv.completedTimer > 0) {
+    adv.completedTimer -= dt;
+    if (adv.completedTimer <= 0) {
+      adv.phase = 'returning';
+      adv.animProgress = 0;
+    }
+  } else if (hasPlayerExecutedAdvice(w, adv)) {
+    if (adv.topic) adv.learnedTopics[adv.topic] = true;
+    adv.message = 'Excelente, Majestade! Até a próxima invocação!';
+    adv.completedTimer = 1.8;
+    sound.playBuildComplete();
+    spawnBurst(w, adv.spiritX, adv.spiritY, 18, '#7ef5ff', 'spark', 55);
+  } else if (adv.activeTimer >= 45) {
+    // Auto-return smoothly to the blue button after 45s if left unattended
+    adv.phase = 'returning';
+    adv.animProgress = 0;
+  }
+
+  // Hover & point toward targetX (or directly above target structure when nearby!)
+  const dxToTarget = adv.targetX - m.x;
+  const dirToTarget: 1 | -1 = dxToTarget >= 0 ? 1 : -1;
+  const nearTarget = Math.abs(dxToTarget) < 58;
+  const desiredX = nearTarget ? adv.targetX : m.x + dirToTarget * 44;
+  const desiredY = (nearTarget ? GROUND_Y - 48 : GROUND_Y - 40) + Math.sin(w.elapsed * 3.5) * 3.5;
+  adv.spiritX += (desiredX - adv.spiritX) * Math.min(1, dt * 5);
+  adv.spiritY += (desiredY - adv.spiritY) * Math.min(1, dt * 5);
+  adv.spiritFacing = dirToTarget;
+  adv.spiritAlpha += (0.94 - adv.spiritAlpha) * Math.min(1, dt * 5);
+
+  if (Math.random() < dt * 7) {
+    spawnParticle(w, {
+      x: adv.spiritX + (Math.random() - 0.5) * 10,
+      y: adv.spiritY + 4 + (Math.random() - 0.5) * 8,
+      vx: (Math.random() - 0.5) * 8,
+      vy: -8 - Math.random() * 10,
+      size: 1,
+      color: Math.random() > 0.4 ? '#7ef5ff' : '#d4fbff',
+      alpha: adv.spiritAlpha * 0.8,
       life: 0.55,
       maxLife: 0.55,
       kind: 'spark',
@@ -5376,6 +6199,7 @@ export function stepWorld(
   updateBanker(w, dt);
   updateBoatAndBreweries(w, dt);
   updateTutorial(w, dt);
+  updateSpiritAdvisor(w, dt);
   updateVillagers(w, dt);
   updateEnemies(w, dt);
   updateArrows(w, dt);

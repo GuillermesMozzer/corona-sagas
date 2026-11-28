@@ -562,17 +562,20 @@ export function createInitialWorld(
     ? {
         active: true,
         step: 'light_fire',
-        spiritX: startX + 46,
-        spiritY: GROUND_Y - 38,
+        spiritX: startX + 200,
+        spiritY: GROUND_Y + 24,
         spiritFacing: 1,
-        spiritAlpha: 0.9,
+        spiritAlpha: 0.2,
         fadeCycle: 0,
         farewellTimer: 0,
         bowTributeGiven: false,
+        emergingProgress: 0,
+        returningToButton: false,
+        returnProgress: 0,
       }
     : null;
 
-  // STRICT RULE: Game ALWAYS starts with at most 10 coins!
+  // Players start with 12 coins: enough to light campfire (2) + recruit 2 wanderers (2) + hammer (2) + 2 palisades (4) + first bow/archer (2)
   const monarch: Monarch = {
     id: uid(),
     x: startX,
@@ -583,7 +586,7 @@ export function createInitialWorld(
     maxStamina: 1,
     exhausted: false,
     sprinting: false,
-    coins: 10,
+    coins: 12,
     maxCoins: 30,
     diamonds: 0,
     mount: 'starter',

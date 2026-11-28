@@ -20,6 +20,7 @@ import {
   listCampaignSlots,
 } from '../storage/saveSystem';
 import {
+  CENTER_X,
   GROUND_Y,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
@@ -35,6 +36,7 @@ import {
   getBankerDailyRatePct,
   getFarmMaxFarmers,
   getFarmStorageCap,
+  getSpiritButtonScreenPos,
   getTowerArcherCap,
   getTowerHeight,
   getTutorialTargetX,
@@ -293,7 +295,6 @@ export class PixelRenderer {
       }
     }
     if (monarch) this.drawMonarch(ctx, w, monarch, camX, 1, Math.round(monarch.x - camX), GROUND_Y);
-    this.drawTutorialSpirit(ctx, w, camX);
     this.drawFireTrailsAndLightning(ctx, w, camX);
     this.drawCoins(ctx, w, camX);
     this.drawArrows(ctx, w, camX);
@@ -313,7 +314,7 @@ export class PixelRenderer {
     }
     this.drawSnowParticles(ctx, w);
 
-    // 4. Floating Coin Placeholder, Flying Coins & Selected Villager Arrow Picker
+    // 4. Floating Coin Placeholder, Flying Coins, Selected Villager Picker & Guiding Spirit (rendered above water so it swoops out of/into the bottom-right blue button!)
     if (w.mode === 'playing' && w.activePrompt) {
       this.drawFloatingPrompt(ctx, w, camX);
     }
@@ -321,6 +322,12 @@ export class PixelRenderer {
       this.drawSelectedVillagerPicker(ctx, w, camX);
     }
     this.drawFlyingCoins(ctx, w, camX);
+    if (w.mode === 'playing') {
+      ctx.save();
+      ctx.translate(0, this.worldOffsetY);
+      this.drawTutorialSpirit(ctx, w, camX);
+      ctx.restore();
+    }
 
     ctx.restore();
 
@@ -329,9 +336,13 @@ export class PixelRenderer {
       this.drawLoginOverlay(ctx, w);
     } else {
       this.drawHud(ctx, w);
-      if (w.mode === 'playing' && w.tutorial?.active) {
+      const spiritSpeaking =
+        w.mode === 'playing' &&
+        (Boolean(w.tutorial?.active) || Boolean(w.spiritAdvisor && w.spiritAdvisor.phase === 'active'));
+      if (spiritSpeaking) {
         this.drawTutorialDialogue(ctx, w, camX);
-      } else if (w.banner) {
+      }
+      if (w.banner && !(w.mode === 'playing' && w.tutorial?.active)) {
         this.drawBanner(ctx, w);
       }
       if (w.mode === 'paused') this.drawPauseOverlay(ctx);
@@ -4604,13 +4615,13 @@ export class PixelRenderer {
       ctx.textAlign = 'left';
     }
 
-    // Minimal Mount Active Power Indicator (⚡) in Bottom-Right ONLY when riding a special mount
+    // Minimal Mount Active Power Indicator (⚡) shifted cleanly left of the bottom-right Blue Spirit Button
     if (monarch.mount !== 'starter') {
       const mDef = MOUNT_DEFS[monarch.mount];
       const ready = monarch.mountPowerCooldown <= 0;
-      const px = this.viewW - 22;
+      const px = this.viewW - 44;
       const py = this.viewH - 14;
-      this.addHit('hud_mount_power', px - 12, py - 12, 26, 22);
+      this.addHit('hud_mount_power', px - 12, py - 12, 24, 22);
       ctx.textAlign = 'center';
       ctx.fillStyle = ready ? mDef.accentColor : '#8ba0b5';
       ctx.font = 'bold 9px "Pixelify Sans", monospace';
@@ -4618,8 +4629,76 @@ export class PixelRenderer {
       ctx.textAlign = 'left';
     }
 
+    // Bottom-Right Blue Pixel Button to Summon / Recall the Guiding Spirit!
+    if (w.mode === 'playing') {
+      const sBtn = getSpiritButtonScreenPos(this.viewW, this.viewH);
+      const isSpiritOut =
+        Boolean(w.tutorial?.active && !w.tutorial.returningToButton) ||
+        Boolean(w.spiritAdvisor && (w.spiritAdvisor.phase === 'active' || w.spiritAdvisor.phase === 'emerging'));
+      const bw = 22;
+      const bh = 22;
+      const bx = Math.round(sBtn.x - bw / 2);
+      const by = Math.round(sBtn.y - bh / 2);
+      const pulse = 0.5 + 0.5 * Math.sin(w.elapsed * 3.8);
+
+      ctx.save();
+      // Ethereal cyan radial glow behind blue summon button
+      const aura = ctx.createRadialGradient(sBtn.x, sBtn.y, 2, sBtn.x, sBtn.y, 17);
+      aura.addColorStop(0, isSpiritOut ? 'rgba(110, 238, 255, 0.55)' : `rgba(80, 210, 255, ${0.22 + pulse * 0.16})`);
+      aura.addColorStop(1, 'rgba(20, 90, 160, 0)');
+      ctx.fillStyle = aura;
+      ctx.fillRect(sBtn.x - 17, sBtn.y - 17, 34, 34);
+
+      // Crisp pixel-art blue stone/rune frame
+      ctx.fillStyle = isSpiritOut ? '#0d3154' : '#08203a';
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeStyle = isSpiritOut ? '#9ff6ff' : '#5ce1e6';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+      ctx.fillStyle = 'rgba(130, 240, 255, 0.22)';
+      ctx.fillRect(bx + 1, by + 1, bw - 2, 1);
+
+      if (isSpiritOut) {
+        // Open cyan portal vortex + tiny recall cross when Spirit is currently out advising
+        ctx.fillStyle = 'rgba(110, 238, 255, 0.26)';
+        ctx.fillRect(bx + 4, by + 4, bw - 8, bh - 8);
+        ctx.fillStyle = '#c8fbff';
+        ctx.font = 'bold 9px "Pixelify Sans", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('✕', sBtn.x, sBtn.y + 3.5);
+        ctx.textAlign = 'left';
+      } else {
+        // Cute glowing miniature pixel Spirit resting inside the blue button
+        const bob = Math.round(Math.sin(w.elapsed * 3.2));
+        const gx = sBtn.x;
+        const gy = sBtn.y + 2 + bob;
+        // Mini crown
+        ctx.fillStyle = '#a8f8ff';
+        ctx.fillRect(gx - 3, gy - 8, 6, 1);
+        ctx.fillRect(gx - 3, gy - 9, 1, 1);
+        ctx.fillRect(gx, gy - 10, 1, 2);
+        ctx.fillRect(gx + 2, gy - 9, 1, 1);
+        // Mini head + eyes
+        ctx.fillStyle = '#d4fbff';
+        ctx.fillRect(gx - 3, gy - 7, 6, 4);
+        ctx.fillStyle = '#08203a';
+        ctx.fillRect(gx - 2, gy - 6, 1, 1);
+        ctx.fillRect(gx + 1, gy - 6, 1, 1);
+        // Mini spectral cloak & tail
+        ctx.fillStyle = '#5ce1e6';
+        ctx.fillRect(gx - 4, gy - 3, 8, 5);
+        ctx.fillStyle = '#8ef5ff';
+        ctx.fillRect(gx - 3, gy + 2, 2, 2);
+        ctx.fillRect(gx, gy + 2, 2, 3);
+        ctx.fillRect(gx + 2, gy + 2, 2, 1);
+      }
+      ctx.restore();
+
+      this.addHit('spirit_summon', bx - 5, by - 5, bw + 10, bh + 10);
+    }
+
     // Horizontal Minimap bar preserved along bottom of fjord water
-    const mapW = Math.min(160, this.viewW - (monarch.mount !== 'starter' ? 84 : 36));
+    const mapW = Math.min(160, this.viewW - (monarch.mount !== 'starter' ? 116 : 68));
     const mapX = Math.round((this.viewW - mapW) / 2);
     const mapY = this.viewH - 10;
     ctx.fillStyle = 'rgba(6, 12, 20, 0.62)';
@@ -4652,19 +4731,30 @@ export class PixelRenderer {
   }
 
   private drawTutorialSpirit(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
-    const tut = w.tutorial;
-    if (!tut || !tut.active || tut.spiritAlpha <= 0.03) return;
+    const tut = w.tutorial?.active ? w.tutorial : null;
+    const adv = !tut && w.spiritAdvisor && w.spiritAdvisor.phase !== 'docked' ? w.spiritAdvisor : null;
 
-    const sx = Math.round(tut.spiritX - camX);
-    const sy = Math.round(tut.spiritY);
+    const spiritX = tut ? tut.spiritX : adv ? adv.spiritX : 0;
+    const spiritY = tut ? tut.spiritY : adv ? adv.spiritY : 0;
+    const spiritAlpha = tut ? tut.spiritAlpha : adv ? adv.spiritAlpha : 0;
+    const spiritFacing: 1 | -1 = tut ? tut.spiritFacing : adv ? adv.spiritFacing : 1;
+    const isMovingBetweenButton = Boolean(
+      (tut && (tut.returningToButton || (tut.emergingProgress ?? 1) < 1)) ||
+      (adv && (adv.phase === 'emerging' || adv.phase === 'returning'))
+    );
+
+    if ((!tut && !adv) || spiritAlpha <= 0.03) return;
+
+    const sx = Math.round(spiritX - camX);
+    const sy = Math.round(spiritY);
     if (sx < -40 || sx > this.viewW + 40) return;
 
-    const f = tut.spiritFacing;
+    const f = spiritFacing;
     const wave = Math.round(Math.sin(w.elapsed * 5.2) * 1.5);
     const pulse = Math.round(Math.sin(w.elapsed * 6.5) * 2);
 
     ctx.save();
-    ctx.globalAlpha = Math.max(0, Math.min(1, tut.spiritAlpha));
+    ctx.globalAlpha = Math.max(0, Math.min(1, spiritAlpha));
 
     // Ethereal cyan-blue radial spirit glow
     const halo = ctx.createRadialGradient(sx, sy - 6, 2, sx, sy - 6, 20);
@@ -4705,46 +4795,70 @@ export class PixelRenderer {
     ctx.fillRect(f > 0 ? sx + 11 : sx - 13, sy - 9, 3, 2);
 
     // Subtle animated spectral chevron ahead of fingertip when guiding player
-    const m = w.monarchs[0];
-    const targetX = getTutorialTargetX(w);
-    const farFromTarget = m ? Math.abs(targetX - m.x) >= 58 : true;
-    if (farFromTarget || tut.step === 'farewell') {
-      ctx.fillStyle = '#d4fbff';
-      ctx.font = 'bold 8px "Pixelify Sans", monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText(f > 0 ? '»' : '«', sx + f * (18 + pulse), sy - 6);
-      ctx.textAlign = 'left';
+    if (!isMovingBetweenButton) {
+      const m = w.monarchs[0];
+      const targetX = tut ? getTutorialTargetX(w) : (adv?.targetX ?? CENTER_X);
+      const farFromTarget = m ? Math.abs(targetX - m.x) >= 58 : true;
+      if (farFromTarget || tut?.step === 'farewell') {
+        ctx.fillStyle = '#d4fbff';
+        ctx.font = 'bold 8px "Pixelify Sans", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(f > 0 ? '»' : '«', sx + f * (18 + pulse), sy - 6);
+        ctx.textAlign = 'left';
+      }
     }
 
     ctx.restore();
   }
 
   private drawTutorialDialogue(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
-    const tut = w.tutorial;
+    const tut = w.tutorial?.active ? w.tutorial : null;
+    const adv = !tut && w.spiritAdvisor && w.spiritAdvisor.phase === 'active' ? w.spiritAdvisor : null;
     const m = w.monarchs[0];
-    if (!tut || !tut.active || !m) return;
+    if ((!tut && !adv) || !m) return;
 
-    const targetX = getTutorialTargetX(w);
-    const nearTarget = tut.step !== 'farewell' && Math.abs(targetX - m.x) < 58;
+    // Hide speech bubble while flying out of or back into the blue button
+    if (tut && (tut.returningToButton || (tut.emergingProgress ?? 1) < 0.72)) return;
 
     let text = '';
-    if (tut.step === 'light_fire') text = nearTarget ? t('tut_fire_here') : t('tut_fire_go');
-    else if (tut.step === 'recruit_wanderers') text = nearTarget ? t('tut_camp_here') : t('tut_camp_go');
-    else if (tut.step === 'buy_hammer') text = nearTarget ? t('tut_hammer_here') : t('tut_hammer_go');
-    else if (tut.step === 'build_right_wall') text = nearTarget ? t('tut_wall_r_here') : t('tut_wall_r_go');
-    else if (tut.step === 'build_left_wall') text = nearTarget ? t('tut_wall_l_here') : t('tut_wall_l_go');
-    else if (tut.step === 'buy_bow') text = nearTarget ? t('tut_bow_here') : t('tut_bow_go');
-    else if (tut.step === 'order_villager') text = nearTarget ? t('tut_order_here') : t('tut_order_go');
-    else text = t('tut_farewell');
+    let showControls = false;
+    let spiritX = 0;
+    let spiritY = 0;
+    let spiritAlpha = 1;
+    let spiritFacing: 1 | -1 = 1;
 
-    const showControls = tut.step === 'light_fire' || tut.step === 'recruit_wanderers';
+    if (tut) {
+      const targetX = getTutorialTargetX(w);
+      const nearTarget = tut.step !== 'farewell' && Math.abs(targetX - m.x) < 58;
+      if (tut.step === 'light_fire') text = nearTarget ? t('tut_fire_here') : t('tut_fire_go');
+      else if (tut.step === 'recruit_wanderers') text = nearTarget ? t('tut_camp_here') : t('tut_camp_go');
+      else if (tut.step === 'buy_hammer') text = nearTarget ? t('tut_hammer_here') : t('tut_hammer_go');
+      else if (tut.step === 'build_right_wall') text = nearTarget ? t('tut_wall_r_here') : t('tut_wall_r_go');
+      else if (tut.step === 'build_left_wall') text = nearTarget ? t('tut_wall_l_here') : t('tut_wall_l_go');
+      else if (tut.step === 'buy_bow') text = nearTarget ? t('tut_bow_here') : t('tut_bow_go');
+      else if (tut.step === 'order_villager') text = nearTarget ? t('tut_order_here') : t('tut_order_go');
+      else text = t('tut_farewell');
+      showControls = tut.step === 'light_fire' || tut.step === 'recruit_wanderers';
+      spiritX = tut.spiritX;
+      spiritY = tut.spiritY;
+      spiritAlpha = tut.spiritAlpha;
+      spiritFacing = tut.spiritFacing;
+    } else if (adv) {
+      text = adv.message;
+      spiritX = adv.spiritX;
+      spiritY = adv.spiritY;
+      spiritAlpha = adv.spiritAlpha;
+      spiritFacing = adv.spiritFacing;
+    }
+
+    if (!text) return;
     const controlsText = showControls ? t('tut_controls') : '';
 
     ctx.save();
-    ctx.globalAlpha = Math.max(0.18, Math.min(1, tut.spiritAlpha));
+    ctx.globalAlpha = Math.max(0.18, Math.min(1, spiritAlpha));
 
     const isNarrow = this.viewW < 420;
-    const maxBubbleW = Math.min(228, this.viewW - 18);
+    const maxBubbleW = Math.min(232, this.viewW - 18);
     const padX = 7;
     const skipW = 28;
     const maxTextW = Math.max(96, maxBubbleW - padX * 2);
@@ -4756,7 +4870,7 @@ export class PixelRenderer {
     let cur = '';
     for (const word of words) {
       const candidate = (cur + ' ' + word).trim();
-      // Reserve space on the first line for the top-right Skip chip so text never overlaps it
+      // Reserve space on the first line for the top-right Skip/Dismiss chip so text never overlaps it
       const lineLimit = lines.length === 0 ? maxTextW - skipW - 5 : maxTextW;
       if (ctx.measureText(candidate).width > lineLimit && cur.length > 0) {
         lines.push(cur.trim());
@@ -4779,19 +4893,19 @@ export class PixelRenderer {
       if (cw > contentW) contentW = cw;
     }
 
-    const bw = Math.round(Math.max(118, Math.min(maxBubbleW, contentW + padX * 2 + 4)));
+    const bw = Math.round(Math.max(122, Math.min(maxBubbleW, contentW + padX * 2 + 4)));
     const lineStep = 9;
     const boxH = 10 + lines.length * lineStep + (showControls ? 9 : 1);
     const tailH = 7;
 
     // Anchor comic speech bubble right above the Spirit's head!
-    const spiritScreenX = Math.round(tut.spiritX - camX);
-    const spiritHeadY = Math.round(tut.spiritY + this.worldOffsetY - 23);
+    const spiritScreenX = Math.round(spiritX - camX);
+    const spiritHeadY = Math.round(spiritY + this.worldOffsetY - 23);
     const spiritOnScreen = spiritScreenX >= 6 && spiritScreenX <= this.viewW - 6;
 
     const topMinY = (isNarrow ? 40 : 24) + (w.activeCommand !== 'none' || w.commandFeedback ? 16 : 0);
     // Slightly favor the side the spirit is facing, while keeping the bubble cleanly within screen bounds
-    const desiredBx = Math.round(spiritScreenX - bw * 0.5 + tut.spiritFacing * 10);
+    const desiredBx = Math.round(spiritScreenX - bw * 0.5 + spiritFacing * 10);
     const bx = Math.max(8, Math.min(this.viewW - bw - 8, desiredBx));
     const desiredBy = Math.round(spiritHeadY - tailH - boxH);
     const by = Math.max(topMinY, Math.min(this.viewH - boxH - tailH - 12, desiredBy));
@@ -4847,7 +4961,7 @@ export class PixelRenderer {
       ctx.fillText(controlsText, bx + padX, by + 10.5 + lines.length * lineStep + 0.5, bw - padX * 2);
     }
 
-    // Subtle Skip button on top-right of speech bubble
+    // Subtle Skip / Dismiss button on top-right of speech bubble (sends Spirit back to blue button!)
     const skipX = bx + bw - skipW - 3;
     const skipY = by + 3;
     ctx.fillStyle = 'rgba(20, 36, 56, 0.88)';
@@ -4857,7 +4971,7 @@ export class PixelRenderer {
     ctx.textAlign = 'center';
     ctx.fillStyle = '#9fe8ff';
     ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
-    ctx.fillText(t('tut_skip'), skipX + skipW / 2, skipY + 7);
+    ctx.fillText(tut ? t('tut_skip') : 'OK ✕', skipX + skipW / 2, skipY + 7);
     this.addHit('tutorial_skip', skipX - 4, skipY - 4, skipW + 8, 18);
 
     ctx.restore();

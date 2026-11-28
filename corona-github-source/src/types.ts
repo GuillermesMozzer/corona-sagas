@@ -633,6 +633,85 @@ export interface TutorialState {
   fadeCycle: number;
   farewellTimer: number;
   bowTributeGiven: boolean;
+  emergingProgress?: number;
+  returningToButton?: boolean;
+  returnProgress?: number;
+}
+
+export type SpiritAdviceTopic =
+  | 'cut_trees'
+  | 'mine_stone'
+  | 'recruit_wanderers'
+  | 'hire_archer'
+  | 'hire_builder'
+  | 'hire_warrior'
+  | 'hire_farmer'
+  | 'build_farm'
+  | 'upgrade_hall'
+  | 'fortify_wall'
+  | 'repair_wall'
+  | 'deposit_banker'
+  | 'withdraw_banker'
+  | 'winter_berries'
+  | 'winter_economy'
+  | 'spring_boom'
+  | 'autumn_wood'
+  | 'summer_hunt'
+  | 'build_brewery'
+  | 'brew_beer'
+  | 'build_forge'
+  | 'build_tower'
+  | 'build_boat'
+  | 'board_boat'
+  | 'sail_island'
+  | 'attack_portal'
+  | 'blood_moon_prep';
+
+export interface SpiritAdvisorBaseline {
+  wood: number;
+  stone: number;
+  iron: number;
+  bankerBalance: number;
+  monarchCoins: number;
+  hallLevel: number;
+  totalWallLevels: number;
+  brokenWalls: number;
+  archers: number;
+  builders: number;
+  warriors: number;
+  farmers: number;
+  wanderersRecruited: number;
+  farmsBuilt: number;
+  breweriesBuilt: number;
+  beersStocked: number;
+  boatProgress: number;
+  boatBuilt: boolean;
+  boatCrew: number;
+  sailPaid: number;
+  portalsLeft: number;
+  berryMarkedCount: number;
+  treesMarked: number;
+  rocksMarked: number;
+  forgeBuilt: boolean;
+  towersBuilt: number;
+}
+
+export interface SpiritAdvisorState {
+  phase: 'docked' | 'emerging' | 'active' | 'returning';
+  topic: SpiritAdviceTopic | null;
+  message: string;
+  targetX: number;
+  spiritX: number;
+  spiritY: number;
+  spiritFacing: 1 | -1;
+  spiritAlpha: number;
+  animProgress: number;
+  baseline: SpiritAdvisorBaseline | null;
+  autoTeachTimer: number;
+  learnedTopics: Record<string, boolean>;
+  activeTimer: number;
+  completedTimer: number;
+  manualSummon: boolean;
 }
 
 export interface DiscoveredHudItems {
@@ -651,6 +730,7 @@ export interface WorldState {
   mode: GameMode;
   saveSlot: number;
   tutorial: TutorialState | null;
+  spiritAdvisor?: SpiritAdvisorState;
   selectedVillagerId?: number | null;
   hasOrderedVillager?: boolean;
   nextOrderSeq?: number;

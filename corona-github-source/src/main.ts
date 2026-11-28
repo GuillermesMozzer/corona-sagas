@@ -96,12 +96,13 @@ import {
   computeActivePrompt,
   confirmCharacterSelection,
   confirmCrestAndStartCampaign,
+  dismissSpiritAdvisor,
   issueUnitCommand,
   orderSpecificVillager,
   sailToIsland,
   showBanner,
-  skipTutorial,
   stepWorld,
+  summonOrDismissSpiritAdvisor,
   togglePriorityTask,
   triggerCoinDrop,
   triggerMountPower,
@@ -1643,9 +1644,16 @@ function handleCanvasHit(hitId: string): boolean {
         }
       }
     }
+    if (hitId === 'spirit_summon') {
+      ptrMoveSide = 0;
+      ptrSprint = false;
+      summonOrDismissSpiritAdvisor(world);
+      return true;
+    }
     if (hitId === 'tutorial_skip') {
-      skipTutorial(world);
-      sound.playCoinDrop();
+      ptrMoveSide = 0;
+      ptrSprint = false;
+      dismissSpiritAdvisor(world);
       return true;
     }
   }
