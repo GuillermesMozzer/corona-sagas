@@ -718,30 +718,28 @@ function updateCoopUI(): void {
   const isGuest = coopState.active && coopState.role === 'guest';
   const myUid = authCloudState.user?.uid ?? '';
 
-  // Gameplay Quick Rail (Chat bubble + Microphone directly below Menu button)
-  coopQuickRail?.classList.toggle('visible', isPlaying);
+  // Gameplay Quick Rail (Chat bubble + Microphone directly below Menu button — only visible while Co-op is active)
+  coopQuickRail?.classList.toggle('visible', isPlaying && coopState.active);
   if (btnCoopChat) {
     btnCoopChat.classList.toggle('active', coopState.chatOpen);
   }
   if (chatUnreadDot) {
     chatUnreadDot.textContent = String(Math.min(99, coopState.unreadMessages));
-    chatUnreadDot.classList.toggle('visible', coopState.unreadMessages > 0 && !coopState.chatOpen);
+    chatUnreadDot.classList.toggle('visible', coopState.active && coopState.unreadMessages > 0 && !coopState.chatOpen);
   }
   if (btnCoopMic) {
     btnCoopMic.classList.toggle('active', coopState.micOn);
     btnCoopMic.classList.toggle('speaking', coopState.micOn && coopState.speaking);
     btnCoopMic.classList.toggle('muted', !coopState.micOn);
     btnCoopMic.title = coopState.micOn
-      ? coopState.active
-        ? 'Microfone Ligado na sala Co-op (clique para mutar)'
-        : 'Microfone Ligado (clique para mutar)'
+      ? 'Microfone Ligado na sala Co-op (clique para mutar)'
       : 'Abrir Microfone';
   }
 
-  // In-Game Text Chat Drawer (opens immediately on click, online in Co-op or solo!)
-  coopChatPanel?.classList.toggle('open', isPlaying && coopState.chatOpen);
+  // In-Game Text Chat Drawer (only open while Co-op is active)
+  coopChatPanel?.classList.toggle('open', isPlaying && coopState.active && coopState.chatOpen);
   if (coopChatOpenRoom) {
-    coopChatOpenRoom.style.display = isPlaying && !coopState.active ? 'inline-block' : 'none';
+    coopChatOpenRoom.style.display = 'none';
   }
   if (coopChatTitle) {
     coopChatTitle.textContent = coopState.roomCode
