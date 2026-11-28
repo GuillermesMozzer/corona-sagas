@@ -1008,6 +1008,7 @@ export function hostSyncCoopWorld(world: WorldState): Map<string, InputState> {
         weaponCooldown: 0,
         armor: {},
         crownShieldReady: false,
+        ridingElderId: null,
         hasCrown: true,
         crownX: spawnX,
         crownY: GROUND_Y - 24,

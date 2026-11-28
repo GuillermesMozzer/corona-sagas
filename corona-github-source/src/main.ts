@@ -105,6 +105,7 @@ import {
   summonOrDismissSpiritAdvisor,
   togglePriorityTask,
   triggerCoinDrop,
+  triggerElderPower,
   triggerMonarchWeapon,
   triggerMountPower,
   withdrawFromBanker,
@@ -436,12 +437,14 @@ const input: InputState = {
   sprint: false,
   powerJustPressed: false,
   weaponJustPressed: false,
+  elderJustPressed: false,
   drop: false,
   dropJustPressed: false,
   cmdZ: false,
   cmdX: false,
   cmdC: false,
   cmdV: false,
+  cmdB: false,
 };
 
 let kbLeft = false;
@@ -1747,6 +1750,10 @@ function handleCanvasHit(hitId: string): boolean {
       toggleTouchCommand('attack');
       return true;
     }
+    if (hitId === 'hud_cmd_spear') {
+      toggleTouchCommand('spear');
+      return true;
+    }
     if (hitId === 'hud_cmd_archer') {
       toggleTouchCommand('archer');
       return true;
@@ -1785,6 +1792,14 @@ function handleCanvasHit(hitId: string): boolean {
         input.weaponJustPressed = true;
       } else {
         triggerMonarchWeapon(world, 0);
+      }
+      return true;
+    }
+    if (hitId === 'hud_elder_power') {
+      if (coopState.active && coopState.role === 'guest') {
+        input.elderJustPressed = true;
+      } else {
+        triggerElderPower(world, 0);
       }
       return true;
     }
@@ -2862,6 +2877,9 @@ window.addEventListener('keydown', (e) => {
   if ((code === 'KeyF' || code === 'KeyQ') && !e.repeat) {
     input.weaponJustPressed = true;
   }
+  if (code === 'KeyG' && !e.repeat) {
+    input.elderJustPressed = true;
+  }
   if (code === 'KeyS' || code === 'ArrowDown' || code === 'Space') {
     if (!input.drop) input.dropJustPressed = true;
     input.drop = true;
@@ -2874,6 +2892,7 @@ window.addEventListener('keydown', (e) => {
   if (code === 'KeyX') input.cmdX = true;
   if (code === 'KeyC') input.cmdC = true;
   if (code === 'KeyV') input.cmdV = true;
+  if (code === 'KeyB') input.cmdB = true;
 });
 
 window.addEventListener('keyup', (e) => {
@@ -2892,6 +2911,7 @@ window.addEventListener('keyup', (e) => {
   if (code === 'KeyX') input.cmdX = false;
   if (code === 'KeyC') input.cmdC = false;
   if (code === 'KeyV') input.cmdV = false;
+  if (code === 'KeyB') input.cmdB = false;
 });
 
 window.addEventListener('blur', clearMovementInputs);
@@ -2989,6 +3009,7 @@ function frame(now: number): void {
     input.rightJustPressed = false;
     input.powerJustPressed = false;
     input.weaponJustPressed = false;
+    input.elderJustPressed = false;
     accumulator -= FIXED_DT;
   }
 

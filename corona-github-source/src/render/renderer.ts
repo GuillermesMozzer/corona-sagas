@@ -26,12 +26,14 @@ import {
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
   type CommandMode,
+  type ElderId,
   type Enemy,
   type Monarch,
   type Villager,
   type WorldState,
 } from '../types';
 import { PRECIOUS_METALS, WEAPON_DEFS, getIslandMetalId } from '../world/arsenal';
+import { ELDER_DEFS } from '../world/elders';
 import {
   countArchersAssignedToTower,
   getBankerDailyRatePct,
@@ -290,12 +292,14 @@ export class PixelRenderer {
     this.drawFarms(ctx, w, camX);
     this.drawBoatAndDock(ctx, w, camX);
     this.drawShrinesAndPuzzle(ctx, w, camX);
+    this.drawElderCottages(ctx, w, camX);
     this.drawIslandBuffs(ctx, w, camX);
     this.drawTowers(ctx, w, camX);
     this.drawWalls(ctx, w, camX);
     this.drawOrderedTaskTargetsAndPriorityArrow(ctx, w, camX);
     this.drawWildlife(ctx, w, camX);
     this.drawVillagers(ctx, w, camX);
+    this.drawElders(ctx, w, camX);
     this.drawEnemies(ctx, w, camX);
     for (const m of w.monarchs) {
       if (m !== monarch) {
@@ -3287,6 +3291,13 @@ export class PixelRenderer {
           ctx.fillRect(tx, GROUND_Y - 9, 4, 2);
           ctx.fillStyle = '#6b472b';
           ctx.fillRect(tx + 1, GROUND_Y - 7, 2, 3);
+        } else if (shop.kind === 'spear') {
+          ctx.fillStyle = '#8a5d32';
+          ctx.fillRect(tx + 1, GROUND_Y - 15, 1, 11);
+          ctx.fillStyle = '#dce8f5';
+          ctx.fillRect(tx, GROUND_Y - 18, 3, 4);
+          ctx.fillStyle = '#ffe066';
+          ctx.fillRect(tx + 1, GROUND_Y - 14, 1, 1);
         } else {
           ctx.fillStyle = '#8c6943';
           ctx.fillRect(tx, GROUND_Y - 11, 4, 5);
@@ -3899,6 +3910,204 @@ export class PixelRenderer {
     }
   }
 
+  private drawElderCottages(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    for (const elder of w.elders ?? []) {
+      const sx = Math.round(elder.cottageX - camX);
+      if (sx < -52 || sx > this.viewW + 52) continue;
+      const def = ELDER_DEFS[elder.id];
+
+      // Cozy timber-and-stone Nordic hermit cottage
+      ctx.fillStyle = '#473322';
+      ctx.fillRect(sx - 16, GROUND_Y - 19, 32, 19);
+      ctx.fillStyle = '#5c432d';
+      ctx.fillRect(sx - 14, GROUND_Y - 18, 28, 17);
+
+      // Stone chimney on right + gentle rising smoke when Elder is still home
+      ctx.fillStyle = '#556170';
+      ctx.fillRect(sx + 8, GROUND_Y - 34, 5, 16);
+      if (!elder.rescued) {
+        const puff = Math.floor(w.elapsed * 4) % 4;
+        ctx.fillStyle = 'rgba(218, 232, 245, 0.45)';
+        ctx.fillRect(sx + 9, GROUND_Y - 37 - puff * 2, 3, 2);
+        ctx.fillRect(sx + 10, GROUND_Y - 42 - puff * 2, 2, 2);
+      }
+
+      // Steep pitched roof trimmed in that Elder's signature color
+      ctx.fillStyle = '#2d3744';
+      ctx.beginPath();
+      ctx.moveTo(sx - 20, GROUND_Y - 18);
+      ctx.lineTo(sx, GROUND_Y - 33);
+      ctx.lineTo(sx + 20, GROUND_Y - 18);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = def.cloakColor;
+      ctx.fillRect(sx - 17, GROUND_Y - 20, 34, 3);
+      ctx.fillStyle = def.trimColor;
+      ctx.fillRect(sx - 16, GROUND_Y - 18, 32, 1);
+
+      // Doorway & glowing lantern window
+      ctx.fillStyle = elder.rescued ? '#141922' : '#301d12';
+      ctx.fillRect(sx - 4, GROUND_Y - 12, 8, 12);
+      ctx.fillStyle = elder.rescued ? '#3c4a5c' : '#ffd873';
+      ctx.fillRect(sx - 12, GROUND_Y - 14, 5, 5);
+      ctx.fillRect(sx + 7, GROUND_Y - 14, 5, 5);
+
+      // Signature Elder emblem on roof gable
+      ctx.fillStyle = def.accentColor;
+      ctx.fillRect(sx - 2, GROUND_Y - 27, 4, 4);
+
+      // If still waiting to be rescued, peek the Elder outside the doorway + name plate!
+      if (!elder.rescued) {
+        this.drawElderSprite(ctx, w, elder.id, sx - 10, GROUND_Y, 1, 0, false);
+        ctx.fillStyle = 'rgba(8, 14, 24, 0.84)';
+        ctx.fillRect(sx - 26, GROUND_Y - 43, 52, 8);
+        ctx.fillStyle = def.accentColor;
+        ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`ANCIÃO: ${def.shortTitle}`, sx, GROUND_Y - 37);
+        ctx.textAlign = 'left';
+      }
+    }
+  }
+
+  private drawElders(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    for (const elder of w.elders ?? []) {
+      if (!elder.rescued || elder.state !== 'walking') continue;
+      const sx = Math.round(elder.x - camX);
+      if (sx < -24 || sx > this.viewW + 24) continue;
+      const moving = Math.abs(elder.vx) > 3;
+      const bob = moving ? Math.round(Math.abs(Math.sin(elder.animTime)) * 1.5) : 0;
+      const stride = moving ? Math.round(Math.sin(elder.animTime) * 2) : 0;
+      this.drawElderSprite(ctx, w, elder.id, sx, GROUND_Y - bob, elder.facing, stride, false);
+
+      // Crisp floating title tag above walking Elder inside walls
+      const def = ELDER_DEFS[elder.id];
+      ctx.fillStyle = 'rgba(8, 14, 24, 0.72)';
+      ctx.fillRect(sx - 15, GROUND_Y - 29 - bob, 30, 7);
+      ctx.fillStyle = def.accentColor;
+      ctx.font = 'bold 5px "Pixelify Sans", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(def.shortTitle, sx, GROUND_Y - 23.5 - bob);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  private drawElderSprite(
+    ctx: CanvasRenderingContext2D,
+    w: WorldState,
+    id: ElderId,
+    sx: number,
+    baseY: number,
+    facing: -1 | 1,
+    stride: number,
+    mounted: boolean
+  ): void {
+    const def = ELDER_DEFS[id];
+
+    // Boots (tucked when seated behind Monarch on horseback)
+    if (!mounted) {
+      ctx.fillStyle = '#2a221d';
+      ctx.fillRect(sx - 2 + stride, baseY - 4, 2, 4);
+      ctx.fillRect(sx + 1 - stride, baseY - 4, 2, 4);
+    } else {
+      ctx.fillStyle = '#2a221d';
+      ctx.fillRect(sx - 1, baseY - 3, 2, 4);
+    }
+
+    // Cloak & Tunic (distinct proportions & trim per Elder)
+    const bodyW = id === 'forge_elder' || id === 'war_elder' ? 8 : 6;
+    const halfW = Math.floor(bodyW / 2);
+    ctx.fillStyle = def.cloakColor;
+    ctx.fillRect(sx - halfW, baseY - 12, bodyW, 8);
+    ctx.fillStyle = def.trimColor;
+    ctx.fillRect(sx - halfW, baseY - 7, bodyW, 1);
+
+    // Distinct body details
+    if (id === 'forge_elder') {
+      // Heavy dark blacksmith leather apron
+      ctx.fillStyle = '#33221a';
+      ctx.fillRect(sx - 2, baseY - 11, 4, 7);
+    } else if (id === 'beast_elder') {
+      // White wolf-pelt mantle across shoulders
+      ctx.fillStyle = '#e6eef5';
+      ctx.fillRect(sx - 4, baseY - 12, 8, 3);
+    } else if (id === 'builder_elder') {
+      // Rolled white architectural blueprint on back
+      ctx.fillStyle = '#eef6ff';
+      ctx.fillRect(sx - facing * 4, baseY - 13, 2, 7);
+    }
+
+    // Face & Elder's White/Silver Beard
+    ctx.fillStyle = '#e5be9e';
+    ctx.fillRect(sx - 2, baseY - 16, 4, 4);
+    ctx.fillStyle = id === 'forge_elder' ? '#d98a4e' : '#e6eef7';
+    ctx.fillRect(sx - 2, baseY - 13, 4, 3);
+    ctx.fillRect(sx - 1, baseY - 10, 2, 2);
+
+    // Headgear & Signature Prop — EVERY ELDER IS COMPLETELY UNIQUE!
+    if (id === 'bard') {
+      // Feathered Purple Bard Cap + Golden Plume
+      ctx.fillStyle = '#531e6e';
+      ctx.fillRect(sx - 3, baseY - 18, 6, 3);
+      ctx.fillStyle = '#ffe066';
+      ctx.fillRect(sx - facing * 3, baseY - 21, 2, 4);
+      // Golden Nordic Harp held in front + floating musical note
+      ctx.fillStyle = '#f7d265';
+      ctx.fillRect(sx + facing * 3, baseY - 13, 3, 6);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(sx + facing * 4, baseY - 12, 1, 4);
+      const noteY = Math.round(Math.sin(w.elapsed * 5 + sx) * 2);
+      ctx.fillStyle = def.accentColor;
+      ctx.font = 'bold 6px "Pixelify Sans", monospace';
+      ctx.fillText('♪', sx + facing * 5, baseY - 17 + noteY);
+    } else if (id === 'forge_elder') {
+      // Iron Blacksmith Headband
+      ctx.fillStyle = '#8fa3b8';
+      ctx.fillRect(sx - 3, baseY - 17, 6, 2);
+      ctx.fillStyle = '#ff9d42';
+      ctx.fillRect(sx - 1, baseY - 17, 2, 1);
+      // Glowing Golden Forge Hammer
+      ctx.fillStyle = '#7a4d28';
+      ctx.fillRect(sx + facing * 4, baseY - 12, 1, 6);
+      ctx.fillStyle = '#ffd166';
+      ctx.fillRect(sx + facing * 4 - 2, baseY - 15, 5, 3);
+    } else if (id === 'builder_elder') {
+      // Tall Square Nordic Master Mason Cap
+      ctx.fillStyle = '#15435c';
+      ctx.fillRect(sx - 3, baseY - 19, 6, 3);
+      ctx.fillStyle = '#84e8ff';
+      ctx.fillRect(sx - 4, baseY - 17, 8, 1);
+      // Golden Architect Compass / Square
+      ctx.fillStyle = '#ffe066';
+      ctx.fillRect(sx + facing * 3, baseY - 13, 2, 6);
+      ctx.fillRect(sx + facing * 3, baseY - 13, 4, 1);
+    } else if (id === 'beast_elder') {
+      // Iconic Branching Stag Antler Headdress
+      ctx.fillStyle = '#8a623c';
+      ctx.fillRect(sx - 4, baseY - 19, 2, 3);
+      ctx.fillRect(sx + 2, baseY - 19, 2, 3);
+      ctx.fillRect(sx - 5, baseY - 21, 2, 2);
+      ctx.fillRect(sx + 3, baseY - 21, 2, 2);
+      // Gnarled Nature Staff with Glowing Emerald Crystal
+      ctx.fillStyle = '#6b4726';
+      ctx.fillRect(sx + facing * 4, baseY - 16, 1, 13);
+      ctx.fillStyle = '#6fe87b';
+      ctx.fillRect(sx + facing * 4 - 1, baseY - 18, 3, 3);
+    } else if (id === 'war_elder') {
+      // Iconic Winged Norse War Helm (Steel + Gold Wings)
+      ctx.fillStyle = '#a8b8c9';
+      ctx.fillRect(sx - 3, baseY - 18, 6, 3);
+      ctx.fillStyle = '#ffe066';
+      ctx.fillRect(sx - 5, baseY - 20, 2, 3);
+      ctx.fillRect(sx + 3, baseY - 20, 2, 3);
+      // Curved Ivory-Brass War Horn (Trombeta) held forward!
+      ctx.fillStyle = '#ffe58a';
+      ctx.fillRect(sx + facing * 3, baseY - 12, 4, 2);
+      ctx.fillStyle = '#fff8dc';
+      ctx.fillRect(sx + facing * 6, baseY - 14, 2, 4);
+    }
+  }
+
   private drawFireTrailsAndLightning(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     // Fire Steed burning ground trails
     for (const f of w.fireTrails) {
@@ -4488,6 +4697,7 @@ export class PixelRenderer {
     else if (v.role === 'wanderer') ctx.fillStyle = '#6c5a4c';
     else if (v.role === 'peasant') ctx.fillStyle = '#9c866d';
     else if (v.role === 'warrior') ctx.fillStyle = primary;
+    else if (v.role === 'spearman') ctx.fillStyle = '#365678';
     else if (v.role === 'archer') ctx.fillStyle = primary;
     else if (v.role === 'builder') ctx.fillStyle = '#4e5d6c';
     else ctx.fillStyle = '#5c734b';
@@ -4502,6 +4712,14 @@ export class PixelRenderer {
     ctx.fillStyle = v.isSummoned ? '#a8ffcb' : '#e5be9e';
     ctx.fillRect(sx - 2, baseY - 15 - walkBob, 4, 4);
 
+    if (v.state === 'assaulting') {
+      // War-Elder Assault Company golden battle chevron above marching soldiers!
+      ctx.fillStyle = '#ff6b6b';
+      ctx.fillRect(sx - 1, baseY - 21 - walkBob, 3, 2);
+      ctx.fillStyle = '#ffe066';
+      ctx.fillRect(sx, baseY - 22 - walkBob, 1, 2);
+    }
+
     if (v.role === 'warrior') {
       ctx.fillStyle = v.isSummoned ? '#6fffab' : '#9aa8b8';
       ctx.fillRect(sx - 3, baseY - 17 - walkBob, 6, 3);
@@ -4513,6 +4731,19 @@ export class PixelRenderer {
       ctx.fillRect(sx - v.facing * 4 - 1, baseY - 12 - walkBob, 4, 6);
       ctx.fillStyle = secondary;
       ctx.fillRect(sx - v.facing * 4, baseY - 10 - walkBob, 2, 2);
+    } else if (v.role === 'spearman') {
+      // Pointed Nordic Spangenhelm + Tall Polearm Spear!
+      ctx.fillStyle = '#8fa3b8';
+      ctx.fillRect(sx - 3, baseY - 17 - walkBob, 6, 2);
+      ctx.fillStyle = '#c4d6e8';
+      ctx.fillRect(sx - 1, baseY - 19 - walkBob, 2, 2);
+      // Long angled Nordic wooden spear shaft & gleaming steel/gold tip
+      ctx.fillStyle = '#8a5d32';
+      ctx.fillRect(sx + v.facing * 3, baseY - 19 - walkBob, 1, 14);
+      ctx.fillStyle = '#e6f2ff';
+      ctx.fillRect(sx + v.facing * 3 - 1, baseY - 23 - walkBob, 3, 4);
+      ctx.fillStyle = '#ffe066';
+      ctx.fillRect(sx + v.facing * 3, baseY - 19 - walkBob, 1, 1);
     } else if (v.role === 'archer') {
       ctx.fillStyle = primary;
       ctx.fillRect(sx - 3, baseY - 16 - walkBob, 6, 2);
@@ -4962,11 +5193,24 @@ export class PixelRenderer {
       ctx.fillRect(f * 5 - (f < 0 ? 2 : 0), -19 - bob, 2, 5);
     }
 
-    // Saddle cloth + Monarch Rider
+    // Saddle cloth + Mounted Elder (seated behind the Monarch on the horse's back!) + Monarch Rider
     ctx.fillStyle = primary;
     ctx.fillRect(-4, -14 - bob + riderYOffset, 8, 5);
     ctx.fillStyle = secondary;
     ctx.fillRect(-4, -10 - bob + riderYOffset, 8, 1);
+
+    if (m.ridingElderId && scale === 1) {
+      this.drawElderSprite(
+        ctx,
+        w,
+        m.ridingElderId,
+        -f * 7,
+        -10 - bob + riderYOffset,
+        f,
+        0,
+        true
+      );
+    }
 
     const isQueen = app.gender === 'queen';
 
@@ -5632,7 +5876,7 @@ export class PixelRenderer {
   // =========================================================================
   private drawPixelIcon(
     ctx: CanvasRenderingContext2D,
-    kind: 'hammer' | 'sword' | 'bow' | 'seed',
+    kind: 'hammer' | 'sword' | 'spear' | 'bow' | 'seed',
     x: number,
     y: number
   ): void {
@@ -5652,6 +5896,13 @@ export class PixelRenderer {
       ctx.fillRect(x + 2, y + 6, 6, 2);
       ctx.fillStyle = '#7a4b2a';
       ctx.fillRect(x + 4, y + 8, 2, 2);
+    } else if (kind === 'spear') {
+      ctx.fillStyle = '#8a5d32';
+      ctx.fillRect(x + 4, y + 3, 1, 7);
+      ctx.fillStyle = '#e6f2ff';
+      ctx.fillRect(x + 3, y + 0, 3, 4);
+      ctx.fillStyle = '#ffe066';
+      ctx.fillRect(x + 4, y + 3, 1, 1);
     } else if (kind === 'bow') {
       ctx.fillStyle = '#c48d4e';
       ctx.fillRect(x + 2, y + 1, 2, 2);
@@ -5753,6 +6004,7 @@ export class PixelRenderer {
     };
 
     const warriors = countRole('warrior');
+    const spearmen = countRole('spearman');
     const builders = countRole('builder');
     const archers = countRole('archer');
     const producers = countRole('producer');
@@ -5765,6 +6017,7 @@ export class PixelRenderer {
     if (w.resources.stone > 0) disc.stone = true;
     if (w.resources.iron > 0) disc.iron = true;
     if (warriors.total > 0) disc.sword = true;
+    if (spearmen.total > 0) disc.spear = true;
     if (builders.total > 0) disc.hammer = true;
     if (archers.total > 0) disc.bow = true;
     if (producers.total > 0) disc.seed = true;
@@ -5882,14 +6135,15 @@ export class PixelRenderer {
       }
     }
 
-    // 4. TOP-LEFT GROUP 3 (after breathing space): Sword, Hammer, Bow, Seed with LEFT count & RIGHT count!
+    // 4. TOP-LEFT GROUP 3 (after breathing space): Sword, Spear, Hammer, Bow, Seed with LEFT count & RIGHT count!
     const unitItems: Array<{
       id: string;
-      icon: 'sword' | 'hammer' | 'bow' | 'seed';
+      icon: 'sword' | 'spear' | 'hammer' | 'bow' | 'seed';
       cmd: CommandMode;
       counts: { left: number; right: number; total: number };
     }> = [];
     if (disc.sword) unitItems.push({ id: 'hud_cmd_attack', icon: 'sword', cmd: 'attack', counts: warriors });
+    if (disc.spear) unitItems.push({ id: 'hud_cmd_spear', icon: 'spear', cmd: 'spear', counts: spearmen });
     if (disc.hammer) unitItems.push({ id: 'hud_cmd_build', icon: 'hammer', cmd: 'build', counts: builders });
     if (disc.bow) unitItems.push({ id: 'hud_cmd_archer', icon: 'bow', cmd: 'archer', counts: archers });
     if (disc.seed) unitItems.push({ id: 'hud_cmd_produce', icon: 'seed', cmd: 'produce', counts: producers });
@@ -5979,6 +6233,45 @@ export class PixelRenderer {
       ctx.fillText(arrow, ti.x, ti.y + 3);
       ctx.restore();
       ctx.textAlign = 'left';
+    }
+
+    // Clickable Mounted Elder Active Power Button ([G]) neatly left of Weapon & Mount Power buttons!
+    if (monarch.ridingElderId && w.mode === 'playing') {
+      const ridingElder = (w.elders ?? []).find((e) => e.id === monarch.ridingElderId);
+      const eDef = ELDER_DEFS[monarch.ridingElderId];
+      const eCd = ridingElder?.activeCooldown ?? 0;
+      const eReady = eCd <= 0;
+      const eBtnW = 36;
+      const eBtnH = 22;
+      const rightAnchor =
+        (monarch.mount !== 'starter' ? this.viewW - 58 : this.viewW - 34) -
+        (monarch.weapon ? 38 : 0);
+      const bx = Math.round(rightAnchor - eBtnW);
+      const by = Math.round(this.viewH - 29);
+
+      this.addHit('hud_elder_power', bx - 2, by - 2, eBtnW + 4, eBtnH + 4);
+
+      ctx.save();
+      ctx.fillStyle = eReady ? 'rgba(14, 22, 36, 0.9)' : 'rgba(10, 16, 26, 0.72)';
+      ctx.fillRect(bx, by, eBtnW, eBtnH);
+      ctx.strokeStyle = eReady ? eDef.accentColor : '#48596b';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx + 0.5, by + 0.5, eBtnW - 1, eBtnH - 1);
+      if (eReady) {
+        ctx.fillStyle = `${eDef.cloakColor}88`;
+        ctx.fillRect(bx + 1, by + 1, eBtnW - 2, 3);
+      }
+
+      ctx.textAlign = 'center';
+      ctx.fillStyle = eReady ? eDef.accentColor : '#7e91a6';
+      ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
+      ctx.fillText(eDef.powerShortTag.slice(0, 6), bx + Math.floor(eBtnW / 2), by + 10);
+
+      ctx.fillStyle = eReady ? '#ffe58a' : '#9bb0c4';
+      ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
+      ctx.fillText(eReady ? '[G] USAR' : `${Math.ceil(eCd)}s`, bx + Math.floor(eBtnW / 2), by + 18);
+      ctx.textAlign = 'left';
+      ctx.restore();
     }
 
     // Clickable Divine Weapon / Magic Cast Button ([F]) neatly left of Mount Power & Spirit Button!

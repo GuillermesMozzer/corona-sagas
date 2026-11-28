@@ -13,6 +13,7 @@ import {
   type Chest,
   type CrestConfig,
   type DockState,
+  type ElderId,
   type FarmPlot,
   type ForgeState,
   type GodShrine,
@@ -38,6 +39,7 @@ import {
   type WorldState,
 } from '../types';
 import { getIslandMetalId, getIslandWeaponId } from './arsenal';
+import { createDefaultElders } from './elders';
 import { ISLAND_DEFINITIONS, getIslandDef } from './islands';
 
 const DAY_LEN_KEY = 'corona_daymin_v1';
@@ -150,18 +152,20 @@ export function createDefaultPreciousMine(
 export function generateIslandSnapshot(
   islandId: number,
   uid: () => number,
-  arrivingCrew: Villager[] = []
+  arrivingCrew: Villager[] = [],
+  rescuedElders: ElderId[] = []
 ): IslandSnapshot {
   const def = getIslandDef(islandId);
   const mapW = def.worldWidth || WORLD_WIDTH;
   const cx = Math.round(mapW / 2);
 
-  // 4 Tool Shops — Hammer & Bow unlock at Kingdom Lv 1; Seed at Lv 2; Sword at Island 3+ after Thor!
+  // 5 Tool Shops — Hammer, Bow & Spear unlock at Kingdom Lv 1; Seed at Lv 2; Sword at Island 3+ after Thor!
   const shops: ToolShop[] = [
-    { id: uid(), kind: 'sword', x: cx - 156, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
-    { id: uid(), kind: 'bow', x: cx - 110, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
-    { id: uid(), kind: 'hammer', x: cx + 110, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
-    { id: uid(), kind: 'seed', x: cx + 156, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
+    { id: uid(), kind: 'spear', x: cx - 182, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
+    { id: uid(), kind: 'sword', x: cx - 146, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
+    { id: uid(), kind: 'bow', x: cx - 108, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
+    { id: uid(), kind: 'hammer', x: cx + 108, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
+    { id: uid(), kind: 'seed', x: cx + 154, built: false, stock: 0, maxStock: 4, coinsPaid: 0 },
   ];
 
   // 2 Farm plots (unlock at Kingdom Lv 2; scale Lv 1..10 with Hall level!)
@@ -278,6 +282,7 @@ export function generateIslandSnapshot(
     bellRung: false,
     crewArchers: 0,
     crewWarriors: 0,
+    crewSpearmen: 0,
     crewProducers: 0,
     crewBuilders: 0,
     waterDropProgress: islandId > 1 ? 1 : 0,
@@ -356,6 +361,9 @@ export function generateIslandSnapshot(
   // 1 Unique Precious Metal Mine per island (Islands 1..9 -> Builders mine ore to forge Armor!)
   const preciousMine = createDefaultPreciousMine(islandId, uid, cx);
 
+  // 5 Distinct Nordic Elders (Anciões): Bard, Forge/Force, Builder, Beast, War!
+  const elders = createDefaultElders(cx, rescuedElders);
+
   // Special Mount Shrine
   const mountShrine: MountShrine | null = def.mountId
     ? {
@@ -378,21 +386,21 @@ export function generateIslandSnapshot(
         }
       : null;
 
-  // Chests: max 5 diamonds total per island (0 on Island 1; on Islands 2..9: 2+1=3 in chests + 2 in rune puzzle = 5 max!)
+  // Chests: Island 1 grants 3 starter diamonds (2 + 1) so players can summon rescued Elders right away; Islands 2..9 grant full island diamonds!
   const chests: Chest[] = [
     {
       id: uid(),
       x: cx - 730,
       opened: false,
       coins: 6,
-      diamonds: def.maxDiamonds > 0 ? 2 : 0,
+      diamonds: 2,
     },
     {
       id: uid(),
       x: cx + 730,
       opened: false,
       coins: 6,
-      diamonds: def.maxDiamonds > 0 ? Math.max(0, def.maxDiamonds - 4) : 0,
+      diamonds: def.maxDiamonds > 0 ? Math.max(1, def.maxDiamonds - 4) : 1,
     },
   ];
   if (mapW >= 4600) {
@@ -458,6 +466,7 @@ export function generateIslandSnapshot(
     ...(godShrine ? [{ x: godShrine.x, r: 42 }] : []),
     { x: weaponShrine.x, r: 46 },
     { x: preciousMine.x, r: 52 },
+    ...elders.map((el) => ({ x: el.cottageX, r: 38 })),
     ...(mountShrine ? [{ x: mountShrine.x, r: 42 }] : []),
     ...(puzzle ? [{ x: puzzle.x, r: 42 }] : []),
     ...islandBuffs.map((b) => ({ x: b.x, r: 34 })),
@@ -470,15 +479,15 @@ export function generateIslandSnapshot(
 
   // Rocks with 3 sizes: small (5 stone / 30s), medium (7 stone / 45s), large (15 stone / 90s)
   const rockSpecs: Array<{ x: number; variant: 0 | 1 | 2 }> = [
-    { x: cx - 325, variant: 0 },
+    { x: cx - 395, variant: 0 },
     { x: cx + 435, variant: 1 },
     { x: cx - 462, variant: 1 },
-    { x: cx + 686, variant: 2 },
-    { x: cx - 686, variant: 2 },
+    { x: cx + 768, variant: 2 },
+    { x: cx - 768, variant: 2 },
     { x: cx - 855, variant: 0 },
     { x: cx + 855, variant: 1 },
-    { x: cx - 990, variant: 2 },
-    { x: cx + 990, variant: 0 },
+    { x: cx - 945, variant: 2 },
+    { x: cx + 945, variant: 0 },
   ];
   // Extra rocky outcrops across wider islands (Islands 2..9)
   for (let offset = 1140; cx - offset > 320; offset += 290) {
@@ -622,6 +631,7 @@ export function generateIslandSnapshot(
     preciousMine,
     mountShrine,
     puzzle,
+    elders,
     camps,
     trees,
     rocks,
@@ -689,6 +699,7 @@ export function createInitialWorld(
     weaponCooldown: 0,
     armor: {},
     crownShieldReady: false,
+    ridingElderId: null,
     hasCrown: true,
     crownX: startX,
     crownY: GROUND_Y - 22,

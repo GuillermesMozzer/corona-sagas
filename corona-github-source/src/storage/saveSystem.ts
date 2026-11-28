@@ -1,5 +1,6 @@
 import { CENTER_X, type CrestConfig, type ResourceSize, type WorldState } from '../types';
 import { computeArmorBonuses } from '../world/arsenal';
+import { createDefaultElders } from '../world/elders';
 import {
   createDefaultForge,
   createDefaultPreciousMine,
@@ -213,6 +214,24 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
       cx
     );
   }
+  if (!state.elders || state.elders.length === 0) {
+    state.elders = createDefaultElders(cx, []);
+  }
+  if (state.shops && !state.shops.some((s) => s.kind === 'spear')) {
+    state.nextId = (state.nextId ?? 7500) + 1;
+    state.shops.unshift({
+      id: state.nextId,
+      kind: 'spear',
+      x: cx - 182,
+      built: (state.hall?.level ?? 0) >= 1,
+      stock: 0,
+      maxStock: 4,
+      coinsPaid: 0,
+    });
+  }
+  if (state.boat) {
+    state.boat.crewSpearmen = state.boat.crewSpearmen ?? 0;
+  }
   if (state.godShrine) {
     state.godShrine.ritualActive = state.godShrine.ritualActive ?? false;
     state.godShrine.tributeNeeded = state.godShrine.tributeNeeded ?? 0;
@@ -278,6 +297,7 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
     m.weapon = m.weapon ?? null;
     m.weaponCooldown = m.weaponCooldown ?? 0;
     m.armor = m.armor ?? {};
+    m.ridingElderId = m.ridingElderId ?? null;
     const armorBonus = computeArmorBonuses(m.armor);
     m.crownShieldReady = m.crownShieldReady ?? armorBonus.hasCrownShield;
     m.maxCoins = Math.max(30, 30 + Math.max(0, (state.hall?.level ?? 1) - 1) * 5 + armorBonus.pouchBonus);

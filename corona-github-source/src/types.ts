@@ -57,7 +57,26 @@ export interface CrestConfig {
   locked: boolean;
 }
 
-export type CommandMode = 'none' | 'attack' | 'archer' | 'build' | 'produce';
+export type CommandMode = 'none' | 'attack' | 'archer' | 'build' | 'produce' | 'spear';
+
+export type ElderId = 'bard' | 'forge_elder' | 'builder_elder' | 'beast_elder' | 'war_elder';
+export type ElderState = 'cottage' | 'walking' | 'riding';
+
+export interface Elder {
+  id: ElderId;
+  cottageX: number;
+  x: number;
+  vx: number;
+  facing: -1 | 1;
+  state: ElderState;
+  rescued: boolean;
+  rescueCoinsPaid: number;
+  ridingMonarchId: number | null;
+  targetX: number;
+  animTime: number;
+  abilityTimer: number;
+  activeCooldown: number;
+}
 
 export type WeaponId =
   | 'freya_bow'
@@ -125,6 +144,7 @@ export interface Monarch {
   weaponCooldown?: number;
   armor?: Partial<Record<ArmorSlot, PreciousMetalId>>;
   crownShieldReady?: boolean;
+  ridingElderId?: ElderId | null;
   hasCrown: boolean;
   crownX: number;
   crownY: number;
@@ -146,6 +166,7 @@ export type VillagerRole =
   | 'peasant'
   | 'builder'
   | 'warrior'
+  | 'spearman'
   | 'archer'
   | 'producer';
 
@@ -159,6 +180,7 @@ export type VillagerState =
   | 'working'
   | 'hunting'
   | 'defending'
+  | 'assaulting'
   | 'producing'
   | 'foraging'
   | 'fishing'
@@ -183,6 +205,7 @@ export interface Villager {
   homeCampId: number | null;
   assignedFarmId: number | null;
   assignedTowerId?: number | null;
+  assaultPortalId?: number | null;
   side: -1 | 1;
   actionTimer: number;
   animTime: number;
@@ -240,7 +263,7 @@ export interface ArcherTower {
   orderedAt?: number;
 }
 
-export type ToolShopKind = 'bow' | 'hammer' | 'sword' | 'seed';
+export type ToolShopKind = 'bow' | 'hammer' | 'sword' | 'spear' | 'seed';
 
 export interface ToolShop {
   id: number;
@@ -320,6 +343,7 @@ export interface BoatState {
   bellRung: boolean;
   crewArchers: number;
   crewWarriors: number;
+  crewSpearmen?: number;
   crewProducers: number;
   crewBuilders: number;
   waterDropProgress?: number; // 0 = on land, 0..1 = launching into fjord, 1 = floating in water
@@ -441,6 +465,7 @@ export interface IslandSnapshot {
   preciousMine?: PreciousMine | null;
   mountShrine: MountShrine | null;
   puzzle: RunePuzzle | null;
+  elders?: Elder[];
   camps: VagrantCamp[];
   trees: Tree[];
   rocks: Rock[];
@@ -560,6 +585,7 @@ export type PromptTargetType =
   | 'forge_build'
   | 'forge_smelt'
   | 'forge_armor'
+  | 'forge_convert'
   | 'shop'
   | 'wall'
   | 'tower'
@@ -580,6 +606,8 @@ export type PromptTargetType =
   | 'god_shrine'
   | 'weapon_shrine'
   | 'mount_shrine'
+  | 'elder_rescue'
+  | 'elder_summon'
   | 'puzzle';
 
 export interface FlyingCoin {
@@ -616,6 +644,7 @@ export interface Wildlife {
   hp: number;
   aiTimer: number;
   animTime: number;
+  charmed?: boolean;
 }
 
 export type ParticleKind = 'snow' | 'ember' | 'spark' | 'wood' | 'stone' | 'shadow' | 'leaf' | 'breath' | 'ring';
@@ -676,12 +705,14 @@ export interface InputState {
   sprint: boolean;
   powerJustPressed: boolean;
   weaponJustPressed?: boolean;
+  elderJustPressed?: boolean;
   drop: boolean;
   dropJustPressed: boolean;
   cmdZ: boolean;
   cmdX: boolean;
   cmdC: boolean;
   cmdV: boolean;
+  cmdB?: boolean;
 }
 
 export interface TouchIndicator {
@@ -800,6 +831,7 @@ export interface DiscoveredHudItems {
   stone?: boolean;
   iron?: boolean;
   sword?: boolean;
+  spear?: boolean;
   hammer?: boolean;
   bow?: boolean;
   seed?: boolean;
@@ -863,6 +895,7 @@ export interface WorldState {
   preciousMine?: PreciousMine | null;
   mountShrine: MountShrine | null;
   puzzle: RunePuzzle | null;
+  elders?: Elder[];
   camps: VagrantCamp[];
   trees: Tree[];
   rocks: Rock[];

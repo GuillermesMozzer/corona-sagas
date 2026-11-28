@@ -17,6 +17,7 @@ import {
   type BuilderTaskKind,
   type Coin,
   type CommandMode,
+  type ElderId,
   type Enemy,
   type EnemyKind,
   type FloatingPrompt,
@@ -41,9 +42,11 @@ import {
   ARMOR_DEFS,
   computeArmorBonuses,
   getIslandArmorSlot,
+  getIslandMetalId,
   PRECIOUS_METALS,
   WEAPON_DEFS,
 } from '../world/arsenal';
+import { canElderLeaveWalls, createDefaultElders, ELDER_DEFS, ELDER_ORDER } from '../world/elders';
 import {
   createDefaultPreciousMine,
   createDefaultWeaponShrine,
@@ -160,9 +163,9 @@ export function getIslandMaxKingdomLevel(w: WorldState): number {
 
 export function isShopUnlocked(w: WorldState, kind: ToolShopKind): boolean {
   if (w.hall.level < 1) return false;
-  if (kind === 'hammer' || kind === 'bow') return true;
+  if (kind === 'hammer' || kind === 'bow' || kind === 'spear') return true;
   if (kind === 'seed') return w.hall.level >= 2;
-  if (kind === 'sword') return w.currentIsland >= 3 && w.thorActivated;
+  if (kind === 'sword') return w.hall.level >= 2 || (w.currentIsland >= 3 && w.thorActivated);
   return false;
 }
 
@@ -512,6 +515,11 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
   const stayingVillagers = w.villagers.filter((v) => v.state !== 'embarked' && !v.isSummoned);
 
   syncCurrentIslandProgress(w);
+  const rescuedElderIds: ElderId[] = (w.elders ?? []).filter((e) => e.rescued).map((e) => e.id);
+  for (const mon of w.monarchs) {
+    mon.ridingElderId = null;
+  }
+
   const curProgress = w.islands.find((i) => i.id === w.currentIsland);
   if (curProgress) {
     // Reset sail payment on departed island so future sailings cost 10 coins again
@@ -521,6 +529,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
       bellRung: false,
       crewArchers: 0,
       crewWarriors: 0,
+      crewSpearmen: 0,
       crewProducers: 0,
       crewBuilders: 0,
     };
@@ -541,6 +550,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
       preciousMine: w.preciousMine ? { ...w.preciousMine } : null,
       mountShrine: w.mountShrine ? { ...w.mountShrine } : null,
       puzzle: w.puzzle ? { ...w.puzzle } : null,
+      elders: (w.elders ?? []).map((e) => ({ ...e, ridingMonarchId: null, state: e.rescued ? 'walking' : 'cottage' })),
       camps: w.camps.map((c) => ({ ...c })),
       trees: w.trees.map((tr) => ({ ...tr })),
       rocks: w.rocks.map((r) => ({ ...r })),
@@ -580,6 +590,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
       bellRung: false,
       crewArchers: 0,
       crewWarriors: 0,
+      crewSpearmen: 0,
       crewProducers: 0,
       crewBuilders: 0,
       waterDropProgress: 1,
@@ -595,6 +606,12 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
       : createDefaultPreciousMine(targetIslandId, () => uid(w), w.centerX);
     w.mountShrine = nextSnap.mountShrine ? { ...nextSnap.mountShrine } : null;
     w.puzzle = nextSnap.puzzle ? { ...nextSnap.puzzle } : null;
+    const destCx = w.centerX ?? getCenterX(w);
+    const mergedRescued = new Set<ElderId>(rescuedElderIds);
+    for (const se of nextSnap.elders ?? []) {
+      if (se.rescued) mergedRescued.add(se.id);
+    }
+    w.elders = createDefaultElders(destCx, Array.from(mergedRescued));
     w.camps = nextSnap.camps.map((c) => ({ ...c }));
     w.trees = nextSnap.trees.map((tr) => ({ ...tr }));
     w.rocks = nextSnap.rocks.map((r) => ({ ...r }));
@@ -616,12 +633,13 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
         state: 'idle',
         assignedFarmId: null,
         assignedTowerId: null,
+        assaultPortalId: null,
         side: idx % 2 === 0 ? -1 : 1,
       });
     });
   } else {
     // Fresh unexplored island! Boat arrives floating by shore; Dock must be built!
-    const fresh = generateIslandSnapshot(targetIslandId, () => uid(w), embarkedCrew);
+    const fresh = generateIslandSnapshot(targetIslandId, () => uid(w), embarkedCrew, rescuedElderIds);
     w.worldWidth = fresh.worldWidth;
     w.centerX = fresh.centerX;
     w.hall = fresh.hall;
@@ -638,6 +656,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     w.preciousMine = fresh.preciousMine ?? null;
     w.mountShrine = fresh.mountShrine;
     w.puzzle = fresh.puzzle;
+    w.elders = fresh.elders ?? createDefaultElders(fresh.centerX ?? getCenterX(w), rescuedElderIds);
     w.camps = fresh.camps;
     w.trees = fresh.trees;
     w.rocks = fresh.rocks;
@@ -805,6 +824,7 @@ function ringShipBell(w: WorldState): void {
   const limits: Array<{ role: VillagerRole; current: () => number }> = [
     { role: 'archer', current: () => w.boat.crewArchers },
     { role: 'warrior', current: () => w.boat.crewWarriors },
+    { role: 'spearman', current: () => w.boat.crewSpearmen ?? 0 },
     { role: 'producer', current: () => w.boat.crewProducers },
     { role: 'builder', current: () => w.boat.crewBuilders },
   ];
@@ -822,6 +842,7 @@ function ringShipBell(w: WorldState): void {
     for (let i = 0; i < Math.min(slotsLeft, candidates.length); i++) {
       candidates[i].state = 'boarding';
       candidates[i].assignedFarmId = null;
+      candidates[i].assaultPortalId = null;
       candidates[i].orderFlashTimer = 2.0;
       candidates[i].orderDir = w.boat.x >= candidates[i].x ? 1 : -1;
       called++;
@@ -842,8 +863,11 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
   if (!m.hasCrown) return null;
   let best: FloatingPrompt | null = null;
   let bestDist = 36;
+  const curMetalId = getIslandMetalId(w.currentIsland);
+  const curMetal = PRECIOUS_METALS[curMetalId];
+  const curOreHave = w.resources.preciousOres?.[curMetalId] ?? 0;
 
-  // 1. Hall / Castle (Lv 0 -> 10, capped by Island 1 = Lv 2 and +1 per next island with Construction+Forge buffs!)
+  // 1. Hall / Castle (Lv 0 -> 10, capped by Island 1 = Lv 2 and +1 per next island; Lv 4+ requires Ancião das Obras!)
   const hallDist = Math.abs(m.x - w.hall.x);
   if (w.hall.level < MAX_KINGDOM_LEVEL && hallDist < 34 && hallDist < bestDist) {
     const maxAllowed = getIslandMaxKingdomLevel(w);
@@ -871,10 +895,18 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
     } else if (resCost.coins > 0 && w.hall.coinsPaid < resCost.coins) {
       bestDist = hallDist;
       const nextLv = w.hall.level + 1;
+      const needsBuilderElder = nextLv >= 4;
+      const oreNeeded = nextLv >= 7 ? 2 : nextLv >= 4 ? 1 : 0;
+      let blockedReason: string | undefined;
+      if (needsBuilderElder && m.ridingElderId !== 'builder_elder') {
+        blockedReason = 'Exige Ancião das Obras no cavalo (1◆)';
+      } else if (oreNeeded > 0 && curOreHave < oreNeeded) {
+        blockedReason = `Falta ${oreNeeded - curOreHave} ${curMetal.name} (Mina)`;
+      }
       const label =
         w.hall.level === 0
           ? t('prompt_light_fire')
-          : `${t('prompt_jarl_hall')} Nv.${nextLv}`;
+          : `${t('prompt_jarl_hall')} Nv.${nextLv}${oreNeeded > 0 ? ` (+${oreNeeded} Minério)` : ''}`;
       best = {
         x: w.hall.x,
         y: GROUND_Y - (w.hall.level === 0 ? 30 : 58),
@@ -886,6 +918,7 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
         woodCost: resCost.wood,
         stoneCost: resCost.stone,
         ironCost: resCost.iron,
+        blockedReason,
         targetType: 'hall',
         targetId: 0,
       };
@@ -916,7 +949,7 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
     }
   }
 
-  // 1c. Forge (Island 2+: Build with wood+stone, then smelt wood+stone -> Iron!)
+  // 1c. Forge (Ancião da Força required to forge Armors & convert Ores/Stone/Wood into other resources!)
   if (w.hall.level >= 1 && w.forge) {
     const forgeDist = Math.abs(m.x - w.forge.x);
     if (forgeDist < 26 && forgeDist < bestDist) {
@@ -941,19 +974,25 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
           };
         }
       } else if (w.forge.built) {
+        const hasForgeElder = m.ridingElderId === 'forge_elder';
         const armorSlot = getIslandArmorSlot(w.currentIsland);
         const armorDef = ARMOR_DEFS[armorSlot];
         const metalDef = PRECIOUS_METALS[armorDef.metalId];
         const alreadyForged = Boolean(m.armor?.[armorSlot]);
         const oreHave = w.resources.preciousOres?.[armorDef.metalId] ?? 0;
         const armorPaid = w.forge.armorCoinsPaid ?? 0;
-        const canPrioritizeArmor = !alreadyForged && (oreHave >= armorDef.oreCost || armorPaid > 0 || w.currentIsland === 1);
+        const canPrioritizeArmor = !alreadyForged && (hasForgeElder || oreHave >= armorDef.oreCost || armorPaid > 0 || w.currentIsland === 1);
 
-        if (canPrioritizeArmor) {
+        if (canPrioritizeArmor && (!hasForgeElder || oreHave >= armorDef.oreCost || armorPaid > 0)) {
           const pending = countPendingFlyingCoins(w, 'forge_armor', 0);
           if (armorPaid < armorDef.coinCost) {
             bestDist = forgeDist;
             const missingOre = Math.max(0, armorDef.oreCost - oreHave);
+            const blockedReason = !hasForgeElder
+              ? 'Exige Ancião da Força no cavalo (1◆)'
+              : missingOre > 0
+                ? `Falta ${missingOre} ${metalDef.name} (Mina)`
+                : undefined;
             best = {
               x: w.forge.x,
               y: GROUND_Y - 42,
@@ -965,11 +1004,26 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
               woodCost: armorDef.woodCost,
               stoneCost: armorDef.stoneCost,
               ironCost: 0,
-              blockedReason: missingOre > 0 ? `Falta ${missingOre} ${metalDef.name} (Mina)` : undefined,
+              blockedReason,
               targetType: 'forge_armor',
               targetId: 0,
             };
           }
+        } else if (hasForgeElder) {
+          // Ancião da Força exclusive Resource Transmutation at the Forge!
+          const pending = countPendingFlyingCoins(w, 'forge_convert', 0);
+          bestDist = forgeDist;
+          best = {
+            x: w.forge.x,
+            y: GROUND_Y - 42,
+            label: 'Converter Recursos (Ancião da Força)',
+            actionClass: 'forge_convert',
+            cost: 1,
+            paid: 0,
+            pending,
+            targetType: 'forge_convert',
+            targetId: 0,
+          };
         } else if (w.forge.smeltQueue < 5) {
           const sCost = getForgeSmeltResourceCost();
           const pending = countPendingFlyingCoins(w, 'forge_smelt', 0);
@@ -996,7 +1050,7 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
     }
   }
 
-  // 2. Tool Shops (Hammer & Bow at Lv 1; Seed at Lv 2; Sword on Island 3+ after Thor!)
+  // 2. Tool Shops (Hammer, Bow & Spear at Lv 1; Seed & Sword at Lv 2+)
   if (w.hall.level >= 1) {
     for (const shop of w.shops) {
       if (!isShopUnlocked(w, shop.kind)) continue;
@@ -1006,10 +1060,11 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
         const shopCost = shop.kind === 'sword' ? 3 : 2;
         if (shop.coinsPaid < shopCost) {
           bestDist = d;
-          const labelMap = {
+          const labelMap: Record<ToolShopKind, string> = {
             bow: t('prompt_bow'),
             hammer: t('prompt_hammer'),
             sword: t('prompt_sword'),
+            spear: 'Tenda de Lanças',
             seed: t('prompt_seed'),
           };
           best = {
@@ -1028,7 +1083,7 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
     }
   }
 
-  // 3. Farms (Unlocked at Kingdom Lv >= 2; scales Lv 1..10 matching Kingdom level!)
+  // 3. Farms (Unlocked at Kingdom Lv >= 2; scales Lv 1..10; Lv 4+ requires Ancião das Obras!)
   if (isFarmsUnlocked(w)) {
     for (const farm of w.farms) {
       if (farm.underConstruction) continue;
@@ -1039,13 +1094,20 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
         const pending = countPendingFlyingCoins(w, 'farm', farm.id);
         if (farm.coinsPaid < fCost.coins) {
           bestDist = d;
+          const nextLv = farm.level + 1;
+          let blockedReason: string | undefined;
+          if (nextLv >= 4 && m.ridingElderId !== 'builder_elder') {
+            blockedReason = 'Exige Ancião das Obras no cavalo (1◆)';
+          } else if (nextLv >= 4 && curOreHave < 1) {
+            blockedReason = `Falta 1 ${curMetal.name} (Mina)`;
+          }
           best = {
             x: farm.x,
             y: GROUND_Y - 40,
             label:
               farm.level === 0
                 ? t('prompt_farm_build')
-                : `${t('prompt_farm_upgrade')} Nv.${farm.level + 1}`,
+                : `${t('prompt_farm_upgrade')} Nv.${nextLv}`,
             actionClass: farm.level === 0 ? 'farm_build' : 'farm_upgrade',
             cost: fCost.coins,
             paid: farm.coinsPaid,
@@ -1053,6 +1115,7 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
             woodCost: fCost.wood,
             stoneCost: fCost.stone,
             ironCost: fCost.iron,
+            blockedReason,
             targetType: 'farm',
             targetId: farm.id,
           };
@@ -1061,7 +1124,7 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
     }
   }
 
-  // 3b. Archer Towers (Lv 1..10 matching Kingdom level!)
+  // 3b. Archer Towers (Lv 1..10 matching Kingdom level; Lv 3+ requires Ancião das Obras!)
   if (w.hall.level >= 1) {
     for (const tower of w.towers) {
       if (tower.underConstruction) continue;
@@ -1078,11 +1141,18 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
         const pending = countPendingFlyingCoins(w, 'tower', tower.id);
         if (tower.coinsPaid < tCost.coins) {
           bestDist = d;
+          const nextLv = tower.destroyed ? Math.max(1, tower.previousLevel) : tower.level + 1;
+          let blockedReason: string | undefined;
+          if (!tower.destroyed && nextLv >= 3 && m.ridingElderId !== 'builder_elder') {
+            blockedReason = 'Exige Ancião das Obras no cavalo (1◆)';
+          } else if (!tower.destroyed && nextLv >= 4 && curOreHave < 1) {
+            blockedReason = `Falta 1 ${curMetal.name} (Mina)`;
+          }
           const label = tower.destroyed
             ? t('prompt_tower_reform')
             : tower.level === 0
               ? t('prompt_tower_build')
-              : `${t('prompt_tower_upgrade')} Nv.${tower.level + 1}`;
+              : `${t('prompt_tower_upgrade')} Nv.${nextLv}`;
           best = {
             x: tower.x,
             y: GROUND_Y - Math.max(34, getTowerHeight(tower.level) + 12),
@@ -1094,6 +1164,7 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
             woodCost: tCost.wood,
             stoneCost: tCost.stone,
             ironCost: tCost.iron,
+            blockedReason,
             targetType: 'tower',
             targetId: tower.id,
           };
@@ -1241,11 +1312,18 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
         const pending = countPendingFlyingCoins(w, 'wall', wall.id);
         if (wall.coinsPaid < wCost.coins) {
           bestDist = d;
+          const nextLv = wall.destroyed ? Math.max(1, wall.previousLevel) : wall.level + 1;
+          let blockedReason: string | undefined;
+          if (!wall.destroyed && nextLv >= 4 && m.ridingElderId !== 'builder_elder') {
+            blockedReason = 'Exige Ancião das Obras no cavalo (1◆)';
+          } else if (!wall.destroyed && nextLv >= 4 && curOreHave < 1) {
+            blockedReason = `Falta 1 ${curMetal.name} (Mina)`;
+          }
           const label = wall.destroyed
             ? t('prompt_wall_reform')
             : wall.level === 0
               ? t('prompt_wall_build')
-              : `${t('prompt_wall_upgrade')} Nv.${wall.level + 1}`;
+              : `${t('prompt_wall_upgrade')} Nv.${nextLv}`;
           best = {
             x: wall.x,
             y: GROUND_Y - Math.max(30, getWallHeight(wall.level) + 12),
@@ -1257,6 +1335,7 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
             woodCost: wCost.wood,
             stoneCost: wCost.stone,
             ironCost: wCost.iron,
+            blockedReason,
             targetType: 'wall',
             targetId: wall.id,
           };
@@ -1358,6 +1437,53 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
           targetType: 'precious_mine',
           targetId: w.preciousMine.id,
         };
+      }
+    }
+  }
+
+  // 7b4. Nordic Elders (Resgatar na Cabana por 4🪙 · Chamar para montar atrás do cavalo por 1◆!)
+  for (const elder of w.elders ?? []) {
+    const def = ELDER_DEFS[elder.id];
+    const eIdx = ELDER_ORDER.indexOf(elder.id);
+    if (!elder.rescued) {
+      const d = Math.abs(m.x - elder.cottageX);
+      if (d < 30 && d < bestDist) {
+        const pending = countPendingFlyingCoins(w, 'elder_rescue', eIdx);
+        if (elder.rescueCoinsPaid < def.rescueCoins) {
+          bestDist = d;
+          best = {
+            x: elder.cottageX,
+            y: GROUND_Y - 42,
+            label: `Resgatar ${def.name}`,
+            actionClass: 'elder_rescue',
+            cost: def.rescueCoins,
+            paid: elder.rescueCoinsPaid,
+            pending,
+            currency: 'coin',
+            targetType: 'elder_rescue',
+            targetId: eIdx,
+          };
+        }
+      }
+    } else if (elder.state === 'walking') {
+      const d = Math.abs(m.x - elder.x);
+      if (d < 22 && d < bestDist) {
+        const pending = countPendingFlyingCoins(w, 'elder_summon', eIdx);
+        if (pending === 0) {
+          bestDist = d;
+          best = {
+            x: elder.x,
+            y: GROUND_Y - 32,
+            label: `Montar ${def.name} (1◆)`,
+            actionClass: 'elder_summon',
+            cost: 1,
+            paid: 0,
+            pending,
+            currency: 'diamond',
+            targetType: 'elder_summon',
+            targetId: eIdx,
+          };
+        }
       }
     }
   }
@@ -1656,6 +1782,13 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         return;
       }
       const prevLevel = w.hall.level;
+      const nextLv = prevLevel + 1;
+      const oreNeeded = nextLv >= 7 ? 2 : nextLv >= 4 ? 1 : 0;
+      if (oreNeeded > 0) {
+        const metalId = getIslandMetalId(w.currentIsland);
+        w.resources.preciousOres = w.resources.preciousOres ?? {};
+        w.resources.preciousOres[metalId] = Math.max(0, (w.resources.preciousOres[metalId] ?? 0) - oreNeeded);
+      }
       consumeMaterials(w, resCost);
       w.hall.coinsPaid = 0;
       w.hall.level += 1;
@@ -1663,24 +1796,23 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
       sound.playBuildComplete();
       spawnBurst(w, w.hall.x, GROUND_Y - 26, 20, '#ffba52', 'ember', 60);
       if (w.hall.level === 1) {
-        // Only Hammer and Bow unlock automatically at Kingdom Level 1!
         for (const shop of w.shops) {
-          if (shop.kind === 'hammer' || shop.kind === 'bow') shop.built = true;
+          if (shop.kind === 'hammer' || shop.kind === 'bow' || shop.kind === 'spear') shop.built = true;
         }
         showBanner(
           w,
           'REINO NV.1 — FOGUEIRA ACESA',
-          'Tendas de Martelo e Arco + Banqueiro (1%/dia) liberados!',
+          'Tendas de Martelo, Arco e Lança + Banqueiro (1%/dia) liberados!',
           w.crest.secondaryColor
         );
       } else if (w.hall.level === 2) {
         for (const shop of w.shops) {
-          if (shop.kind === 'seed') shop.built = true;
+          if (shop.kind === 'seed' || shop.kind === 'sword') shop.built = true;
         }
         showBanner(
           w,
           'REINO NV.2 — SALÃO DE MADEIRA',
-          'Fazendas e Tenda de Sementes liberadas! Banqueiro rende 2%/dia!',
+          'Fazendas, Sementes e Espadas liberadas! Banqueiro rende 2%/dia!',
           w.crest.secondaryColor
         );
       } else {
@@ -2047,6 +2179,27 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
     return;
   }
 
+  if (fc.targetType === 'forge_convert' && w.forge && w.forge.built) {
+    const m =
+      w.monarchs.length > 1
+        ? w.monarchs.reduce((best, cur) =>
+            Math.abs(cur.x - fc.targetX) < Math.abs(best.x - fc.targetX) ? cur : best
+          )
+        : w.monarchs[0];
+    if (m && m.ridingElderId === 'forge_elder') {
+      const ok = performForgeElderConversion(w, m);
+      if (!ok) {
+        m.coins = Math.min(m.maxCoins, m.coins + 1);
+        if (m === w.monarchs[0]) w.resources.gold = m.coins;
+      }
+    } else if (m) {
+      m.coins = Math.min(m.maxCoins, m.coins + 1);
+      if (m === w.monarchs[0]) w.resources.gold = m.coins;
+      showBanner(w, 'EXIGE ANCIÃO DA FORÇA', 'Monte o Ancião da Força no cavalo (1◆) para converter recursos!', '#ff9b52');
+    }
+    return;
+  }
+
   if (fc.targetType === 'precious_mine' && w.preciousMine && !w.preciousMine.marked) {
     const metalDef = PRECIOUS_METALS[w.preciousMine.metalId];
     w.preciousMine.coinsPaid += 1;
@@ -2064,6 +2217,75 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         'Seus pedreiros irão coletar minério precioso para a Forja!',
         metalDef.highlight
       );
+    }
+    return;
+  }
+
+  if (fc.targetType === 'elder_rescue') {
+    const elderId = ELDER_ORDER[fc.targetId];
+    const elder = (w.elders ?? []).find((e) => e.id === elderId);
+    if (elder && !elder.rescued) {
+      const def = ELDER_DEFS[elder.id];
+      elder.rescueCoinsPaid += 1;
+      if (elder.rescueCoinsPaid >= def.rescueCoins) {
+        elder.rescueCoinsPaid = def.rescueCoins;
+        elder.rescued = true;
+        elder.state = 'walking';
+        elder.x = elder.cottageX;
+        elder.targetX = getCenterX(w);
+        markActionClassCompleted(w, 'elder_rescue');
+        sound.playHorn(false);
+        sound.playBuildComplete();
+        spawnBurst(w, elder.cottageX, GROUND_Y - 18, 22, def.accentColor, 'spark', 64);
+        showBanner(
+          w,
+          `${def.name.toUpperCase()} RESGATADO!`,
+          `${def.roleDesc} Pague 1◆ para ele montar atrás do seu cavalo!`,
+          def.accentColor
+        );
+        saveCampaign(w);
+      }
+    }
+    return;
+  }
+
+  if (fc.targetType === 'elder_summon') {
+    const elderId = ELDER_ORDER[fc.targetId];
+    const elder = (w.elders ?? []).find((e) => e.id === elderId);
+    const m =
+      w.monarchs.length > 1
+        ? w.monarchs.reduce((best, cur) =>
+            Math.abs(cur.x - fc.targetX) < Math.abs(best.x - fc.targetX) ? cur : best
+          )
+        : w.monarchs[0];
+    if (elder && elder.rescued && elder.state === 'walking' && m) {
+      // Gently dismount any elder currently riding behind this monarch
+      if (m.ridingElderId) {
+        const prev = (w.elders ?? []).find((e) => e.id === m.ridingElderId);
+        if (prev) {
+          prev.state = 'walking';
+          prev.ridingMonarchId = null;
+          const safe = getKingdomSafeBounds(w);
+          prev.x = Math.max(safe.left, Math.min(safe.right, m.x));
+          prev.targetX = prev.x;
+        }
+      }
+      const def = ELDER_DEFS[elder.id];
+      elder.state = 'riding';
+      elder.ridingMonarchId = m.id;
+      m.ridingElderId = elder.id;
+      elder.x = m.x - m.facing * 7;
+      markActionClassCompleted(w, 'elder_summon');
+      sound.playHorn(false);
+      sound.playCoinPickup();
+      spawnBurst(w, m.x, GROUND_Y - 20, 20, def.accentColor, 'spark', 56);
+      showBanner(
+        w,
+        `${def.name.toUpperCase()} MONTOU NO CAVALO!`,
+        `${def.powerName}: pressione [G] ou toque no botão · ${def.canLeaveWalls ? 'Pode sair dos muros!' : 'Fica dentro dos muros.'}`,
+        def.accentColor
+      );
+      saveCampaign(w);
     }
     return;
   }
@@ -2441,6 +2663,7 @@ export function triggerCoinDrop(w: WorldState): void {
 export function issueUnitCommand(w: WorldState, mode: CommandMode, targetSide: -1 | 1): void {
   const roleMap: Record<Exclude<CommandMode, 'none'>, VillagerRole> = {
     attack: 'warrior',
+    spear: 'spearman',
     archer: 'archer',
     build: 'builder',
     produce: 'producer',
@@ -2449,6 +2672,7 @@ export function issueUnitCommand(w: WorldState, mode: CommandMode, targetSide: -
   const role = roleMap[mode];
   const labelMap: Record<Exclude<CommandMode, 'none'>, string> = {
     attack: t('role_warrior'),
+    spear: 'Lanceiro',
     archer: t('role_archer'),
     build: t('role_builder'),
     produce: t('role_producer'),
@@ -2464,6 +2688,7 @@ export function issueUnitCommand(w: WorldState, mode: CommandMode, targetSide: -
     chosen.side = targetSide;
     chosen.assignedFarmId = null;
     chosen.assignedTowerId = null;
+    chosen.assaultPortalId = null;
     chosen.orderFlashTimer = 1.8;
     chosen.orderDir = targetSide;
     chosen.actionTimer = 0;
@@ -2505,6 +2730,7 @@ export function orderSpecificVillager(w: WorldState, villagerId: number, targetS
   v.side = targetSide;
   v.assignedFarmId = null;
   v.assignedTowerId = null;
+  v.assaultPortalId = null;
   v.targetId = null;
   v.facing = targetSide;
   v.targetX = getCenterX(w) + targetSide * 95;
@@ -2519,6 +2745,7 @@ export function orderSpecificVillager(w: WorldState, villagerId: number, targetS
     peasant: t('role_peasant'),
     builder: t('role_builder'),
     warrior: t('role_warrior'),
+    spearman: 'Lanceiro',
     archer: t('role_archer'),
     producer: t('role_producer'),
   };
@@ -2529,13 +2756,15 @@ export function orderSpecificVillager(w: WorldState, villagerId: number, targetS
     mode:
       v.role === 'warrior'
         ? 'attack'
-        : v.role === 'archer'
-          ? 'archer'
-          : v.role === 'builder'
-            ? 'build'
-            : v.role === 'producer'
-              ? 'produce'
-              : 'none',
+        : v.role === 'spearman'
+          ? 'spear'
+          : v.role === 'archer'
+            ? 'archer'
+            : v.role === 'builder'
+              ? 'build'
+              : v.role === 'producer'
+                ? 'produce'
+                : 'none',
     side: targetSide,
     text: `${roleLabels[v.role]} ${t('unit_sent')} ${dirText}`,
     timer: 1.6,
@@ -2629,6 +2858,7 @@ function updateTacticalCommands(w: WorldState, input: InputState, dt: number): v
   else if (input.cmdX) mode = 'archer';
   else if (input.cmdC) mode = 'build';
   else if (input.cmdV) mode = 'produce';
+  else if (input.cmdB) mode = 'spear';
 
   w.activeCommand = mode;
 
@@ -2801,7 +3031,8 @@ function getEligibleTributeSubjects(w: WorldState): Villager[] {
     producer: 1,
     builder: 2,
     archer: 3,
-    warrior: 4,
+    spearman: 4,
+    warrior: 5,
     wanderer: 99,
   };
   return w.villagers
@@ -3309,6 +3540,444 @@ export function triggerMonarchWeapon(w: WorldState, monarchIndex = 0): boolean {
   return false;
 }
 
+// =========================================================================
+// NORDIC ELDERS (ANCIÕES) ENGINE — Bardo, Força, Obras, Feras & Guerra
+// =========================================================================
+
+function getKingdomSafeBounds(w: WorldState): { left: number; right: number } {
+  const cx = getCenterX(w);
+  const leftWall = getOuterDefensiveWall(w, -1);
+  const rightWall = getOuterDefensiveWall(w, 1);
+  return {
+    left: leftWall ? leftWall.x + 12 : cx - 220,
+    right: rightWall ? rightWall.x - 12 : cx + 220,
+  };
+}
+
+function performForgeElderConversion(w: WorldState, m: Monarch): boolean {
+  const metalId = getIslandMetalId(w.currentIsland);
+  const metalDef = PRECIOUS_METALS[metalId];
+  const oreHave = w.resources.preciousOres?.[metalId] ?? 0;
+  w.resources.preciousOres = w.resources.preciousOres ?? {};
+
+  // 1. Stone + Wood -> Iron + Island Precious Ore
+  if (w.resources.stone >= 5 && w.resources.wood >= 5) {
+    w.resources.stone -= 5;
+    w.resources.wood -= 5;
+    w.resources.iron += 3;
+    w.resources.preciousOres[metalId] = oreHave + 2;
+    sound.playBuildComplete();
+    spawnBurst(w, m.x, GROUND_Y - 18, 20, metalDef.highlight, 'spark', 58);
+    showBanner(
+      w,
+      'TRANSMUTAÇÃO DA FORJA!',
+      `5 Mad + 5 Ped ➔ +3 Ferro e +2 ${metalDef.name}!`,
+      metalDef.highlight
+    );
+    saveCampaign(w);
+    return true;
+  }
+
+  // 2. Precious Ore -> Iron + Stone + Gold Coins
+  if (oreHave >= 3) {
+    w.resources.preciousOres[metalId] = oreHave - 3;
+    w.resources.iron += 6;
+    w.resources.stone += 4;
+    for (let i = 0; i < 4; i++) {
+      spawnCoin(w, m.x, GROUND_Y - 16, (i - 1.5) * 18, -68 - Math.random() * 14, false, 0.2);
+    }
+    sound.playBuildComplete();
+    spawnBurst(w, m.x, GROUND_Y - 18, 20, '#ffd166', 'spark', 58);
+    showBanner(
+      w,
+      'REFINO DE MINÉRIO PRECIOSO!',
+      `3 ${metalDef.name} ➔ +6 Ferro, +4 Pedra e +4 Moedas!`,
+      '#ffd166'
+    );
+    saveCampaign(w);
+    return true;
+  }
+
+  // 3. Excess Wood -> Stone + Iron
+  if (w.resources.wood >= 8) {
+    w.resources.wood -= 8;
+    w.resources.stone += 6;
+    w.resources.iron += 2;
+    sound.playBuildComplete();
+    spawnBurst(w, m.x, GROUND_Y - 18, 16, '#cfdbe6', 'stone', 48);
+    showBanner(w, 'CONVERSÃO DE MADEIRA!', '8 Madeira ➔ +6 Pedra e +2 Ferro!', '#cfdbe6');
+    saveCampaign(w);
+    return true;
+  }
+
+  // 4. Excess Stone -> Wood + Iron
+  if (w.resources.stone >= 8) {
+    w.resources.stone -= 8;
+    w.resources.wood += 6;
+    w.resources.iron += 2;
+    sound.playBuildComplete();
+    spawnBurst(w, m.x, GROUND_Y - 18, 16, '#e0b376', 'wood', 48);
+    showBanner(w, 'CONVERSÃO DE PEDRA!', '8 Pedra ➔ +6 Madeira e +2 Ferro!', '#e0b376');
+    saveCampaign(w);
+    return true;
+  }
+
+  showBanner(
+    w,
+    'MATERIAIS INSUFICIENTES PARA CONVERTER',
+    `Precisa de (5 Mad + 5 Ped), (8 Mad), (8 Ped) ou (3 ${metalDef.name})!`,
+    '#ff9b52'
+  );
+  return false;
+}
+
+function damagePortal(w: WorldState, portal: WorldState['portals'][number], dmg: number): void {
+  if (portal.destroyed) return;
+  const prevRatio = portal.hp / Math.max(1, portal.maxHp);
+  portal.hp = Math.max(0, portal.hp - dmg);
+  portal.hitFlash = 0.16;
+  const nextRatio = portal.hp / Math.max(1, portal.maxHp);
+
+  // Portal summons emergency Draugr defenders when crossing 66% & 33% HP thresholds!
+  if ((prevRatio > 0.66 && nextRatio <= 0.66) || (prevRatio > 0.33 && nextRatio <= 0.33)) {
+    for (let i = 0; i < 2; i++) {
+      spawnProgressiveEnemy(w, portal.x, portal.side, i === 0 ? 'draugr' : 'wolf_wraith');
+    }
+  }
+
+  if (portal.hp <= 0) {
+    portal.destroyed = true;
+    portal.spawnQueue = 0;
+    w.screenShake = 0.45;
+    sound.playHorn(true);
+    sound.playBuildComplete();
+    spawnBurst(w, portal.x, GROUND_Y - 26, 36, '#7ef5ff', 'shadow', 92);
+    spawnBurst(w, portal.x, GROUND_Y - 22, 24, '#ffe58a', 'spark', 75);
+    for (let c = 0; c < 10; c++) {
+      spawnCoin(w, portal.x, GROUND_Y - 18, (c - 4.5) * 14, -78 - Math.random() * 24, false, 0.25);
+    }
+    if (w.monarchs[0]) {
+      w.monarchs[0].diamonds += 1;
+      w.resources.diamonds = w.monarchs[0].diamonds;
+    }
+    // Release all troops that were assaulting this portal so they return home in triumph!
+    for (const v of w.villagers) {
+      if (v.assaultPortalId === portal.id) {
+        v.assaultPortalId = null;
+        v.state = 'idle';
+      }
+    }
+    showBanner(
+      w,
+      'PORTAL SOMBRIO DESTRUÍDO!',
+      'Sua companhia derrubou o portal! Recompensa: +10 Moedas e +1 Diamante!',
+      '#ffe58a'
+    );
+    saveCampaign(w);
+  }
+}
+
+export function triggerElderPower(w: WorldState, monarchIndex = 0): boolean {
+  const m = w.monarchs[monarchIndex];
+  if (!m || w.mode !== 'playing' || !m.ridingElderId) return false;
+  const elder = (w.elders ?? []).find((e) => e.id === m.ridingElderId && e.state === 'riding');
+  if (!elder) return false;
+  const def = ELDER_DEFS[elder.id];
+  if (elder.activeCooldown > 0) {
+    showBanner(w, `${def.name.toUpperCase()} EM RECARGA`, `Aguarde ${Math.ceil(elder.activeCooldown)}s`, '#9fb3c8');
+    return false;
+  }
+
+  // 1. ANCIÃO BARDO — Balada Nórdica (rallies wanderers, refills stamina & showers morale coins)
+  if (elder.id === 'bard') {
+    elder.activeCooldown = def.powerCooldown;
+    m.stamina = m.maxStamina;
+    m.exhausted = false;
+    sound.playHorn(false);
+    spawnBurst(w, m.x, GROUND_Y - 22, 22, def.accentColor, 'spark', 64);
+    for (let i = 0; i < 3; i++) {
+      spawnCoin(w, m.x, GROUND_Y - 20, (i - 1) * 24, -68 - Math.random() * 14, false, 0.2);
+    }
+    for (const v of w.villagers) {
+      if (v.role === 'wanderer' && Math.abs(v.x - m.x) < 420) {
+        v.targetX = getCenterX(w) + (v.x < getCenterX(w) ? -65 : 65);
+        v.actionTimer = 5;
+      }
+    }
+    showBanner(
+      w,
+      'BALADA DO ANCIÃO BARDO!',
+      'Fôlego restaurado, +3 moedas de moral e errantes próximos atraídos!',
+      def.accentColor
+    );
+    return true;
+  }
+
+  // 2. ANCIÃO DA FORÇA — Converte minérios, pedras e madeiras em outros recursos!
+  if (elder.id === 'forge_elder') {
+    const converted = performForgeElderConversion(w, m);
+    if (converted) elder.activeCooldown = def.powerCooldown;
+    return converted;
+  }
+
+  // 3. ANCIÃO DAS OBRAS — Repara muros/torres (+35% HP) e acelera obras ativas!
+  if (elder.id === 'builder_elder') {
+    elder.activeCooldown = def.powerCooldown;
+    let boosted = 0;
+    for (const wall of w.walls) {
+      if (wall.level > 0 && !wall.destroyed && wall.hp < wall.maxHp) {
+        wall.hp = Math.min(wall.maxHp, wall.hp + Math.round(wall.maxHp * 0.35));
+        spawnBurst(w, wall.x, GROUND_Y - 18, 10, def.accentColor, 'spark', 40);
+        boosted++;
+      }
+      if (wall.underConstruction) {
+        wall.buildProgress = Math.min(0.98, wall.buildProgress + 0.35);
+        boosted++;
+      }
+    }
+    for (const tw of w.towers) {
+      if (tw.level > 0 && !tw.destroyed && tw.hp < tw.maxHp) {
+        tw.hp = Math.min(tw.maxHp, tw.hp + Math.round(tw.maxHp * 0.35));
+        spawnBurst(w, tw.x, GROUND_Y - 20, 10, def.accentColor, 'spark', 40);
+        boosted++;
+      }
+      if (tw.underConstruction) {
+        tw.buildProgress = Math.min(0.98, tw.buildProgress + 0.35);
+        boosted++;
+      }
+    }
+    sound.playBuildComplete();
+    spawnBurst(w, m.x, GROUND_Y - 20, 20, def.accentColor, 'spark', 58);
+    showBanner(
+      w,
+      'MESTRE DAS OBRAS!',
+      boosted > 0
+        ? 'Muralhas e torres reforçadas (+35%) e construções aceleradas!'
+        : 'Aproxime-se de Muros, Torres, Fazendas ou do Reino (Nv.4+) para evoluí-los!',
+      def.accentColor
+    );
+    return true;
+  }
+
+  // 4. ANCIÃO DAS FERAS — Encanta e atrai animais selvagens direto para dentro do reino!
+  if (elder.id === 'beast_elder') {
+    elder.activeCooldown = def.powerCooldown;
+    sound.playHorn(false);
+    spawnBurst(w, m.x, GROUND_Y - 18, 22, def.accentColor, 'leaf', 64);
+    const cx = getCenterX(w);
+    for (let i = 0; i < 4; i++) {
+      const side: -1 | 1 = i % 2 === 0 ? -1 : 1;
+      const spawnX = Math.max(320, Math.min(getWorldWidth(w) - 320, cx + side * (250 + i * 55)));
+      const kind: 'deer' | 'rabbit' = i < 2 ? 'deer' : 'rabbit';
+      w.wildlife.push({
+        id: uid(w),
+        kind,
+        x: spawnX,
+        y: GROUND_Y,
+        vx: -side * (kind === 'deer' ? 38 : 30),
+        facing: (-side) as 1 | -1,
+        hp: kind === 'deer' ? 16 : 8,
+        aiTimer: 8,
+        animTime: i * 0.8,
+        charmed: true,
+      });
+      spawnBurst(w, spawnX, GROUND_Y - 10, 8, '#98f582', 'spark', 36);
+    }
+    // Also charm any existing wildlife on the island toward the kingdom!
+    for (const prey of w.wildlife) {
+      prey.charmed = true;
+    }
+    showBanner(
+      w,
+      'CHAMADO DO ANCIÃO DAS FERAS!',
+      'Cervos e lebres encantados correm para o reino — seus arqueiros vão caçá-los!',
+      def.accentColor
+    );
+    return true;
+  }
+
+  // 5. ANCIÃO DE GUERRA — Toca a Trombeta e forma Companhia (até 3 Espadachins, 3 Arqueiros, 3 Lanceiros) contra Portal!
+  if (elder.id === 'war_elder') {
+    const activePortals = w.portals.filter((p) => !p.destroyed);
+    if (activePortals.length === 0) {
+      showBanner(w, 'TODOS OS PORTAIS DESTRUÍDOS!', 'Esta ilha já está livre de portais inimigos!', '#ffe58a');
+      return false;
+    }
+    const facingPortals = activePortals
+      .filter((p) => (p.x - m.x) * m.facing >= -40)
+      .sort((a, b) => Math.abs(a.x - m.x) - Math.abs(b.x - m.x));
+    const targetPortal =
+      facingPortals[0] ?? activePortals.sort((a, b) => Math.abs(a.x - m.x) - Math.abs(b.x - m.x))[0];
+
+    const pickSquad = (role: VillagerRole, cap: number): Villager[] =>
+      w.villagers
+        .filter(
+          (v) =>
+            v.role === role &&
+            v.state !== 'embarked' &&
+            v.state !== 'boarding' &&
+            v.state !== 'tribute_march' &&
+            v.state !== 'tribute_ascending' &&
+            v.assaultPortalId !== targetPortal.id
+        )
+        .sort((a, b) => Math.abs(a.x - targetPortal.x) - Math.abs(b.x - targetPortal.x))
+        .slice(0, cap);
+
+    const swords = pickSquad('warrior', 3);
+    const archers = pickSquad('archer', 3);
+    const spearmen = pickSquad('spearman', 3);
+    const company = [...swords, ...spearmen, ...archers];
+
+    if (company.length === 0) {
+      showBanner(
+        w,
+        'SEM TROPAS DISPONÍVEIS!',
+        'Recrute Espadachins, Arqueiros e Lanceiros antes de tocar a Trombeta!',
+        '#ff8a65'
+      );
+      return false;
+    }
+
+    elder.activeCooldown = def.powerCooldown;
+    sound.playHorn(true);
+    w.screenShake = 0.18;
+    spawnBurst(w, m.x, GROUND_Y - 22, 24, def.trimColor, 'spark', 72);
+
+    const attackSide: -1 | 1 = targetPortal.x < getCenterX(w) ? -1 : 1;
+    for (const soldier of company) {
+      soldier.side = attackSide;
+      soldier.assignedTowerId = null;
+      soldier.assignedFarmId = null;
+      soldier.assaultPortalId = targetPortal.id;
+      soldier.state = 'assaulting';
+      soldier.orderFlashTimer = 2.6;
+      soldier.orderDir = attackSide;
+      spawnBurst(w, soldier.x, GROUND_Y - 16, 6, def.trimColor, 'spark', 32);
+    }
+
+    showBanner(
+      w,
+      'TROMBETA DE GUERRA — COMPANHIA AO ATAQUE!',
+      `${swords.length} Espadachins · ${archers.length} Arqueiros · ${spearmen.length} Lanceiros marchando contra o Portal!`,
+      def.accentColor
+    );
+    return true;
+  }
+
+  return false;
+}
+
+function updateElders(w: WorldState, dt: number): void {
+  const elders = w.elders;
+  if (!elders || elders.length === 0) return;
+
+  const safe = getKingdomSafeBounds(w);
+  const cx = getCenterX(w);
+
+  for (const elder of elders) {
+    elder.activeCooldown = Math.max(0, elder.activeCooldown - dt);
+    elder.animTime += dt * (Math.abs(elder.vx) > 4 ? 7 : 2.2);
+    elder.abilityTimer -= dt;
+
+    if (!elder.rescued) {
+      elder.state = 'cottage';
+      elder.x = elder.cottageX;
+      elder.vx = 0;
+      continue;
+    }
+
+    if (elder.state === 'riding') {
+      const m = w.monarchs.find((mon) => mon.id === elder.ridingMonarchId);
+      if (!m || m.ridingElderId !== elder.id) {
+        elder.state = 'walking';
+        elder.ridingMonarchId = null;
+        elder.x = Math.max(safe.left, Math.min(safe.right, elder.x));
+        continue;
+      }
+
+      // Position seated behind Monarch on the horse
+      elder.x = m.x - m.facing * 7;
+      elder.vx = m.vx;
+      elder.facing = m.facing;
+
+      // STRICT RULE: If Monarch rides outside the safety of the walls, ONLY War Elder & Builder Elder stay mounted!
+      const outsideWalls = m.x < safe.left - 14 || m.x > safe.right + 14;
+      if (outsideWalls && !canElderLeaveWalls(elder.id)) {
+        const def = ELDER_DEFS[elder.id];
+        elder.state = 'walking';
+        elder.ridingMonarchId = null;
+        m.ridingElderId = null;
+        elder.x = m.x < safe.left ? safe.left + 8 : safe.right - 8;
+        elder.targetX = cx + (m.x < cx ? -45 : 45);
+        elder.vx = 0;
+        sound.playCoinDrop();
+        spawnBurst(w, elder.x, GROUND_Y - 14, 14, def.accentColor, 'spark', 42);
+        showBanner(
+          w,
+          `${def.name.toUpperCase()} DESCEU NOS MUROS!`,
+          'Apenas o Ancião de Guerra e o Ancião das Obras saem dos muros no cavalo!',
+          def.accentColor
+        );
+        continue;
+      }
+
+      // Subtle riding ambiance for Bard
+      if (elder.id === 'bard' && elder.abilityTimer <= 0) {
+        elder.abilityTimer = 2.4;
+        spawnBurst(w, elder.x, GROUND_Y - 24, 2, ELDER_DEFS.bard.accentColor, 'spark', 18);
+      }
+      continue;
+    }
+
+    // Rescued Elder walking safely inside the kingdom walls!
+    const minX = Math.min(safe.left, cx - 40);
+    const maxX = Math.max(safe.right, cx + 40);
+    if (elder.x < minX) {
+      moveToward(elder, minX + 18, 42, dt);
+    } else if (elder.x > maxX) {
+      moveToward(elder, maxX - 18, 42, dt);
+    } else {
+      if (Math.abs(elder.x - elder.targetX) < 8 || Math.random() < dt * 0.22) {
+        elder.targetX = minX + 12 + Math.random() * Math.max(20, maxX - minX - 24);
+      }
+      moveToward(elder, elder.targetX, 22, dt);
+    }
+
+    // Passive kingdom perks while walking safely inside the walls!
+    if (elder.abilityTimer <= 0) {
+      if (elder.id === 'bard') {
+        elder.abilityTimer = 14;
+        spawnBurst(w, elder.x, GROUND_Y - 18, 6, ELDER_DEFS.bard.accentColor, 'spark', 28);
+        if (!w.isNight && w.hall.level >= 1) {
+          spawnCoin(w, elder.x, GROUND_Y - 14, (Math.random() - 0.5) * 26, -58, false, 0.25);
+        }
+      } else if (elder.id === 'beast_elder') {
+        elder.abilityTimer = 15;
+        if (!w.isNight && w.wildlife.length < 14) {
+          const side: -1 | 1 = Math.random() > 0.5 ? 1 : -1;
+          const spawnX = Math.max(320, Math.min(getWorldWidth(w) - 320, cx + side * 280));
+          const kind: 'deer' | 'rabbit' = Math.random() < 0.45 ? 'deer' : 'rabbit';
+          w.wildlife.push({
+            id: uid(w),
+            kind,
+            x: spawnX,
+            y: GROUND_Y,
+            vx: -side * 30,
+            facing: (-side) as 1 | -1,
+            hp: kind === 'deer' ? 16 : 8,
+            aiTimer: 7,
+            animTime: 0,
+            charmed: true,
+          });
+          spawnBurst(w, elder.x, GROUND_Y - 16, 6, '#98f582', 'leaf', 26);
+        }
+      } else {
+        elder.abilityTimer = 8;
+      }
+    }
+  }
+}
+
 function updateMonarch(
   w: WorldState,
   m: Monarch,
@@ -3336,6 +4005,11 @@ function updateMonarch(
   if (input.weaponJustPressed) {
     const idx = w.monarchs.indexOf(m);
     triggerMonarchWeapon(w, idx >= 0 ? idx : 0);
+  }
+  // Trigger mounted Elder's active power via G or HUD button
+  if (input.elderJustPressed) {
+    const idx = w.monarchs.indexOf(m);
+    triggerElderPower(w, idx >= 0 ? idx : 0);
   }
 
   // Harpy smooth aerial elevation while flyTimer > 0
@@ -4520,12 +5194,14 @@ function updateVillagers(w: WorldState, dt: number): void {
         const canBoard =
           (v.role === 'archer' && w.boat.crewArchers < MAX_CREW_PER_CLASS) ||
           (v.role === 'warrior' && w.boat.crewWarriors < MAX_CREW_PER_CLASS) ||
+          (v.role === 'spearman' && (w.boat.crewSpearmen ?? 0) < MAX_CREW_PER_CLASS) ||
           (v.role === 'producer' && w.boat.crewProducers < MAX_CREW_PER_CLASS) ||
           (v.role === 'builder' && w.boat.crewBuilders < MAX_CREW_PER_CLASS);
         if (canBoard) {
           v.state = 'embarked';
           if (v.role === 'archer') w.boat.crewArchers += 1;
           else if (v.role === 'warrior') w.boat.crewWarriors += 1;
+          else if (v.role === 'spearman') w.boat.crewSpearmen = (w.boat.crewSpearmen ?? 0) + 1;
           else if (v.role === 'producer') w.boat.crewProducers += 1;
           else if (v.role === 'builder') w.boat.crewBuilders += 1;
           sound.playCoinPickup();
@@ -4658,6 +5334,11 @@ function updateVillagers(w: WorldState, dt: number): void {
               const warriorHp = w.activeGod === 'thor' ? 86 : 64;
               v.hp = warriorHp;
               v.maxHp = warriorHp;
+            } else if (stockedShop.kind === 'spear') {
+              v.role = 'spearman';
+              const spearHp = w.activeGod === 'thor' ? 66 : 48;
+              v.hp = spearHp;
+              v.maxHp = spearHp;
             } else {
               v.role = 'producer';
               v.hp = 22;
@@ -5122,6 +5803,146 @@ function updateVillagers(w: WorldState, dt: number): void {
     }
 
     // --- WARRIOR (defends kingdom; when idle in daytime, excavates new rocks, then sweeps coins to Banker!) ---
+    // --- PORTAL ASSAULT COMPANY (dispatched by Ancião de Guerra's War Horn: 3 Swordsmen + 3 Archers + 3 Spearmen!) ---
+    if (
+      v.assaultPortalId != null &&
+      (v.role === 'warrior' || v.role === 'spearman' || v.role === 'archer')
+    ) {
+      const targetPortal = w.portals.find((p) => p.id === v.assaultPortalId && !p.destroyed);
+      if (!targetPortal) {
+        v.assaultPortalId = null;
+        v.state = 'idle';
+      } else {
+        v.state = 'assaulting';
+        // Engage any enemy blocking the assault company first!
+        const engageRange = v.role === 'archer' ? 185 : v.role === 'spearman' ? 125 : 115;
+        let blocker: Enemy | null = null;
+        let bDist = engageRange;
+        for (const e of w.enemies) {
+          if (e.kind === 'hel_crow' && v.role !== 'archer') continue;
+          const d = Math.abs(e.x - v.x);
+          if (d < bDist) {
+            bDist = d;
+            blocker = e;
+          }
+        }
+        if (blocker) {
+          if (v.role === 'archer') {
+            v.vx = 0;
+            v.facing = blocker.x >= v.x ? 1 : -1;
+            if (v.actionTimer <= 0) {
+              v.actionTimer = 0.72;
+              const aimY = blocker.kind === 'hel_crow' ? blocker.y - 4 : GROUND_Y - 10;
+              fireArrow(w, v.x, GROUND_Y - 14, blocker.x + blocker.vx * 0.18, aimY, 13);
+            }
+          } else {
+            const reach = v.role === 'spearman' ? 24 : 14;
+            if (bDist > reach) {
+              moveToward(v, blocker.x, 58, dt);
+            } else {
+              v.vx = 0;
+              v.facing = blocker.x >= v.x ? 1 : -1;
+              if (v.actionTimer <= 0) {
+                v.actionTimer = v.role === 'spearman' ? 0.62 : 0.65;
+                const dmg =
+                  v.role === 'spearman'
+                    ? w.activeGod === 'thor'
+                      ? 25
+                      : 18
+                    : w.activeGod === 'thor'
+                      ? 21
+                      : 14;
+                blocker.hp -= dmg;
+                blocker.hitFlash = 0.14;
+                sound.playHit();
+                spawnBurst(w, blocker.x, GROUND_Y - 12, 6, '#ffe066', 'shadow', 38);
+                if (blocker.hp <= 0) handleEnemyKilled(w, blocker);
+              }
+            }
+          }
+          continue;
+        }
+
+        // Advance and strike / shoot the enemy Portal directly!
+        const portalDist = Math.abs(targetPortal.x - v.x);
+        const strikeRange = v.role === 'archer' ? 140 : v.role === 'spearman' ? 28 : 20;
+        if (portalDist > strikeRange) {
+          moveToward(v, targetPortal.x, v.role === 'archer' ? 54 : 58, dt);
+        } else {
+          v.vx = 0;
+          v.facing = targetPortal.x >= v.x ? 1 : -1;
+          if (v.actionTimer <= 0) {
+            if (v.role === 'archer') {
+              v.actionTimer = 0.78;
+              fireArrow(w, v.x, GROUND_Y - 14, targetPortal.x, GROUND_Y - 22, 13);
+            } else {
+              v.actionTimer = v.role === 'spearman' ? 0.64 : 0.68;
+              const dmg =
+                v.role === 'spearman'
+                  ? w.activeGod === 'thor'
+                    ? 24
+                    : 17
+                  : w.activeGod === 'thor'
+                    ? 20
+                    : 14;
+              sound.playHit();
+              spawnBurst(w, targetPortal.x, GROUND_Y - 18, 6, '#7ef5ff', 'spark', 44);
+              damagePortal(w, targetPortal, dmg);
+            }
+          }
+        }
+        continue;
+      }
+    }
+
+    // --- SPEARMAN (Lanceiro: long-reach melee polearm defender; pairs with Swordsmen & Archers in War Companies!) ---
+    if (v.role === 'spearman') {
+      const defWall = getOuterDefensiveWall(w, v.side);
+      const guardX = defWall
+        ? defWall.x + v.side * (2 + (v.id % 3) * 5)
+        : getCenterX(w) + v.side * (145 + (v.id % 3) * 12);
+
+      let targetEnemy: Enemy | null = null;
+      let bestDist = 125;
+      for (const e of w.enemies) {
+        if (e.kind === 'hel_crow') continue;
+        const d = Math.abs(e.x - v.x);
+        if (d < bestDist) {
+          bestDist = d;
+          targetEnemy = e;
+        }
+      }
+
+      if (targetEnemy) {
+        v.state = 'defending';
+        if (bestDist > 24) {
+          moveToward(v, targetEnemy.x, 56, dt);
+        } else {
+          v.vx = 0;
+          v.facing = targetEnemy.x >= v.x ? 1 : -1;
+          if (v.actionTimer <= 0) {
+            v.actionTimer = 0.62;
+            targetEnemy.hp -= w.activeGod === 'thor' ? 25 : 18;
+            targetEnemy.hitFlash = 0.14;
+            sound.playHit();
+            spawnBurst(w, targetEnemy.x, GROUND_Y - 12, 6, '#aef4ff', 'shadow', 40);
+            if (targetEnemy.hp <= 0) handleEnemyKilled(w, targetEnemy);
+          }
+        }
+        continue;
+      }
+
+      if (!isEveningOrNight && w.enemies.length === 0) {
+        if (v.carriedCoins > 0 && deliverCarriedCoinsToBanker(w, v, dt)) continue;
+        if (trySweepCoinsToBanker(w, v, dt, isEveningOrNight)) continue;
+      }
+
+      v.state = 'defending';
+      moveToward(v, guardX, 52, dt);
+      if (Math.abs(v.x - guardX) < 4) v.facing = v.side;
+      continue;
+    }
+
     if (v.role === 'warrior') {
       if (!isEveningOrNight && v.hp < v.maxHp) {
         v.hp = Math.min(v.maxHp, v.hp + dt * 4);
@@ -5619,10 +6440,10 @@ function updateEnemies(w: WorldState, dt: number): void {
 
     const blockingWarrior = w.villagers.find(
       (v) =>
-        v.role === 'warrior' &&
+        (v.role === 'warrior' || v.role === 'spearman') &&
         v.state !== 'embarked' &&
         v.state !== 'tribute_ascending' &&
-        Math.abs(v.x - e.x) < 14
+        Math.abs(v.x - e.x) < 16
     );
     if (blockingWarrior) {
       e.vx = 0;
@@ -5754,6 +6575,7 @@ function updateEnemies(w: WorldState, dt: number): void {
       if (
         v.role === 'wanderer' ||
         v.role === 'warrior' ||
+        v.role === 'spearman' ||
         v.state === 'embarked' ||
         v.state === 'tribute_ascending'
       )
@@ -5769,6 +6591,7 @@ function updateEnemies(w: WorldState, dt: number): void {
           v.role = 'peasant';
           v.assignedFarmId = null;
           v.assignedTowerId = null;
+          v.assaultPortalId = null;
           e.stolenLoot = 'coin';
           e.retreating = true;
           sound.playHit();
@@ -5814,6 +6637,20 @@ function updateArrows(w: WorldState, dt: number): void {
         sound.playHit();
         spawnBurst(w, a.x, a.y, 6, '#6bf3ff', 'shadow', 42);
         if (e.hp <= 0) handleEnemyKilled(w, e);
+        w.arrows.splice(i, 1);
+        hit = true;
+        break;
+      }
+    }
+    if (hit) continue;
+
+    // Arrows fired by Assault Companies can strike & destroy Enemy Portals!
+    for (const portal of w.portals) {
+      if (portal.destroyed) continue;
+      if (Math.abs(a.x - portal.x) < 18 && a.y >= GROUND_Y - 46 && a.y <= GROUND_Y) {
+        sound.playHit();
+        spawnBurst(w, a.x, a.y, 6, '#7ef5ff', 'spark', 38);
+        damagePortal(w, portal, a.damage);
         w.arrows.splice(i, 1);
         hit = true;
         break;
@@ -5926,10 +6763,22 @@ function updateWildlife(w: WorldState, dt: number): void {
     spawnBurst(w, spawnX, GROUND_Y - 8, 4, '#79a86b', 'leaf', 18);
   }
 
+  const cx = getCenterX(w);
   for (const prey of w.wildlife) {
     prey.animTime += dt * (Math.abs(prey.vx) > 2 ? 9 : 2);
     prey.aiTimer -= dt;
-    if (prey.aiTimer <= 0) {
+    if (prey.charmed) {
+      // Charmed by Ancião das Feras: run directly into the kingdom hunting grounds!
+      const goalX = cx + (prey.id % 2 === 0 ? -72 : 72);
+      const dx = goalX - prey.x;
+      if (Math.abs(dx) > 28) {
+        prey.facing = dx >= 0 ? 1 : -1;
+        prey.vx = prey.facing * (prey.kind === 'deer' ? 36 : 28);
+      } else {
+        prey.vx = 0;
+        if (prey.aiTimer <= 0) prey.charmed = false;
+      }
+    } else if (prey.aiTimer <= 0) {
       prey.aiTimer = 1.4 + Math.random() * 2.8;
       if (Math.random() < 0.55) {
         prey.facing = Math.random() > 0.5 ? 1 : -1;
@@ -7065,12 +7914,14 @@ const IDLE_REMOTE_INPUT: InputState = {
   sprint: false,
   powerJustPressed: false,
   weaponJustPressed: false,
+  elderJustPressed: false,
   drop: false,
   dropJustPressed: false,
   cmdZ: false,
   cmdX: false,
   cmdC: false,
   cmdV: false,
+  cmdB: false,
 };
 
 export function stepWorld(
@@ -7124,6 +7975,7 @@ export function stepWorld(
   if (w.preciousMine) {
     w.preciousMine.hitShake = Math.max(0, w.preciousMine.hitShake - dt);
   }
+  updateElders(w, dt);
   updateGodTributeRitual(w, dt);
   updateFireTrailsAndLightning(w, dt);
   updateDayNightAndWaves(w, dt);
