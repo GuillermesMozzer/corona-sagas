@@ -1,20 +1,41 @@
+import {
+  DEFAULT_TRACK_ID,
+  getMusicTrackById,
+  MUSIC_TRACKS,
+  type LeadInstrument,
+  type MusicTrack,
+  type PercHit,
+} from './tracks';
+
 const MUSIC_KEY = 'corona_music_v1';
 const SFX_KEY = 'corona_sfx_v1';
 const MUSIC_VOL_KEY = 'corona_music_vol_v1';
 const SFX_VOL_KEY = 'corona_sfx_vol_v1';
+const MUSIC_TRACK_KEY = 'corona_music_track_v1';
+const MUSIC_SHUFFLE_KEY = 'corona_music_shuffle_v1';
 
 class ProceduralAudio {
   private ctx: AudioContext | null = null;
   private musicMasterGain: GainNode | null = null;
+  private musicBus: GainNode | null = null;
   private sfxMasterGain: GainNode | null = null;
+  private noiseBuffer: AudioBuffer | null = null;
   private sfxEnabled = true;
   private musicEnabled = true;
   private musicVolume = 3; // 0..5
   private sfxVolume = 4; // 0..5
   private lastHoofTime = 0;
   private musicInterval: number | null = null;
+  private currentIntervalMs = 0;
   private musicStep = 0;
+  private loopCount = 0;
   private nightMood = false;
+
+  private selectedTrackId = DEFAULT_TRACK_ID;
+  private shuffleEnabled = false;
+  private activeShuffleTrackId = DEFAULT_TRACK_ID;
+  private previewTrackId: string | null = null;
+  private onMusicStateChangeCb: (() => void) | null = null;
 
   constructor() {
     try {
@@ -32,16 +53,161 @@ class ProceduralAudio {
         const parsed = Math.max(0, Math.min(5, Math.round(Number(sv))));
         if (Number.isFinite(parsed)) this.sfxVolume = parsed;
       }
+      const savedTrack = window.localStorage.getItem(MUSIC_TRACK_KEY);
+      if (savedTrack && MUSIC_TRACKS.some((tr) => tr.id === savedTrack)) {
+        this.selectedTrackId = savedTrack;
+        this.activeShuffleTrackId = savedTrack;
+      }
+      const savedShuffle = window.localStorage.getItem(MUSIC_SHUFFLE_KEY);
+      if (savedShuffle === '1') {
+        this.shuffleEnabled = true;
+      }
     } catch {
       // Ignore storage errors
     }
+  }
+
+  public setOnMusicStateChange(cb: (() => void) | null): void {
+    this.onMusicStateChangeCb = cb;
+  }
+
+  private notifyMusicChange(): void {
+    this.onMusicStateChangeCb?.();
+  }
+
+  public getTracks(): MusicTrack[] {
+    return MUSIC_TRACKS;
+  }
+
+  public getSelectedTrackId(): string {
+    return this.selectedTrackId;
+  }
+
+  public getSelectedTrack(): MusicTrack {
+    return getMusicTrackById(this.selectedTrackId);
+  }
+
+  public getPreviewTrackId(): string | null {
+    return this.previewTrackId;
+  }
+
+  public isPreviewing(): boolean {
+    return this.previewTrackId !== null;
+  }
+
+  public isShuffleEnabled(): boolean {
+    return this.shuffleEnabled;
+  }
+
+  public getActivePlayingTrack(): MusicTrack {
+    if (this.previewTrackId) return getMusicTrackById(this.previewTrackId);
+    if (this.shuffleEnabled) return getMusicTrackById(this.activeShuffleTrackId);
+    return getMusicTrackById(this.selectedTrackId);
+  }
+
+  public toggleShuffle(): boolean {
+    this.shuffleEnabled = !this.shuffleEnabled;
+    if (this.shuffleEnabled) {
+      this.activeShuffleTrackId = this.selectedTrackId;
+      this.loopCount = 0;
+    }
+    try {
+      window.localStorage.setItem(MUSIC_SHUFFLE_KEY, this.shuffleEnabled ? '1' : '0');
+    } catch {
+      // Ignore
+    }
+    if (!this.previewTrackId && this.musicEnabled) {
+      this.restartMusicLoop(false);
+    }
+    this.notifyMusicChange();
+    return this.shuffleEnabled;
+  }
+
+  /**
+   * Auditions a track live inside the Discoteca before the player chooses it.
+   * Plays audibly even if music is muted, and never overwrites selectedTrackId.
+   */
+  public startPreview(trackId: string): void {
+    const track = getMusicTrackById(trackId);
+    this.previewTrackId = track.id;
+    this.musicStep = 0;
+    this.unlock();
+    this.syncMasterGains();
+    this.restartMusicLoop(true);
+    this.notifyMusicChange();
+  }
+
+  /**
+   * Stops live preview and restores the player's chosen soundtrack (or silence if music is OFF).
+   */
+  public stopPreview(): void {
+    if (!this.previewTrackId) return;
+    this.previewTrackId = null;
+    this.syncMasterGains();
+    if (this.musicEnabled && this.musicVolume > 0) {
+      this.musicStep = 0;
+      this.restartMusicLoop(false);
+    } else {
+      this.stopMusicLoop();
+    }
+    this.notifyMusicChange();
+  }
+
+  /**
+   * Selects a track as the player's chosen soundtrack, saves to localStorage,
+   * enables music if muted, and seamlessly keeps playing it into the game.
+   */
+  public selectTrack(trackId: string): MusicTrack {
+    const track = getMusicTrackById(trackId);
+    const wasPreviewingSame = this.previewTrackId === track.id;
+    this.selectedTrackId = track.id;
+    this.activeShuffleTrackId = track.id;
+    this.shuffleEnabled = false;
+    this.previewTrackId = null;
+    this.loopCount = 0;
+
+    if (!this.musicEnabled) {
+      this.musicEnabled = true;
+      try {
+        window.localStorage.setItem(MUSIC_KEY, '1');
+      } catch {
+        // Ignore
+      }
+    }
+    if (this.musicVolume === 0) {
+      this.musicVolume = 3;
+      try {
+        window.localStorage.setItem(MUSIC_VOL_KEY, '3');
+      } catch {
+        // Ignore
+      }
+    }
+    try {
+      window.localStorage.setItem(MUSIC_TRACK_KEY, track.id);
+      window.localStorage.setItem(MUSIC_SHUFFLE_KEY, '0');
+    } catch {
+      // Ignore
+    }
+
+    this.unlock();
+    this.syncMasterGains();
+    if (!wasPreviewingSame || this.musicInterval === null || this.currentIntervalMs !== track.stepMs) {
+      this.musicStep = 0;
+      this.restartMusicLoop(true);
+    }
+    this.notifyMusicChange();
+    return track;
   }
 
   private syncMasterGains(): void {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
     if (this.musicMasterGain) {
-      const target = this.musicEnabled ? this.musicVolume / 5 : 0;
+      let target = this.musicEnabled ? this.musicVolume / 5 : 0;
+      if (this.previewTrackId !== null) {
+        // Ensure preview is clearly audible even if gameplay music is currently muted or 0
+        target = Math.max(target, this.musicVolume > 0 ? this.musicVolume / 5 : 0.6);
+      }
       this.musicMasterGain.gain.setTargetAtTime(target, now, 0.03);
     }
     if (this.sfxMasterGain) {
@@ -151,11 +317,26 @@ class ProceduralAudio {
     if (this.musicEnabled) {
       this.unlock();
       this.startMusicLoop();
-    } else {
+    } else if (!this.previewTrackId) {
       this.stopMusicLoop();
     }
     this.syncMasterGains();
+    this.notifyMusicChange();
     return this.musicEnabled;
+  }
+
+  private ensureNoiseBuffer(ctx: AudioContext): AudioBuffer {
+    if (this.noiseBuffer && this.noiseBuffer.sampleRate === ctx.sampleRate) {
+      return this.noiseBuffer;
+    }
+    const len = Math.floor(ctx.sampleRate * 0.25);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    this.noiseBuffer = buf;
+    return buf;
   }
 
   public unlock(): void {
@@ -167,83 +348,464 @@ class ProceduralAudio {
         this.ctx = new AudioCtx();
         this.musicMasterGain = this.ctx.createGain();
         this.musicMasterGain.connect(this.ctx.destination);
+
+        // Warm Nordic Fjord Shimmer Delay Bus (dry + soft filtered echo)
+        this.musicBus = this.ctx.createGain();
+        this.musicBus.gain.value = 1.0;
+        this.musicBus.connect(this.musicMasterGain);
+
+        try {
+          const delay = this.ctx.createDelay(1.0);
+          delay.delayTime.value = 0.34;
+          const delayFilter = this.ctx.createBiquadFilter();
+          delayFilter.type = 'lowpass';
+          delayFilter.frequency.value = 980;
+          const feedback = this.ctx.createGain();
+          feedback.gain.value = 0.24;
+          const wet = this.ctx.createGain();
+          wet.gain.value = 0.22;
+
+          this.musicBus.connect(delay);
+          delay.connect(delayFilter);
+          delayFilter.connect(feedback);
+          feedback.connect(delay);
+          delayFilter.connect(wet);
+          wet.connect(this.musicMasterGain);
+        } catch {
+          // Fallback to dry bus only if DelayNode unsupported
+        }
+
         this.sfxMasterGain = this.ctx.createGain();
         this.sfxMasterGain.connect(this.ctx.destination);
         this.syncMasterGains();
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
-      void this.ctx.resume();
+      void this.ctx.resume().then(() => {
+        if (this.musicStep === 0 && (this.previewTrackId !== null || (this.musicEnabled && this.musicVolume > 0))) {
+          this.playMusicBeat();
+        }
+      });
     }
-    if (this.musicEnabled) {
+    if (this.musicEnabled || this.previewTrackId !== null) {
       this.startMusicLoop();
     }
   }
 
   private startMusicLoop(): void {
-    if (this.musicInterval !== null || typeof window === 'undefined' || !window.setInterval) return;
+    const track = this.getActivePlayingTrack();
+    if (
+      this.musicInterval !== null &&
+      this.currentIntervalMs === track.stepMs
+    ) {
+      return;
+    }
+    this.restartMusicLoop(false);
+  }
+
+  private restartMusicLoop(triggerImmediately: boolean): void {
+    this.stopMusicLoop();
+    if (typeof window === 'undefined' || !window.setInterval) return;
+    const track = this.getActivePlayingTrack();
+    this.currentIntervalMs = track.stepMs;
+    if (triggerImmediately) {
+      this.playMusicBeat();
+    }
     this.musicInterval = window.setInterval(() => {
       this.playMusicBeat();
-    }, 950);
+    }, track.stepMs);
   }
 
   private stopMusicLoop(): void {
     if (this.musicInterval !== null && typeof window !== 'undefined' && window.clearInterval) {
       window.clearInterval(this.musicInterval);
       this.musicInterval = null;
+      this.currentIntervalMs = 0;
     }
   }
 
+  private playInstrumentNote(
+    ctx: AudioContext,
+    out: AudioNode,
+    voice: LeadInstrument,
+    freq: number,
+    now: number,
+    vol: number,
+    filterHz: number,
+    stepSec: number
+  ): void {
+    if (voice === 'lyre') {
+      // Classic Corona warm plucked Nordic lyre (triangle + faint 2nd harmonic)
+      const osc = ctx.createOscillator();
+      const harm = ctx.createOscillator();
+      const filter = ctx.createBiquadFilter();
+      const gain = ctx.createGain();
+      const hGain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now);
+      harm.type = 'sine';
+      harm.frequency.setValueAtTime(freq * 2, now);
+      hGain.gain.setValueAtTime(0.16, now);
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(filterHz, now);
+      const decay = Math.max(1.2, stepSec * 2.4);
+      gain.gain.setValueAtTime(0.0005, now);
+      gain.gain.linearRampToValueAtTime(vol, now + 0.045);
+      gain.gain.exponentialRampToValueAtTime(0.0005, now + decay);
+
+      osc.connect(filter);
+      harm.connect(hGain);
+      hGain.connect(filter);
+      filter.connect(gain);
+      gain.connect(out);
+      osc.start(now);
+      harm.start(now);
+      osc.stop(now + decay + 0.06);
+      harm.stop(now + decay + 0.06);
+      return;
+    }
+
+    if (voice === 'harp') {
+      // Silky resonant harp pluck (sine body + warm triangle pluck)
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const filter = ctx.createBiquadFilter();
+      const gain = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(freq, now);
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(freq, now);
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(filterHz * 1.15, now);
+      filter.frequency.exponentialRampToValueAtTime(Math.max(260, filterHz * 0.55), now + 0.8);
+
+      const decay = Math.max(1.35, stepSec * 2.7);
+      gain.gain.setValueAtTime(0.0005, now);
+      gain.gain.linearRampToValueAtTime(vol, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0005, now + decay);
+
+      osc1.connect(filter);
+      osc2.connect(filter);
+      filter.connect(gain);
+      gain.connect(out);
+      osc1.start(now);
+      osc2.start(now);
+      osc1.stop(now + decay + 0.06);
+      osc2.stop(now + decay + 0.06);
+      return;
+    }
+
+    if (voice === 'flute') {
+      // Airy wooden Nordic flute with gentle swell & subtle vibrato
+      const osc = ctx.createOscillator();
+      const lfo = ctx.createOscillator();
+      const lfoGain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now);
+
+      lfo.type = 'sine';
+      lfo.frequency.setValueAtTime(4.8, now);
+      lfoGain.gain.setValueAtTime(freq * 0.006, now);
+      lfo.connect(lfoGain);
+      lfoGain.connect(osc.frequency);
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(filterHz * 1.3, now);
+
+      const dur = Math.max(0.9, stepSec * 1.75);
+      gain.gain.setValueAtTime(0.0005, now);
+      gain.gain.linearRampToValueAtTime(vol * 1.1, now + Math.min(0.18, dur * 0.28));
+      gain.gain.exponentialRampToValueAtTime(0.0005, now + dur);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(out);
+      osc.start(now);
+      lfo.start(now);
+      osc.stop(now + dur + 0.05);
+      lfo.stop(now + dur + 0.05);
+      return;
+    }
+
+    if (voice === 'celesta') {
+      // Crystalline ice-bell / celesta chime
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const g1 = ctx.createGain();
+      const g2 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(freq, now);
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(freq * 2, now);
+
+      const dur = Math.max(1.5, stepSec * 2.6);
+      g1.gain.setValueAtTime(0.0005, now);
+      g1.gain.linearRampToValueAtTime(vol, now + 0.012);
+      g1.gain.exponentialRampToValueAtTime(0.0005, now + dur);
+
+      g2.gain.setValueAtTime(0.0005, now);
+      g2.gain.linearRampToValueAtTime(vol * 0.28, now + 0.008);
+      g2.gain.exponentialRampToValueAtTime(0.0005, now + dur * 0.45);
+
+      osc1.connect(g1);
+      osc2.connect(g2);
+      g1.connect(out);
+      g2.connect(out);
+      osc1.start(now);
+      osc2.start(now);
+      osc1.stop(now + dur + 0.05);
+      osc2.stop(now + dur * 0.5 + 0.05);
+      return;
+    }
+
+    if (voice === 'lute') {
+      // Crisp woody tavern lute pluck
+      const osc = ctx.createOscillator();
+      const filter = ctx.createBiquadFilter();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, now);
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(filterHz * 1.45, now);
+      filter.frequency.exponentialRampToValueAtTime(Math.max(240, filterHz * 0.38), now + 0.36);
+
+      const dur = Math.max(0.55, stepSec * 1.75);
+      gain.gain.setValueAtTime(0.0005, now);
+      gain.gain.linearRampToValueAtTime(vol * 0.85, now + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0005, now + dur);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(out);
+      osc.start(now);
+      osc.stop(now + dur + 0.05);
+      return;
+    }
+
+    if (voice === 'tagelharpa') {
+      // Bowed Nordic horsehair fiddle (warm detuned sawtooth + triangle bow swell)
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const filter = ctx.createBiquadFilter();
+      const gain = ctx.createGain();
+      osc1.type = 'sawtooth';
+      osc2.type = 'triangle';
+      osc1.frequency.setValueAtTime(freq * 0.997, now);
+      osc2.frequency.setValueAtTime(freq * 1.003, now);
+
+      filter.type = 'lowpass';
+      filter.Q.value = 1.6;
+      filter.frequency.setValueAtTime(filterHz * 0.82, now);
+
+      const dur = Math.max(0.85, stepSec * 1.9);
+      gain.gain.setValueAtTime(0.0005, now);
+      gain.gain.linearRampToValueAtTime(vol * 0.82, now + Math.min(0.16, dur * 0.25));
+      gain.gain.exponentialRampToValueAtTime(0.0005, now + dur);
+
+      osc1.connect(filter);
+      osc2.connect(filter);
+      filter.connect(gain);
+      gain.connect(out);
+      osc1.start(now);
+      osc2.start(now);
+      osc1.stop(now + dur + 0.05);
+      osc2.stop(now + dur + 0.05);
+      return;
+    }
+
+    // 'horn_soft' — mellow distant Nordic wood/brass horn
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    osc1.type = 'sawtooth';
+    osc2.type = 'triangle';
+    osc1.frequency.setValueAtTime(freq, now);
+    osc2.frequency.setValueAtTime(freq * 0.5, now);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(Math.min(720, filterHz * 0.72), now);
+
+    const dur = Math.max(1.05, stepSec * 2.1);
+    gain.gain.setValueAtTime(0.0005, now);
+    gain.gain.linearRampToValueAtTime(vol * 0.85, now + Math.min(0.22, dur * 0.3));
+    gain.gain.exponentialRampToValueAtTime(0.0005, now + dur);
+
+    osc1.connect(filter);
+    osc2.connect(filter);
+    filter.connect(gain);
+    gain.connect(out);
+    osc1.start(now);
+    osc2.start(now);
+    osc1.stop(now + dur + 0.05);
+    osc2.stop(now + dur + 0.05);
+  }
+
+  private playDroneChord(
+    ctx: AudioContext,
+    out: AudioNode,
+    rootFreq: number,
+    now: number,
+    vol: number,
+    stepSec: number
+  ): void {
+    const dur = Math.max(2.2, stepSec * 4.2);
+    // Warm fundamental sine + gentle fifth triangle
+    const root = ctx.createOscillator();
+    const fifth = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    const fGain = ctx.createGain();
+
+    root.type = 'sine';
+    root.frequency.setValueAtTime(rootFreq, now);
+    fifth.type = 'triangle';
+    fifth.frequency.setValueAtTime(rootFreq * 1.5, now);
+    fGain.gain.setValueAtTime(0.32, now);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(340, now);
+
+    gain.gain.setValueAtTime(0.0005, now);
+    gain.gain.linearRampToValueAtTime(vol, now + Math.min(0.42, dur * 0.18));
+    gain.gain.exponentialRampToValueAtTime(0.0005, now + dur);
+
+    root.connect(filter);
+    fifth.connect(fGain);
+    fGain.connect(filter);
+    filter.connect(gain);
+    gain.connect(out);
+    root.start(now);
+    fifth.start(now);
+    root.stop(now + dur + 0.08);
+    fifth.stop(now + dur + 0.08);
+  }
+
+  private playPercHit(ctx: AudioContext, out: AudioNode, hit: PercHit, now: number): void {
+    if (hit === 'kick') {
+      // Soft Nordic bodhrán frame-drum thump
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(96, now);
+      osc.frequency.exponentialRampToValueAtTime(42, now + 0.14);
+      gain.gain.setValueAtTime(0.055, now);
+      gain.gain.exponentialRampToValueAtTime(0.0008, now + 0.2);
+      osc.connect(gain);
+      gain.connect(out);
+      osc.start(now);
+      osc.stop(now + 0.22);
+      return;
+    }
+    if (hit === 'rim') {
+      // Muted wooden frame tap
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(240, now);
+      osc.frequency.exponentialRampToValueAtTime(115, now + 0.045);
+      gain.gain.setValueAtTime(0.022, now);
+      gain.gain.exponentialRampToValueAtTime(0.0005, now + 0.065);
+      osc.connect(gain);
+      gain.connect(out);
+      osc.start(now);
+      osc.stop(now + 0.075);
+      return;
+    }
+    // 'shaker' — gentle filtered sand/leather brush
+    const src = ctx.createBufferSource();
+    src.buffer = this.ensureNoiseBuffer(ctx);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(2800, now);
+    filter.Q.value = 1.4;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.012, now);
+    gain.gain.exponentialRampToValueAtTime(0.0004, now + 0.06);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(out);
+    src.start(now);
+    src.stop(now + 0.07);
+  }
+
   private playMusicBeat(): void {
-    if (!this.musicEnabled || this.musicVolume <= 0 || !this.ctx || !this.musicMasterGain || this.ctx.state !== 'running') {
+    const allowSound = this.previewTrackId !== null || (this.musicEnabled && this.musicVolume > 0);
+    if (!allowSound || !this.ctx || !this.musicBus || this.ctx.state !== 'running') {
       return;
     }
     const ctx = this.ctx;
-    const out = this.musicMasterGain;
+    const out = this.musicBus;
     const now = ctx.currentTime;
+    const track = this.getActivePlayingTrack();
+    const stepIdx = this.musicStep % track.lead.length;
+    const useNight = this.nightMood && this.previewTrackId === null;
+    const scale = useNight ? track.scaleNight : track.scaleDay;
+    const bassPool = useNight ? track.bassPoolNight : track.bassPoolDay;
+    const filterHz = useNight ? track.filterNightHz : track.filterDayHz;
+    const stepSec = track.stepMs / 1000;
 
-    // Contemplative Nordic D-Dorian (Day) vs D-Aeolian / dark fifths (Night)
-    const dayScale = [146.83, 174.61, 220.0, 261.63, 293.66, 329.63, 440.0];
-    const nightScale = [110.0, 130.81, 146.83, 164.81, 196.0, 220.0, 261.63];
-    const scale = this.nightMood ? nightScale : dayScale;
-    const pattern = [0, 2, 4, 2, 3, 5, 4, 1];
-    const noteFreq = scale[pattern[this.musicStep % pattern.length]];
+    // 1. Lead melody note
+    const leadNoteIdx = track.lead[stepIdx];
+    if (leadNoteIdx !== null && leadNoteIdx !== undefined) {
+      const freq = scale[leadNoteIdx % scale.length];
+      this.playInstrumentNote(ctx, out, track.leadVoice, freq, now, track.leadGain, filterHz, stepSec);
+    }
 
-    // Warm soft harp/lyre pluck
-    const osc = ctx.createOscillator();
-    const filter = ctx.createBiquadFilter();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(noteFreq, now);
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(this.nightMood ? 520 : 880, now);
+    // 2. Harmony / arpeggio voice
+    const harmNoteIdx = track.harmony[stepIdx];
+    if (harmNoteIdx !== null && harmNoteIdx !== undefined) {
+      const freq = scale[harmNoteIdx % scale.length];
+      this.playInstrumentNote(
+        ctx,
+        out,
+        track.harmonyVoice,
+        freq,
+        now + 0.012,
+        track.harmonyGain,
+        filterHz * 0.85,
+        stepSec
+      );
+    }
 
-    gain.gain.setValueAtTime(0.0005, now);
-    gain.gain.linearRampToValueAtTime(0.032, now + 0.08);
-    gain.gain.exponentialRampToValueAtTime(0.0005, now + 1.65);
+    // 3. Resonant Nordic fifth drone bass
+    const bassIdx = track.bass[stepIdx];
+    if (bassIdx !== null && bassIdx !== undefined) {
+      const rootFreq = bassPool[bassIdx % bassPool.length];
+      this.playDroneChord(ctx, out, rootFreq, now, track.droneGain, stepSec);
+    }
 
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(out);
-    osc.start(now);
-    osc.stop(now + 1.7);
-
-    // Every 4 beats, add a subtle low Nordic drone fifth
-    if (this.musicStep % 4 === 0) {
-      const drone = ctx.createOscillator();
-      const dGain = ctx.createGain();
-      drone.type = 'sine';
-      drone.frequency.setValueAtTime(this.nightMood ? 73.42 : 110.0, now);
-      dGain.gain.setValueAtTime(0.0005, now);
-      dGain.gain.linearRampToValueAtTime(0.026, now + 0.4);
-      dGain.gain.exponentialRampToValueAtTime(0.0005, now + 3.4);
-      drone.connect(dGain);
-      dGain.connect(out);
-      drone.start(now);
-      drone.stop(now + 3.5);
+    // 4. Optional soft frame-drum / bodhrán pulse
+    const percHit = track.perc ? track.perc[stepIdx] : null;
+    if (percHit) {
+      this.playPercHit(ctx, out, percHit, now);
     }
 
     this.musicStep += 1;
+
+    // Optional Shuffle: rotate to the next Nordic composition every 2 full 32-step loops
+    if (
+      this.previewTrackId === null &&
+      this.shuffleEnabled &&
+      this.musicStep > 0 &&
+      this.musicStep % track.lead.length === 0
+    ) {
+      this.loopCount += 1;
+      if (this.loopCount >= 2) {
+        this.loopCount = 0;
+        const curIdx = MUSIC_TRACKS.findIndex((tr) => tr.id === this.activeShuffleTrackId);
+        const nextTrack = MUSIC_TRACKS[(curIdx + 1) % MUSIC_TRACKS.length];
+        this.activeShuffleTrackId = nextTrack.id;
+        this.musicStep = 0;
+        this.restartMusicLoop(false);
+        this.notifyMusicChange();
+      }
+    }
   }
 
   private getSfxTarget(): { ctx: AudioContext; out: GainNode } | null {

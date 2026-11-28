@@ -217,6 +217,17 @@ const btnMusicVolDown = document.getElementById('btn-music-vol-down') as HTMLBut
 const btnMusicVolUp = document.getElementById('btn-music-vol-up') as HTMLButtonElement | null;
 const musicVolBars = document.getElementById('music-vol-bars') as HTMLDivElement | null;
 const valMusicVol = document.getElementById('val-music-vol');
+const btnJukebox = document.getElementById('menu-jukebox') as HTMLButtonElement | null;
+const lblJukebox = document.getElementById('lbl-jukebox');
+const valJukebox = document.getElementById('val-jukebox');
+const jukeboxModal = document.getElementById('jukebox-modal') as HTMLDivElement | null;
+const btnJukeboxClose = document.getElementById('btn-jukebox-close') as HTMLButtonElement | null;
+const jbNowBar = document.getElementById('jb-now-bar') as HTMLDivElement | null;
+const jbEq = document.getElementById('jb-eq') as HTMLDivElement | null;
+const jbNowStatus = document.getElementById('jb-now-status');
+const jbNowTitle = document.getElementById('jb-now-title');
+const btnJbShuffle = document.getElementById('btn-jb-shuffle') as HTMLButtonElement | null;
+const jukeboxList = document.getElementById('jukebox-list') as HTMLDivElement | null;
 const btnSfxVolDown = document.getElementById('btn-sfx-vol-down') as HTMLButtonElement | null;
 const btnSfxVolUp = document.getElementById('btn-sfx-vol-up') as HTMLButtonElement | null;
 const sfxVolBars = document.getElementById('sfx-vol-bars') as HTMLDivElement | null;
@@ -887,6 +898,157 @@ function closeReferralModal(): void {
   sound.playCoinDrop();
 }
 
+let jukeboxModalOpen = false;
+let pausedByJukebox = false;
+
+function renderJukeboxModal(): void {
+  const tracks = sound.getTracks();
+  const selectedId = sound.getSelectedTrackId();
+  const previewId = sound.getPreviewTrackId();
+  const shuffleOn = sound.isShuffleEnabled();
+  const musicOn = sound.isMusicEnabled() && sound.getMusicVolume() > 0;
+  const activeTrack = sound.getActivePlayingTrack();
+  const isPlayingNow = previewId !== null || musicOn;
+
+  if (jbNowBar) {
+    jbNowBar.classList.toggle('previewing', previewId !== null);
+  }
+  if (jbEq) {
+    jbEq.classList.toggle('playing', isPlayingNow);
+  }
+  if (jbNowStatus) {
+    if (previewId !== null) {
+      jbNowStatus.textContent = 'PRÉVIA ATIVA — CLIQUE "ESCOLHER" PARA DEFINIR';
+    } else if (!musicOn) {
+      jbNowStatus.textContent = 'MÚSICA PAUSADA (OFF)';
+    } else if (shuffleOn) {
+      jbNowStatus.textContent = 'MODO AUTO (ALTERNANDO AS 10 MÚSICAS)';
+    } else {
+      jbNowStatus.textContent = 'TOCANDO NO REINO';
+    }
+  }
+  if (jbNowTitle) {
+    const numStr = String(activeTrack.number).padStart(2, '0');
+    jbNowTitle.textContent = `${numStr} · ${activeTrack.title}`;
+  }
+  if (btnJbShuffle) {
+    btnJbShuffle.classList.toggle('on', shuffleOn);
+    btnJbShuffle.textContent = shuffleOn ? '🔀 Auto: ON' : '🔀 Auto: OFF';
+  }
+
+  if (!jukeboxList) return;
+  jukeboxList.innerHTML = '';
+
+  for (const track of tracks) {
+    const isPreview = previewId === track.id;
+    const isSelected = !shuffleOn && selectedId === track.id;
+    const isPlayingRow = isPreview || (previewId === null && musicOn && activeTrack.id === track.id);
+    const numStr = String(track.number).padStart(2, '0');
+
+    const row = document.createElement('div');
+    row.className = `jb-track-row${isSelected ? ' selected' : ''}${isPreview ? ' previewing' : ''}${isPlayingRow ? ' is-playing' : ''}`;
+
+    const disc = document.createElement('div');
+    disc.className = 'jb-disc';
+    const core = document.createElement('div');
+    core.className = 'jb-disc-core';
+    core.style.background = track.accentColor;
+    core.textContent = numStr;
+    disc.appendChild(core);
+    row.appendChild(disc);
+
+    const info = document.createElement('div');
+    info.className = 'jb-track-info';
+    const top = document.createElement('div');
+    top.className = 'jb-track-top';
+    const titleEl = document.createElement('span');
+    titleEl.className = 'jb-track-title';
+    titleEl.textContent = `${numStr} · ${track.title}`;
+    const moodEl = document.createElement('span');
+    moodEl.className = 'jb-track-mood';
+    moodEl.style.borderColor = track.accentColor;
+    moodEl.style.color = track.accentColor;
+    moodEl.textContent = track.mood;
+    top.appendChild(titleEl);
+    top.appendChild(moodEl);
+
+    const subEl = document.createElement('div');
+    subEl.className = 'jb-track-sub';
+    subEl.textContent = track.subtitle;
+
+    info.appendChild(top);
+    info.appendChild(subEl);
+    row.appendChild(info);
+
+    const actions = document.createElement('div');
+    actions.className = 'jb-track-actions';
+
+    const previewBtn = document.createElement('button');
+    previewBtn.type = 'button';
+    previewBtn.className = `jb-btn${isPreview ? ' preview-on' : ''}`;
+    previewBtn.textContent = isPreview ? '■ Parar' : '▶ Ouvir';
+    previewBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (sound.getPreviewTrackId() === track.id) {
+        sound.stopPreview();
+      } else {
+        sound.startPreview(track.id);
+      }
+      renderJukeboxModal();
+    });
+
+    const chooseBtn = document.createElement('button');
+    chooseBtn.type = 'button';
+    chooseBtn.className = `jb-btn ${isSelected ? 'chosen' : 'choose'}`;
+    chooseBtn.textContent = isSelected ? '✓ Ativa' : 'Escolher';
+    chooseBtn.disabled = isSelected;
+    chooseBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sound.selectTrack(track.id);
+      sound.playCoinPickup();
+      updateMenuUI();
+      renderJukeboxModal();
+    });
+
+    actions.appendChild(previewBtn);
+    actions.appendChild(chooseBtn);
+    row.appendChild(actions);
+    jukeboxList.appendChild(row);
+  }
+}
+
+function openJukeboxModal(): void {
+  sound.unlock();
+  const wasPaused = pausedByMenu || world.mode === 'paused';
+  if (menuOpen) setMenuOpen(false);
+  if ((wasPaused || world.mode === 'playing') && !coopState.active) {
+    world.mode = 'paused';
+    pausedByJukebox = true;
+  }
+  jukeboxModalOpen = true;
+  renderJukeboxModal();
+  jukeboxModal?.classList.add('open');
+  sound.playCoinPickup();
+}
+
+function closeJukeboxModal(): void {
+  sound.stopPreview();
+  jukeboxModalOpen = false;
+  jukeboxModal?.classList.remove('open');
+  if (pausedByJukebox && world.mode === 'paused') {
+    world.mode = 'playing';
+  }
+  pausedByJukebox = false;
+  sound.playCoinDrop();
+  updateMenuUI();
+  canvas.focus();
+}
+
+sound.setOnMusicStateChange(() => {
+  updateMenuUI();
+  if (jukeboxModalOpen) renderJukeboxModal();
+});
+
 function updateCoopUI(): void {
   const inCampaign = world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map';
   const isPlaying = world.mode === 'playing';
@@ -1120,6 +1282,14 @@ function updateMenuUI(): void {
     sound.setMusicVolume(lvl);
     updateMenuUI();
   });
+
+  if (lblJukebox) lblJukebox.textContent = t('menu_jukebox');
+  if (valJukebox) {
+    const activeTr = sound.getActivePlayingTrack();
+    const numStr = String(activeTr.number).padStart(2, '0');
+    valJukebox.textContent = sound.isShuffleEnabled() ? `🔀 #${numStr}` : `♫ #${numStr}`;
+    valJukebox.classList.toggle('on', musicOn);
+  }
 
   // Separate SFX Toggle + 0..5 Pixel Volume Bars
   if (lblSfx) lblSfx.textContent = t('menu_sfx');
@@ -1907,6 +2077,26 @@ btnMusicVolUp?.addEventListener('click', () => {
   updateMenuUI();
 });
 
+btnJukebox?.addEventListener('click', () => {
+  openJukeboxModal();
+});
+
+btnJukeboxClose?.addEventListener('click', () => {
+  closeJukeboxModal();
+});
+
+jukeboxModal?.addEventListener('click', (e) => {
+  if (e.target === jukeboxModal) closeJukeboxModal();
+});
+
+btnJbShuffle?.addEventListener('click', () => {
+  sound.unlock();
+  sound.toggleShuffle();
+  sound.playCoinDrop();
+  updateMenuUI();
+  renderJukeboxModal();
+});
+
 btnSfx?.addEventListener('click', () => {
   sound.toggleSfx();
   updateMenuUI();
@@ -2545,6 +2735,10 @@ window.addEventListener('keydown', (e) => {
       closeReferralModal();
       return;
     }
+    if (jukeboxModalOpen) {
+      closeJukeboxModal();
+      return;
+    }
     if (coopState.chatOpen) {
       setCoopChatOpen(false);
       return;
@@ -2584,7 +2778,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
-  if (menuOpen || feedbackUi.open || adminOpen || joinModalOpen || reportModalOpen || referralModalOpen) return;
+  if (menuOpen || feedbackUi.open || adminOpen || joinModalOpen || reportModalOpen || referralModalOpen || jukeboxModalOpen) return;
 
   if (world.mode === 'login') {
     if (!isPlayerAuthorizedToPlay()) return;

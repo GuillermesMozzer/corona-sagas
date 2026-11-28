@@ -1413,6 +1413,261 @@
       background: #1a542d;
       color: #9effad;
     }
+
+    /* Menu Nordic Jukebox (Discoteca) Button */
+    .menu-item.jukebox-btn {
+      background: #221a0e;
+      border-color: #efc462;
+      color: #ffe89e;
+      font-weight: 700;
+    }
+    .menu-item.jukebox-btn:hover {
+      background: #332613;
+      border-color: #ffe58a;
+    }
+
+    /* Nordic Jukebox (Discoteca) Modal */
+    #jukebox-modal .pixel-modal-card {
+      width: min(500px, 96vw);
+      max-height: 90vh;
+      border-color: #efc462;
+    }
+    .jb-now-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      background: #071121;
+      border: 2px solid #355075;
+      box-shadow: 2px 2px 0 #000;
+    }
+    .jb-now-bar.previewing {
+      border-color: #5ce1e6;
+      background: #081e2c;
+    }
+    .jb-now-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex: 1;
+    }
+    .jb-eq {
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      height: 18px;
+      width: 18px;
+      flex-shrink: 0;
+    }
+    .jb-eq span {
+      display: block;
+      width: 3px;
+      height: 4px;
+      background: #efc462;
+    }
+    .jb-now-bar.previewing .jb-eq span {
+      background: #7cf7ff;
+    }
+    .jb-eq.playing span:nth-child(1) { animation: jbEq 0.55s steps(3) infinite; }
+    .jb-eq.playing span:nth-child(2) { animation: jbEq 0.42s steps(3) 0.12s infinite; }
+    .jb-eq.playing span:nth-child(3) { animation: jbEq 0.62s steps(3) 0.06s infinite; }
+    .jb-eq.playing span:nth-child(4) { animation: jbEq 0.48s steps(3) 0.18s infinite; }
+    @keyframes jbEq {
+      0% { height: 4px; }
+      50% { height: 17px; }
+      100% { height: 6px; }
+    }
+    .jb-now-text {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      line-height: 1.25;
+    }
+    #jb-now-status {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #efc462;
+    }
+    .jb-now-bar.previewing #jb-now-status {
+      color: #7cf7ff;
+    }
+    #jb-now-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #f3f7fc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #btn-jb-shuffle {
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 5px 8px;
+      border: 2px solid #415c80;
+      background: #132238;
+      color: #b7d2e8;
+      cursor: pointer;
+      white-space: nowrap;
+      box-shadow: 2px 2px 0 #000;
+    }
+    #btn-jb-shuffle.on {
+      border-color: #6fe87b;
+      background: #173d25;
+      color: #b6ffbf;
+    }
+    #jukebox-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: min(52vh, 380px);
+      overflow-y: auto;
+      padding-right: 4px;
+      scrollbar-width: thin;
+      scrollbar-color: #efc462 #081222;
+    }
+    .jb-track-row {
+      display: grid;
+      grid-template-columns: 32px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 8px;
+      background: #0c1729;
+      border: 2px solid #263d5c;
+      box-shadow: 2px 2px 0 #000;
+    }
+    .jb-track-row.selected {
+      border-color: #efc462;
+      background: #1c1a12;
+    }
+    .jb-track-row.previewing {
+      border-color: #5ce1e6;
+      background: #0d2436;
+    }
+    .jb-disc {
+      width: 28px;
+      height: 28px;
+      border: 2px solid #000;
+      background: #182334;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      box-shadow: inset 0 0 0 2px #2b3f5e;
+    }
+    .jb-disc-core {
+      width: 12px;
+      height: 12px;
+      border: 2px solid #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 8px;
+      font-weight: 700;
+      color: #081222;
+    }
+    .jb-track-row.previewing .jb-disc,
+    .jb-track-row.selected.is-playing .jb-disc {
+      animation: jbSpin 1.6s steps(4) infinite;
+    }
+    @keyframes jbSpin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .jb-track-info {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      gap: 2px;
+    }
+    .jb-track-top {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .jb-track-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #f3f7fc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .jb-track-mood {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 1px 5px;
+      border: 1px solid #415c80;
+      background: #132238;
+      color: #b7d7f0;
+      flex-shrink: 0;
+    }
+    .jb-track-sub {
+      font-size: 10px;
+      color: #93b2ce;
+      line-height: 1.25;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .jb-track-actions {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-shrink: 0;
+    }
+    .jb-btn {
+      font-family: 'Pixelify Sans', ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 5px 8px;
+      border: 2px solid #415c80;
+      background: #132238;
+      color: #dcebf8;
+      cursor: pointer;
+      box-shadow: 2px 2px 0 #000;
+      white-space: nowrap;
+    }
+    .jb-btn:hover {
+      border-color: #7cf7ff;
+      color: #ffffff;
+    }
+    .jb-btn.preview-on {
+      border-color: #5ce1e6;
+      background: #124056;
+      color: #aef9ff;
+    }
+    .jb-btn.choose {
+      border-color: #efc462;
+      background: #2b2210;
+      color: #ffe58a;
+    }
+    .jb-btn.choose:hover {
+      background: #3d3016;
+    }
+    .jb-btn.chosen {
+      border-color: #6fe87b;
+      background: #174428;
+      color: #baffc3;
+      cursor: default;
+    }
+    @media (max-width: 440px) {
+      .jb-track-row {
+        grid-template-columns: 28px minmax(0, 1fr);
+      }
+      .jb-track-actions {
+        grid-column: 1 / -1;
+        justify-content: flex-end;
+      }
+    }
   </style>
 </head>
 <body>
@@ -1594,6 +1849,23 @@
         </div>
       </div>
 
+      <button id="menu-jukebox" class="menu-item jukebox-btn" type="button">
+        <span class="whatsapp-menu-left">
+          <svg width="16" height="16" viewBox="0 0 12 12" shape-rendering="crispEdges" aria-hidden="true">
+            <rect x="3" y="1" width="6" height="1" fill="#efc462"/>
+            <rect x="2" y="2" width="8" height="1" fill="#2c3e59"/>
+            <rect x="1" y="3" width="10" height="6" fill="#182436"/>
+            <rect x="2" y="9" width="8" height="1" fill="#2c3e59"/>
+            <rect x="3" y="10" width="6" height="1" fill="#efc462"/>
+            <rect x="3" y="3" width="6" height="6" fill="#243752"/>
+            <rect x="4" y="4" width="4" height="4" fill="#efc462"/>
+            <rect x="5" y="5" width="2" height="2" fill="#0c1524"/>
+          </svg>
+          <span id="lbl-jukebox">Discoteca Nórdica</span>
+        </span>
+        <span id="val-jukebox" class="menu-badge on">♫ #01</span>
+      </button>
+
       <div class="pixel-control-card">
         <div class="pixel-control-top">
           <span id="lbl-sfx" class="pixel-control-name">Efeitos Sonoros</span>
@@ -1665,7 +1937,36 @@
       </button>
       <input id="import-file-input" type="file" accept=".json,application/json" style="display:none;" />
       <div id="lbl-esc-hint" class="menu-hint">ESC ou toque aqui para sair da Tela Cheia</div>
-      <div style="font-size:9px;color:#5a758f;text-align:center;margin-top:2px;">build v2.10 · Espírito Guia</div>
+      <div style="font-size:9px;color:#5a758f;text-align:center;margin-top:2px;">build v2.11 · Discoteca Nórdica</div>
+    </div>
+
+    <!-- Nordic Jukebox (Discoteca) Modal: 10 Original Nordic Tracks with Live Preview -->
+    <div id="jukebox-modal" class="pixel-modal" role="dialog" aria-modal="true" aria-label="Discoteca Nórdica">
+      <div class="pixel-modal-card">
+        <div class="ref-modal-header">
+          <div class="ref-modal-title" style="color:#ffe58a;">♫ DISCOTECA NÓRDICA (10 MÚSICAS)</div>
+          <button id="btn-jukebox-close" class="ref-close-btn" type="button" aria-label="Fechar">✕</button>
+        </div>
+
+        <div id="jb-now-bar" class="jb-now-bar">
+          <div class="jb-now-left">
+            <div id="jb-eq" class="jb-eq">
+              <span></span><span></span><span></span><span></span>
+            </div>
+            <div class="jb-now-text">
+              <span id="jb-now-status">TOCANDO NO REINO</span>
+              <span id="jb-now-title">01 · Alvorada do Fiorde</span>
+            </div>
+          </div>
+          <button id="btn-jb-shuffle" type="button" title="Alternar automaticamente entre as 10 músicas">🔀 Auto: OFF</button>
+        </div>
+
+        <div id="jukebox-list"></div>
+
+        <div style="font-size:10px;color:#8aa8c7;line-height:1.35;">
+          Clique em <strong style="color:#7cf7ff;">▶ Ouvir</strong> para testar a prévia de cada música antes de clicar em <strong style="color:#ffe58a;">Escolher</strong>. Ao fechar sem escolher, volta para a sua música atual.
+        </div>
+      </div>
     </div>
 
     <!-- Invite Friends Gamification Modal (Unique Code + Copy Message + Scrollable 3-Friend Tiers) -->
