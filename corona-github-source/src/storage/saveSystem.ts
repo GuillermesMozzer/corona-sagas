@@ -1,4 +1,11 @@
-import { CENTER_X, type CrestConfig, type ResourceSize, type WorldState } from '../types';
+import {
+  CENTER_X,
+  type CrestConfig,
+  type ElementalStoneKind,
+  type ResourceSize,
+  type WeaponId,
+  type WorldState,
+} from '../types';
 import { computeArmorBonuses, getIslandElementalPortalStone } from '../world/arsenal';
 import { createDefaultElders } from '../world/elders';
 import {
@@ -39,7 +46,25 @@ export interface SavedCampaignSummary {
   crest: CrestConfig;
   villagers: number;
   gold: number;
+  bankGold: number;
   diamonds: number;
+  archers: number;
+  warriors: number;
+  spearmen: number;
+  builders: number;
+  producers: number;
+  citizens: number;
+  elders: number;
+  wood: number;
+  stone: number;
+  iron: number;
+  preciousOres: number;
+  yggdrasilWood: number;
+  elementalStones: ElementalStoneKind[];
+  weaponsCount: number;
+  equippedWeapon: WeaponId | null;
+  armorCount: number;
+  godsCount: number;
   savedAt: number;
 }
 
@@ -534,14 +559,77 @@ export function listCampaignSlots(): Array<SavedCampaignSummary | null> {
         continue;
       }
       const s = payload.state;
+      const vList = (s.villagers ?? []).filter((v) => v.role !== 'wanderer');
+      let archers = 0;
+      let warriors = 0;
+      let spearmen = 0;
+      let builders = 0;
+      let producers = 0;
+      let citizens = 0;
+      for (const v of vList) {
+        if (v.role === 'archer') archers++;
+        else if (v.role === 'warrior') warriors++;
+        else if (v.role === 'spearman') spearmen++;
+        else if (v.role === 'builder') builders++;
+        else if (v.role === 'producer') producers++;
+        else citizens++;
+      }
+
+      const monarch = s.monarchs?.[0];
+      const rescuedElderIds = new Set<string>(
+        (s.elders ?? []).filter((e) => e.rescued).map((e) => e.id)
+      );
+      const weaponSet = new Set<string>(s.forgedStaves ?? []);
+      if (s.weaponShrine?.claimedByPlayerUid) weaponSet.add(s.weaponShrine.weaponId);
+      if (monarch?.weapon) weaponSet.add(monarch.weapon);
+
+      for (const isl of s.islands ?? []) {
+        const snap = isl.snapshot;
+        if (!snap) continue;
+        for (const se of snap.elders ?? []) {
+          if (se.rescued) rescuedElderIds.add(se.id);
+        }
+        if (snap.weaponShrine?.claimedByPlayerUid) {
+          weaponSet.add(snap.weaponShrine.weaponId);
+        }
+      }
+
+      const preciousOres = Object.values(s.resources?.preciousOres ?? {}).reduce(
+        (sum, n) => sum + (Number(n) || 0),
+        0
+      );
+      const elementalStones = (['fire', 'ice', 'thunder'] as const).filter(
+        (k) => (s.resources?.elementalStones?.[k] ?? 0) > 0
+      );
+
+      const armorCount = Object.keys(monarch?.armor ?? {}).length;
+
       list.push({
         slot: i,
         island: s.currentIsland ?? 1,
         day: s.day ?? 1,
         crest: s.crest,
-        villagers: s.villagers.filter((v) => v.role !== 'wanderer').length,
-        gold: s.monarchs[0]?.coins ?? s.resources.gold ?? 0,
-        diamonds: s.monarchs[0]?.diamonds ?? s.resources.diamonds ?? 0,
+        villagers: vList.length,
+        gold: monarch?.coins ?? s.resources?.gold ?? 0,
+        bankGold: Math.floor(s.banker?.balance ?? 0),
+        diamonds: monarch?.diamonds ?? s.resources?.diamonds ?? 0,
+        archers,
+        warriors,
+        spearmen,
+        builders,
+        producers,
+        citizens,
+        elders: rescuedElderIds.size,
+        wood: Math.floor(s.resources?.wood ?? 0),
+        stone: Math.floor(s.resources?.stone ?? 0),
+        iron: Math.floor(s.resources?.iron ?? 0),
+        preciousOres: Math.floor(preciousOres),
+        yggdrasilWood: Math.floor(s.resources?.yggdrasilWood ?? 0),
+        elementalStones,
+        weaponsCount: weaponSet.size,
+        equippedWeapon: monarch?.weapon ?? null,
+        armorCount,
+        godsCount: (s.unlockedGods ?? []).length,
         savedAt: payload.savedAt ?? Date.now(),
       });
     } catch {

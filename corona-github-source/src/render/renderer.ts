@@ -871,6 +871,174 @@ export class PixelRenderer {
     ctx.textAlign = 'left';
   }
 
+  private drawSlotBadgeIcon(
+    ctx: CanvasRenderingContext2D,
+    kind:
+      | 'villager'
+      | 'archer'
+      | 'warrior'
+      | 'spearman'
+      | 'builder'
+      | 'producer'
+      | 'elder'
+      | 'wood'
+      | 'stone'
+      | 'iron'
+      | 'ore'
+      | 'yggdrasil'
+      | 'stone_fire'
+      | 'stone_ice'
+      | 'stone_thunder'
+      | 'weapon'
+      | 'armor'
+      | 'god',
+    x: number,
+    y: number,
+    accentColor?: string
+  ): void {
+    const rx = Math.round(x);
+    const ry = Math.round(y);
+    if (kind === 'wood' || kind === 'stone' || kind === 'iron') {
+      this.drawMaterialIcon(ctx, kind, rx, ry + 1);
+      return;
+    }
+    if (kind === 'villager') {
+      // Nordic subject silhouette (head + tunic)
+      ctx.fillStyle = '#f2caa0';
+      ctx.fillRect(rx + 2, ry, 3, 3);
+      ctx.fillStyle = '#5c7c9e';
+      ctx.fillRect(rx + 1, ry + 3, 5, 4);
+      ctx.fillStyle = '#9ec4e6';
+      ctx.fillRect(rx + 2, ry + 3, 3, 2);
+      return;
+    }
+    if (kind === 'archer') {
+      // Compact Bow & Arrow (7x7)
+      ctx.fillStyle = '#c48d4e';
+      ctx.fillRect(rx + 1, ry, 2, 1);
+      ctx.fillRect(rx, ry + 1, 2, 5);
+      ctx.fillRect(rx + 1, ry + 6, 2, 1);
+      ctx.fillStyle = '#efe8d5';
+      ctx.fillRect(rx + 3, ry + 1, 1, 5);
+      ctx.fillStyle = '#8fd8ff';
+      ctx.fillRect(rx + 2, ry + 3, 5, 1);
+      return;
+    }
+    if (kind === 'warrior') {
+      // Compact Sword (7x7)
+      ctx.fillStyle = '#e6f2ff';
+      ctx.fillRect(rx + 3, ry, 1, 4);
+      ctx.fillStyle = '#a4b8cc';
+      ctx.fillRect(rx + 2, ry + 1, 1, 3);
+      ctx.fillStyle = '#efc462';
+      ctx.fillRect(rx + 1, ry + 4, 5, 1);
+      ctx.fillStyle = '#7a4b2a';
+      ctx.fillRect(rx + 3, ry + 5, 1, 2);
+      return;
+    }
+    if (kind === 'spearman') {
+      // Compact Nordic Spear (7x7)
+      ctx.fillStyle = '#8a5d32';
+      ctx.fillRect(rx + 3, ry + 3, 1, 4);
+      ctx.fillStyle = '#e6f4ff';
+      ctx.fillRect(rx + 2, ry, 3, 3);
+      ctx.fillStyle = '#ffe066';
+      ctx.fillRect(rx + 3, ry + 3, 1, 1);
+      return;
+    }
+    if (kind === 'builder') {
+      // Compact Builder Hammer (7x7)
+      ctx.fillStyle = '#9e7040';
+      ctx.fillRect(rx + 3, ry + 3, 1, 4);
+      ctx.fillStyle = '#bcc9d6';
+      ctx.fillRect(rx + 1, ry + 1, 5, 2);
+      ctx.fillStyle = '#eef6ff';
+      ctx.fillRect(rx + 1, ry + 1, 5, 1);
+      return;
+    }
+    if (kind === 'producer') {
+      // Compact Seed & Sprout (7x7)
+      ctx.fillStyle = '#d9b25f';
+      ctx.fillRect(rx + 2, ry + 4, 3, 3);
+      ctx.fillStyle = '#6fd472';
+      ctx.fillRect(rx + 3, ry + 1, 1, 3);
+      ctx.fillRect(rx + 1, ry + 1, 2, 2);
+      ctx.fillRect(rx + 4, ry + 2, 2, 1);
+      return;
+    }
+    if (kind === 'elder') {
+      // Nordic Elder (hooded sage with white beard & rune gleam)
+      ctx.fillStyle = '#7b5cd6';
+      ctx.fillRect(rx + 2, ry, 3, 2);
+      ctx.fillRect(rx + 1, ry + 4, 5, 3);
+      ctx.fillStyle = '#f2caa0';
+      ctx.fillRect(rx + 2, ry + 2, 3, 1);
+      ctx.fillStyle = '#f5f8ff';
+      ctx.fillRect(rx + 2, ry + 3, 3, 3);
+      ctx.fillStyle = '#ffe58a';
+      ctx.fillRect(rx + 6, ry + 1, 1, 5);
+      return;
+    }
+    if (kind === 'ore') {
+      // Precious Metal Ore Nugget
+      ctx.fillStyle = '#c47b22';
+      ctx.fillRect(rx + 1, ry + 1, 5, 5);
+      ctx.fillStyle = '#ffcf5c';
+      ctx.fillRect(rx + 2, ry + 2, 3, 3);
+      ctx.fillStyle = '#fff6cc';
+      ctx.fillRect(rx + 2, ry + 2, 1, 1);
+      return;
+    }
+    if (kind === 'yggdrasil') {
+      // Sacred Yggdrasil World Tree Timber & Leaf
+      ctx.fillStyle = '#805226';
+      ctx.fillRect(rx + 2, ry + 3, 3, 4);
+      ctx.fillStyle = '#52d87a';
+      ctx.fillRect(rx + 1, ry, 5, 4);
+      ctx.fillStyle = '#ffe57a';
+      ctx.fillRect(rx + 2, ry + 1, 2, 1);
+      return;
+    }
+    if (kind === 'stone_fire' || kind === 'stone_ice' || kind === 'stone_thunder') {
+      const stKey = kind === 'stone_fire' ? 'fire' : kind === 'stone_ice' ? 'ice' : 'thunder';
+      const stDef = ELEMENTAL_STONE_DEFS[stKey];
+      ctx.fillStyle = stDef.color;
+      ctx.fillRect(rx + 1, ry + 1, 5, 5);
+      ctx.fillRect(rx + 2, ry, 3, 7);
+      ctx.fillStyle = stDef.highlight;
+      ctx.fillRect(rx + 2, ry + 2, 2, 2);
+      return;
+    }
+    if (kind === 'weapon') {
+      // Divine Weapon / Elemental Staff Icon
+      ctx.fillStyle = '#7d522a';
+      ctx.fillRect(rx + 3, ry + 2, 1, 5);
+      ctx.fillStyle = accentColor ?? '#ffd257';
+      ctx.fillRect(rx + 1, ry, 5, 3);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(rx + 2, ry + 1, 2, 1);
+      return;
+    }
+    if (kind === 'armor') {
+      // Forged Nordic Armor Breastplate
+      ctx.fillStyle = '#9bb2c9';
+      ctx.fillRect(rx + 1, ry + 1, 5, 5);
+      ctx.fillStyle = '#dce8f5';
+      ctx.fillRect(rx + 2, ry + 1, 3, 4);
+      ctx.fillStyle = '#ffe58a';
+      ctx.fillRect(rx + 2, ry + 2, 3, 1);
+      ctx.fillRect(rx + 3, ry + 2, 1, 3);
+      return;
+    }
+    // god — Runic Crown / Star
+    ctx.fillStyle = '#f5c542';
+    ctx.fillRect(rx + 3, ry, 1, 7);
+    ctx.fillRect(rx, ry + 3, 7, 1);
+    ctx.fillRect(rx + 2, ry + 2, 3, 3);
+    ctx.fillStyle = '#fff8cf';
+    ctx.fillRect(rx + 3, ry + 3, 1, 1);
+  }
+
   // =========================================================================
   // 8-SLOT CAMPAIGN SAVE MANAGER SCREEN (Responsive Portrait 2x4 / Landscape 4x2)
   // =========================================================================
@@ -883,27 +1051,31 @@ export class PixelRenderer {
 
     const isPortrait = this.viewW < 380;
     const cx = Math.round(this.viewW / 2);
+    const titleMaxW = isPortrait ? this.viewW - 44 : this.viewW - 60;
+    const titleCenterX = isPortrait ? Math.round((this.viewW - 22) / 2) : cx;
 
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffe58a';
-    ctx.font = isPortrait ? 'bold 9.5px "Pixelify Sans", monospace' : 'bold 12px "Pixelify Sans", monospace';
-    ctx.fillText(t('slots_title'), cx, 22);
+    ctx.font = isPortrait ? 'bold 9px "Pixelify Sans", monospace' : 'bold 11.5px "Pixelify Sans", monospace';
+    ctx.fillText(t('slots_title'), titleCenterX, 20, titleMaxW);
 
     ctx.fillStyle = '#8eb3d1';
-    ctx.font = '6.5px "Pixelify Sans", monospace';
-    ctx.fillText(t('slots_hint'), cx, 34);
+    ctx.font = '6px "Pixelify Sans", monospace';
+    ctx.fillText(t('slots_hint'), titleCenterX, 31, titleMaxW);
 
     const slots = listCampaignSlots();
-    const romans = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
 
     const cols = isPortrait ? 2 : 4;
     const rows = isPortrait ? 4 : 2;
-    const padX = isPortrait ? 10 : 14;
-    const topY = 44;
-    const bottomReserve = 34;
-    const gap = isPortrait ? 6 : 8;
+    const padX = isPortrait ? 8 : 12;
+    const topY = 39;
+    const bottomReserve = 30;
+    const gap = isPortrait ? 6 : 7;
     const cardW = Math.floor((this.viewW - padX * 2 - gap * (cols - 1)) / cols);
-    const cardH = Math.min(isPortrait ? 86 : 84, Math.floor((this.viewH - topY - bottomReserve - gap * (rows - 1)) / rows));
+    const cardH = Math.min(
+      isPortrait ? 118 : 104,
+      Math.floor((this.viewH - topY - bottomReserve - gap * (rows - 1)) / rows)
+    );
 
     for (let i = 0; i < MAX_SAVE_SLOTS; i++) {
       const col = i % cols;
@@ -919,37 +1091,155 @@ export class PixelRenderer {
 
       ctx.textAlign = 'left';
       ctx.fillStyle = info ? '#ffe58a' : '#7b92a8';
-      ctx.font = 'bold 7px "Pixelify Sans", monospace';
-      ctx.fillText(`SLOT ${i + 1}`, x + 6, y + 12);
+      ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
+      ctx.fillText(`SLOT ${i + 1}`, x + 5, y + 10);
 
       if (info) {
         // Click main card to load & play this campaign!
         this.addHit(`slot_load_${i}`, x, y, cardW, cardH);
 
-        // Shield emblem + Island + Day + Gold/Diamonds
-        drawShieldEmblem(ctx, info.crest, x + 16, y + 32, 8);
+        // Shield emblem + Island (I..IX) + Day
+        drawShieldEmblem(ctx, info.crest, x + 13, y + 24, 7);
 
         ctx.fillStyle = '#eef5fc';
-        ctx.font = 'bold 7px "Pixelify Sans", monospace';
-        const islRoman = romans[(info.island - 1) % 7] ?? 'I';
-        ctx.fillText(`ILHA ${islRoman} · ${t('day_short')} ${info.day}`, x + 28, y + 28);
+        ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
+        const islRoman = this.toRoman(info.island);
+        ctx.fillText(`ILHA ${islRoman} · ${t('day_short')} ${info.day}`, x + 24, y + 21, cardW - 28);
 
-        ctx.fillStyle = '#f7d265';
-        ctx.font = '6.5px "Pixelify Sans", monospace';
-        const diamTxt = info.diamonds > 0 ? `  ◆${info.diamonds}` : '';
-        ctx.fillText(`${info.gold}g${diamTxt}`, x + 28, y + 39);
+        // Currency strip with pixel-art Coin, Bank & Diamond icons
+        let curX = x + 24;
+        const curY = y + 33;
+        ctx.font = 'bold 6px "Pixelify Sans", monospace';
 
-        ctx.fillStyle = '#92b0c9';
-        ctx.font = '6px "Pixelify Sans", monospace';
-        ctx.fillText(`${info.villagers} ${t('subjects')}`, x + 6, y + cardH - 18);
+        this.drawMinimalCoinIcon(ctx, curX, curY - 6);
+        const goldTxt = `${info.gold}`;
+        ctx.fillStyle = '#ffe58a';
+        ctx.fillText(goldTxt, curX + 8, curY);
+        curX += 8 + Math.ceil(ctx.measureText(goldTxt).width) + 5;
+
+        if (info.bankGold > 0 && curX + 18 < x + cardW - 4) {
+          this.drawMaterialIcon(ctx, 'bank', curX, curY - 5);
+          const bankTxt = `${info.bankGold}`;
+          ctx.fillStyle = '#f7d265';
+          ctx.fillText(bankTxt, curX + 7, curY);
+          curX += 7 + Math.ceil(ctx.measureText(bankTxt).width) + 5;
+        }
+
+        if (info.diamonds > 0 && curX + 14 < x + cardW - 3) {
+          this.drawMinimalDiamondIcon(ctx, curX, curY - 6);
+          const diamTxt = `${info.diamonds}`;
+          ctx.fillStyle = '#8cf5ff';
+          ctx.fillText(diamTxt, curX + 8, curY);
+        }
+
+        // Accumulated Items Icon Grid (troops, subjects, elders, resources, ores, weapons, armor, staves, gods)
+        const boxX = x + 4;
+        const boxY = y + 38;
+        const boxW = cardW - 8;
+        const boxH = Math.max(16, cardH - 54);
+
+        ctx.fillStyle = 'rgba(7, 13, 22, 0.72)';
+        ctx.fillRect(boxX, boxY, boxW, boxH);
+        ctx.strokeStyle = 'rgba(140, 175, 210, 0.18)';
+        ctx.strokeRect(boxX + 0.5, boxY + 0.5, boxW - 1, boxH - 1);
+
+        const weaponAccent = info.equippedWeapon ? WEAPON_DEFS[info.equippedWeapon]?.color : '#ffd257';
+        const badges: Array<{
+          icon: Parameters<PixelRenderer['drawSlotBadgeIcon']>[1];
+          text: string;
+          color: string;
+          accent?: string;
+        }> = [];
+
+        // Subjects & Troops
+        badges.push({ icon: 'villager', text: `${info.villagers}`, color: '#b8d0e6' });
+        if (info.archers > 0) badges.push({ icon: 'archer', text: `${info.archers}`, color: '#9fd8ff' });
+        if (info.warriors > 0) badges.push({ icon: 'warrior', text: `${info.warriors}`, color: '#eef4fc' });
+        if (info.spearmen > 0) badges.push({ icon: 'spearman', text: `${info.spearmen}`, color: '#cfe8ff' });
+        if (info.builders > 0) badges.push({ icon: 'builder', text: `${info.builders}`, color: '#e6c89c' });
+        if (info.producers > 0) badges.push({ icon: 'producer', text: `${info.producers}`, color: '#92f0a0' });
+        if (info.elders > 0) badges.push({ icon: 'elder', text: `${info.elders}`, color: '#d9c2ff' });
+
+        // Resources & Rare Materials
+        if (info.wood > 0) badges.push({ icon: 'wood', text: `${info.wood}`, color: '#e8bc82' });
+        if (info.stone > 0) badges.push({ icon: 'stone', text: `${info.stone}`, color: '#d4e0ec' });
+        if (info.iron > 0) badges.push({ icon: 'iron', text: `${info.iron}`, color: '#9ed2ff' });
+        if (info.preciousOres > 0) badges.push({ icon: 'ore', text: `${info.preciousOres}`, color: '#ffcf66' });
+        if (info.yggdrasilWood > 0) {
+          badges.push({ icon: 'yggdrasil', text: `${info.yggdrasilWood}`, color: '#8cf7b0' });
+        }
+        for (const st of info.elementalStones) {
+          const stDef = ELEMENTAL_STONE_DEFS[st];
+          const iconKind =
+            st === 'fire' ? 'stone_fire' : st === 'ice' ? 'stone_ice' : 'stone_thunder';
+          badges.push({ icon: iconKind, text: '', color: stDef.highlight });
+        }
+
+        // Arsenal & Deities
+        if (info.weaponsCount > 0) {
+          badges.push({
+            icon: 'weapon',
+            text: `${info.weaponsCount}`,
+            color: weaponAccent ?? '#ffd966',
+            accent: weaponAccent,
+          });
+        }
+        if (info.armorCount > 0) {
+          badges.push({ icon: 'armor', text: `${info.armorCount}`, color: '#ffe58a' });
+        }
+        if (info.godsCount > 0) {
+          badges.push({ icon: 'god', text: `${info.godsCount}`, color: '#fff0a8' });
+        }
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(boxX + 1, boxY + 1, boxW - 2, boxH - 2);
+        ctx.clip();
+
+        ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
+        const rowH = 11;
+        const innerPadX = 3;
+        const maxX = boxX + boxW - 3;
+        const maxY = boxY + boxH - 2;
+        let bx = boxX + innerPadX;
+        let by = boxY + 3;
+        let overflowCount = 0;
+
+        for (let bi = 0; bi < badges.length; bi++) {
+          const b = badges[bi];
+          const txtW = b.text ? Math.ceil(ctx.measureText(b.text).width) + 1 : 0;
+          const bw = 8 + txtW;
+          if (bx > boxX + innerPadX && bx + bw > maxX) {
+            bx = boxX + innerPadX;
+            by += rowH;
+          }
+          if (by + 7 > maxY) {
+            overflowCount = badges.length - bi;
+            break;
+          }
+          this.drawSlotBadgeIcon(ctx, b.icon, bx, by, b.accent);
+          if (b.text) {
+            ctx.fillStyle = b.color;
+            ctx.fillText(b.text, bx + 8, by + 6.5);
+          }
+          bx += bw + 4;
+        }
+
+        if (overflowCount > 0) {
+          ctx.textAlign = 'right';
+          ctx.fillStyle = '#9ec4e0';
+          ctx.fillText(`+${overflowCount}`, maxX, maxY - 1);
+          ctx.textAlign = 'left';
+        }
+        ctx.restore();
 
         // Play pill
         ctx.fillStyle = 'rgba(46, 36, 12, 0.92)';
-        ctx.fillRect(x + 5, y + cardH - 14, cardW - 10, 10);
+        ctx.fillRect(x + 4, y + cardH - 13, cardW - 8, 9.5);
         ctx.fillStyle = '#ffe58a';
-        ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
+        ctx.font = 'bold 6px "Pixelify Sans", monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(`▶ ${t('slot_play')}`, x + cardW / 2, y + cardH - 7);
+        ctx.fillText(`▶ ${t('slot_play')}`, x + cardW / 2, y + cardH - 6.5);
         ctx.textAlign = 'left';
 
         // Delete button (2-step confirm to avoid accidental deletion!)
@@ -984,7 +1274,7 @@ export class PixelRenderer {
     const backW = 104;
     const backH = 20;
     const backX = Math.round(cx - backW / 2);
-    const backY = this.viewH - 26;
+    const backY = this.viewH - 25;
     ctx.fillStyle = '#162030';
     ctx.fillRect(backX, backY, backW, backH);
     ctx.strokeStyle = 'rgba(239, 196, 98, 0.55)';
