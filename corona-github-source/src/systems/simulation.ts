@@ -5,14 +5,14 @@ import {
   BELL_COST,
   BOAT_BUILD_COST,
   BOAT_SAIL_COST,
-  CENTER_X,
   DOCK_BUILD_COST,
+  getCenterX,
+  getWorldWidth,
   GROUND_Y,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
   MAX_CREW_PER_CLASS,
   MAX_KINGDOM_LEVEL,
-  WORLD_WIDTH,
   type ArcherTower,
   type BuilderTaskKind,
   type Coin,
@@ -511,6 +511,8 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
       crewBuilders: 0,
     };
     curProgress.snapshot = {
+      worldWidth: getWorldWidth(w),
+      centerX: getCenterX(w),
       hall: { ...w.hall },
       forge: w.forge ? { ...w.forge } : null,
       shops: w.shops.map((s) => ({ ...s })),
@@ -545,6 +547,9 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
   let nextSnap = targetProgress.snapshot;
   if (nextSnap) {
     // Restore colonized island and disembark crew!
+    const destDef = getIslandDef(targetIslandId);
+    w.worldWidth = nextSnap.worldWidth ?? destDef.worldWidth;
+    w.centerX = nextSnap.centerX ?? nextSnap.hall.x;
     w.hall = { ...nextSnap.hall };
     w.forge = nextSnap.forge ? { ...nextSnap.forge } : null;
     w.shops = nextSnap.shops.map((s) => ({ ...s }));
@@ -595,6 +600,8 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
   } else {
     // Fresh unexplored island! Boat arrives floating by shore; Dock must be built!
     const fresh = generateIslandSnapshot(targetIslandId, () => uid(w), embarkedCrew);
+    w.worldWidth = fresh.worldWidth;
+    w.centerX = fresh.centerX;
     w.hall = fresh.hall;
     w.forge = fresh.forge;
     w.shops = fresh.shops;
@@ -632,10 +639,11 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     }
   }
 
-  // Reset Banker walking state cleanly to vault on arrival
+  // Reset Banker vault & walking state cleanly to the new island center on arrival
   if (w.banker.carriedCoins && w.banker.carriedCoins > 0) {
     w.banker.balance += w.banker.carriedCoins;
   }
+  w.banker.x = getCenterX(w) + 68;
   w.banker.walkX = w.banker.x;
   w.banker.carriedCoins = 0;
   w.banker.phase = 'idle';
@@ -664,7 +672,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     monarch.flyY = 0;
     monarch.roarTimer = 0;
     monarch.maxCoins = Math.max(30, 30 + Math.max(0, w.hall.level - 1) * 5);
-    monarch.cameraX = Math.max(0, Math.min(WORLD_WIDTH - w.viewWidth, monarch.x - w.viewWidth / 2));
+    monarch.cameraX = Math.max(0, Math.min(getWorldWidth(w) - w.viewWidth, monarch.x - w.viewWidth / 2));
   }
 
   w.mode = 'playing';
@@ -687,7 +695,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
 function getOuterDefensiveWall(w: WorldState, side: -1 | 1): Wall | null {
   const sideWalls = w.walls
     .filter((wall) => wall.side === side && wall.level > 0 && !wall.destroyed)
-    .sort((a, b) => Math.abs(b.x - CENTER_X) - Math.abs(a.x - CENTER_X));
+    .sort((a, b) => Math.abs(b.x - getCenterX(w)) - Math.abs(a.x - getCenterX(w)));
   return sideWalls[0] ?? null;
 }
 
@@ -2241,7 +2249,7 @@ export function issueUnitCommand(w: WorldState, mode: CommandMode, targetSide: -
 
   const candidates = w.villagers
     .filter((v) => v.role === role && v.side !== targetSide && v.state !== 'embarked' && v.state !== 'boarding')
-    .sort((a, b) => Math.abs(a.x - CENTER_X) - Math.abs(b.x - CENTER_X));
+    .sort((a, b) => Math.abs(a.x - getCenterX(w)) - Math.abs(b.x - getCenterX(w)));
 
   const dirText = targetSide < 0 ? t('sent_left') : t('sent_right');
   if (candidates.length > 0) {
@@ -2292,7 +2300,7 @@ export function orderSpecificVillager(w: WorldState, villagerId: number, targetS
   v.assignedTowerId = null;
   v.targetId = null;
   v.facing = targetSide;
-  v.targetX = CENTER_X + targetSide * 95;
+  v.targetX = getCenterX(w) + targetSide * 95;
   v.orderFlashTimer = 2.0;
   v.orderDir = targetSide;
   v.actionTimer = 0;
@@ -2385,11 +2393,11 @@ export function togglePriorityTask(w: WorldState, kind: BuilderTaskKind, id: num
 
   w.priorityTask = { kind, id };
   w.selectedVillagerId = null;
-  sound.playOrder(tx < CENTER_X ? -1 : 1);
+  sound.playOrder(tx < getCenterX(w) ? -1 : 1);
   spawnBurst(w, tx, GROUND_Y - 22, 10, '#ffe066', 'spark', 36);
   w.commandFeedback = {
     mode: 'build',
-    side: tx < CENTER_X ? -1 : 1,
+    side: tx < getCenterX(w) ? -1 : 1,
     text: '▼ PRIORIDADE DEFINIDA!',
     timer: 1.5,
   };
@@ -2498,7 +2506,7 @@ export function triggerMountPower(w: WorldState): boolean {
       const dx = e.x - m.x;
       if (Math.abs(dx) <= 145) {
         const pushDir = dx >= 0 ? 1 : -1;
-        e.x = Math.max(120, Math.min(WORLD_WIDTH - 120, e.x + pushDir * 38));
+        e.x = Math.max(155, Math.min(getWorldWidth(w) - 165, e.x + pushDir * 38));
         e.stunTimer = Math.max(e.stunTimer, 0.9);
         e.hitFlash = 0.2;
         spawnBurst(w, e.x, e.y - 10, 6, '#ffe082', 'spark', 35);
@@ -2630,7 +2638,7 @@ function updateMonarch(
   if (m.vx > targetVx) m.vx = Math.max(targetVx, m.vx - accel * dt);
 
   m.x += m.vx * dt;
-  m.x = Math.max(120, Math.min(WORLD_WIDTH - 120, m.x));
+  m.x = Math.max(155, Math.min(getWorldWidth(w) - 165, m.x));
 
   // Giant Wolf passive sprint bite: injures ground enemies while continuing to run until tired!
   if (m.mount === 'wolf' && m.sprinting && Math.abs(m.vx) > 65 && m.wolfBiteCooldown <= 0) {
@@ -2699,7 +2707,7 @@ function updateMonarch(
 
   const vw = w.viewWidth || 480;
   const desiredCam = m.x + m.facing * Math.min(32, vw * 0.08) - vw / 2;
-  const clampedCam = Math.max(0, Math.min(WORLD_WIDTH - vw, desiredCam));
+  const clampedCam = Math.max(0, Math.min(getWorldWidth(w) - vw, desiredCam));
   m.cameraX += (clampedCam - m.cameraX) * Math.min(1, dt * 5.2);
 
   // Open wilderness chests (gold + diamonds up to 5 per island — all diamonds belong to the Host's campaign!)
@@ -3050,7 +3058,7 @@ function updateDayNightAndWaves(w: WorldState, dt: number): void {
           homeCampId: camp.id,
           assignedFarmId: null,
           assignedTowerId: null,
-          side: camp.x < CENTER_X ? -1 : 1,
+          side: camp.x < getCenterX(w) ? -1 : 1,
           actionTimer: 2,
           animTime: 0,
           carriedCoins: 0,
@@ -3372,7 +3380,7 @@ function updateBoatAndBreweries(w: WorldState, dt: number): void {
           brew.breweryAttractTimer = 0;
           // Draw wanderer from either left or right far edge (alternating sides!)
           const spawnFromLeft = Math.random() < 0.5;
-          const edgeX = spawnFromLeft ? 230 : WORLD_WIDTH - 230;
+          const edgeX = spawnFromLeft ? 230 : getWorldWidth(w) - 230;
           w.villagers.push({
             id: uid(w),
             x: edgeX,
@@ -3388,7 +3396,7 @@ function updateBoatAndBreweries(w: WorldState, dt: number): void {
             homeCampId: brew.id,
             assignedFarmId: null,
             assignedTowerId: null,
-            side: brew.x < CENTER_X ? -1 : 1,
+            side: brew.x < getCenterX(w) ? -1 : 1,
             actionTimer: 2,
             animTime: 0,
             carriedCoins: 0,
@@ -3547,23 +3555,23 @@ function buildBuilderTaskAssignments(
   const tasks: ActiveBuilderTask[] = [];
 
   for (const wall of w.walls) {
-    if (wall.underConstruction && (!isEveningOrNight || Math.abs(wall.x - CENTER_X) < 340)) {
+    if (wall.underConstruction && (!isEveningOrNight || Math.abs(wall.x - getCenterX(w)) < 340)) {
       tasks.push({
         kind: 'wall',
         id: wall.id,
         x: wall.x,
-        side: wall.x < CENTER_X ? -1 : 1,
+        side: wall.x < getCenterX(w) ? -1 : 1,
         orderedAt: wall.orderedAt ?? wall.id,
       });
     }
   }
   for (const tw of w.towers) {
-    if (tw.underConstruction && (!isEveningOrNight || Math.abs(tw.x - CENTER_X) < 340)) {
+    if (tw.underConstruction && (!isEveningOrNight || Math.abs(tw.x - getCenterX(w)) < 340)) {
       tasks.push({
         kind: 'tower',
         id: tw.id,
         x: tw.x,
-        side: tw.x < CENTER_X ? -1 : 1,
+        side: tw.x < getCenterX(w) ? -1 : 1,
         orderedAt: tw.orderedAt ?? tw.id,
       });
     }
@@ -3573,7 +3581,7 @@ function buildBuilderTaskAssignments(
       kind: 'forge',
       id: 0,
       x: w.forge.x,
-      side: w.forge.x < CENTER_X ? -1 : 1,
+      side: w.forge.x < getCenterX(w) ? -1 : 1,
       orderedAt: w.forge.orderedAt ?? 0,
     });
   }
@@ -3582,7 +3590,7 @@ function buildBuilderTaskAssignments(
       kind: 'boat',
       id: 0,
       x: w.boat.x,
-      side: w.boat.x < CENTER_X ? -1 : 1,
+      side: w.boat.x < getCenterX(w) ? -1 : 1,
       orderedAt: w.boat.orderedAt ?? 0,
     });
   }
@@ -3591,7 +3599,7 @@ function buildBuilderTaskAssignments(
       kind: 'dock',
       id: 0,
       x: w.dock.x,
-      side: w.dock.x < CENTER_X ? -1 : 1,
+      side: w.dock.x < getCenterX(w) ? -1 : 1,
       orderedAt: w.dock.orderedAt ?? 0,
     });
   }
@@ -3601,7 +3609,7 @@ function buildBuilderTaskAssignments(
         kind: 'farm',
         id: farm.id,
         x: farm.x,
-        side: farm.x < CENTER_X ? -1 : 1,
+        side: farm.x < getCenterX(w) ? -1 : 1,
         orderedAt: farm.orderedAt ?? farm.id,
       });
     }
@@ -3612,7 +3620,7 @@ function buildBuilderTaskAssignments(
         kind: 'brewery',
         id: camp.id,
         x: camp.x,
-        side: camp.x < CENTER_X ? -1 : 1,
+        side: camp.x < getCenterX(w) ? -1 : 1,
         orderedAt: camp.orderedAt ?? camp.id,
       });
     }
@@ -3624,7 +3632,7 @@ function buildBuilderTaskAssignments(
           kind: 'rock',
           id: r.id,
           x: r.x,
-          side: r.x < CENTER_X ? -1 : 1,
+          side: r.x < getCenterX(w) ? -1 : 1,
           orderedAt: r.orderedAt ?? r.id,
         });
       }
@@ -3635,7 +3643,7 @@ function buildBuilderTaskAssignments(
           kind: 'tree',
           id: tr.id,
           x: tr.x,
-          side: tr.x < CENTER_X ? -1 : 1,
+          side: tr.x < getCenterX(w) ? -1 : 1,
           orderedAt: tr.orderedAt ?? tr.id,
         });
       }
@@ -3882,7 +3890,7 @@ function updateVillagers(w: WorldState, dt: number): void {
 
       if (trySweepCoinsToBanker(w, v, dt, isEveningOrNight)) continue;
 
-      const homeAnchor = v.orderDir !== 0 ? CENTER_X + v.side * 75 : CENTER_X;
+      const homeAnchor = v.orderDir !== 0 ? getCenterX(w) + v.side * 75 : getCenterX(w);
       if (Math.abs(v.x - homeAnchor) > 70) {
         moveToward(v, homeAnchor + (Math.random() - 0.5) * 30, 44, dt);
       } else {
@@ -3897,7 +3905,7 @@ function updateVillagers(w: WorldState, dt: number): void {
 
     // --- BUILDER (FIFO order + automatic side splitting + manual priority override, then repairs & sweeps coins!) ---
     if (v.role === 'builder') {
-      const sideScore = (wx: number) => ((wx < CENTER_X ? -1 : 1) === v.side ? 0 : 1200);
+      const sideScore = (wx: number) => ((wx < getCenterX(w) ? -1 : 1) === v.side ? 0 : 1200);
       const odinMult = w.activeGod === 'odin' ? 1.5 : 1.0;
       const buildBuffMult = isConstructionBuffActive(w) ? 1.35 : 1.0;
       const workMult = odinMult * buildBuffMult;
@@ -4082,7 +4090,7 @@ function updateVillagers(w: WorldState, dt: number): void {
         if (buildBrew) {
           v.state = 'working';
           v.targetId = buildBrew.id;
-          const brewSide = buildBrew.x < CENTER_X ? -1 : 1;
+          const brewSide = buildBrew.x < getCenterX(w) ? -1 : 1;
           if (moveToward(v, buildBrew.x - brewSide * (12 + (v.id % 3) * 3), 50, dt)) {
             v.facing = brewSide;
             buildBrew.breweryBuildProgress = (buildBrew.breweryBuildProgress ?? 0) + dt * 0.25 * workMult;
@@ -4119,7 +4127,7 @@ function updateVillagers(w: WorldState, dt: number): void {
           v.state = 'working';
           v.targetId = markedRock.id;
           const spreadOffset = ((v.id % 3) - 1) * 4;
-          const standX = markedRock.x + (markedRock.x < CENTER_X ? 12 : -12) + spreadOffset;
+          const standX = markedRock.x + (markedRock.x < getCenterX(w) ? 12 : -12) + spreadOffset;
           if (moveToward(v, standX, 48, dt)) {
             v.facing = markedRock.x < v.x ? -1 : 1;
             const spec = getRockSpec(markedRock.size ?? sizeFromVariant(markedRock.variant));
@@ -4154,7 +4162,7 @@ function updateVillagers(w: WorldState, dt: number): void {
           v.state = 'working';
           v.targetId = markedTree.id;
           const spreadOffset = ((v.id % 3) - 1) * 4;
-          const standX = markedTree.x + (markedTree.x < CENTER_X ? 11 : -11) + spreadOffset;
+          const standX = markedTree.x + (markedTree.x < getCenterX(w) ? 11 : -11) + spreadOffset;
           if (moveToward(v, standX, 48, dt)) {
             v.facing = markedTree.x < v.x ? -1 : 1;
             const spec = getTreeSpec(markedTree.size ?? sizeFromVariant(markedTree.variant));
@@ -4187,7 +4195,7 @@ function updateVillagers(w: WorldState, dt: number): void {
       const damagedWall = w.walls
         .filter((wall) => wall.level > 0 && !wall.destroyed && wall.hp < wall.maxHp)
         .sort((a, b) => sideScore(a.x) + (a.hp / a.maxHp) * 100 - (sideScore(b.x) + (b.hp / b.maxHp) * 100))[0];
-      if (damagedWall && (!isEveningOrNight || Math.abs(damagedWall.x - CENTER_X) < 350)) {
+      if (damagedWall && (!isEveningOrNight || Math.abs(damagedWall.x - getCenterX(w)) < 350)) {
         v.state = 'working';
         const standX = damagedWall.x - damagedWall.side * 12;
         if (moveToward(v, standX, 48, dt)) {
@@ -4205,7 +4213,7 @@ function updateVillagers(w: WorldState, dt: number): void {
       const damagedTower = w.towers
         .filter((tw) => tw.level > 0 && !tw.destroyed && tw.hp < tw.maxHp)
         .sort((a, b) => sideScore(a.x) + (a.hp / a.maxHp) * 100 - (sideScore(b.x) + (b.hp / b.maxHp) * 100))[0];
-      if (damagedTower && (!isEveningOrNight || Math.abs(damagedTower.x - CENTER_X) < 350)) {
+      if (damagedTower && (!isEveningOrNight || Math.abs(damagedTower.x - getCenterX(w)) < 350)) {
         v.state = 'working';
         const standX = damagedTower.x - damagedTower.side * 12;
         if (moveToward(v, standX, 48, dt)) {
@@ -4276,7 +4284,7 @@ function updateVillagers(w: WorldState, dt: number): void {
 
       v.targetId = null;
       v.state = isEveningOrNight ? 'fleeing' : 'idle';
-      const anchor = CENTER_X + v.side * 95;
+      const anchor = getCenterX(w) + v.side * 95;
       if (Math.abs(v.x - anchor) > 65) {
         moveToward(v, anchor, 48, dt);
       } else {
@@ -4297,7 +4305,7 @@ function updateVillagers(w: WorldState, dt: number): void {
       const defWall = getOuterDefensiveWall(w, v.side);
       const guardX = defWall
         ? defWall.x + v.side * (6 + (v.id % 3) * 6)
-        : CENTER_X + v.side * (165 + (v.id % 3) * 14);
+        : getCenterX(w) + v.side * (165 + (v.id % 3) * 14);
 
       let targetEnemy: Enemy | null = null;
       let bestDist = 115;
@@ -4334,7 +4342,7 @@ function updateVillagers(w: WorldState, dt: number): void {
       if (!isEveningOrNight && w.enemies.length === 0) {
         if (v.carriedCoins > 0 && deliverCarriedCoinsToBanker(w, v, dt)) continue;
 
-        const sideScore = (wx: number) => ((wx < CENTER_X ? -1 : 1) === v.side ? 0 : 1200);
+        const sideScore = (wx: number) => ((wx < getCenterX(w) ? -1 : 1) === v.side ? 0 : 1200);
         const digSpot = w.rocks
           .filter(
             (r) =>
@@ -4402,7 +4410,7 @@ function updateVillagers(w: WorldState, dt: number): void {
               !tw.destroyed &&
               countArchersAssignedToTower(w, tw.id) < getTowerArcherCap(tw.level)
           )
-          .sort((a, b) => Math.abs(b.x - CENTER_X) - Math.abs(a.x - CENTER_X));
+          .sort((a, b) => Math.abs(b.x - getCenterX(w)) - Math.abs(a.x - getCenterX(w)));
         myTower = candidateTowers[0] ?? null;
         v.assignedTowerId = myTower ? myTower.id : null;
       } else if (!isEveningOrNight && w.enemies.length === 0) {
@@ -4419,7 +4427,7 @@ function updateVillagers(w: WorldState, dt: number): void {
         ? myTower.x + ((v.id % 3) - 1) * 3
         : defWall
           ? defWall.x - v.side * (12 + (v.id % 3) * 8)
-          : CENTER_X + v.side * (75 + (v.id % 3) * 14);
+          : getCenterX(w) + v.side * (75 + (v.id % 3) * 14);
 
       let targetEnemy: Enemy | null = null;
       let enemyDist = arrowRange;
@@ -4465,7 +4473,7 @@ function updateVillagers(w: WorldState, dt: number): void {
       let targetPrey = null;
       let preyScore = 440;
       for (const prey of w.wildlife) {
-        const sameSide = (prey.x < CENTER_X ? -1 : 1) === v.side;
+        const sameSide = (prey.x < getCenterX(w) ? -1 : 1) === v.side;
         const d = Math.abs(prey.x - v.x);
         const score = d + (sameSide ? 0 : 180);
         if (score < preyScore) {
@@ -4493,9 +4501,9 @@ function updateVillagers(w: WorldState, dt: number): void {
       if (trySweepCoinsToBanker(w, v, dt, isEveningOrNight)) continue;
 
       v.state = 'hunting';
-      const patrolAnchor = defWall ? defWall.x + v.side * 55 : CENTER_X + v.side * 160;
+      const patrolAnchor = defWall ? defWall.x + v.side * 55 : getCenterX(w) + v.side * 160;
       if (Math.abs(v.x - v.targetX) < 10 || v.actionTimer <= 0) {
-        v.targetX = Math.max(380, Math.min(WORLD_WIDTH - 380, patrolAnchor + (Math.random() - 0.5) * 140));
+        v.targetX = Math.max(380, Math.min(getWorldWidth(w) - 380, patrolAnchor + (Math.random() - 0.5) * 140));
         v.actionTimer = 3 + Math.random() * 3.5;
       }
       moveToward(v, v.targetX, 34, dt);
@@ -4506,7 +4514,7 @@ function updateVillagers(w: WorldState, dt: number): void {
     if (v.role === 'producer') {
       if (isEveningOrNight) {
         v.state = 'fleeing';
-        moveToward(v, CENTER_X + v.side * 55, 48, dt);
+        moveToward(v, getCenterX(w) + v.side * 55, 48, dt);
         continue;
       }
 
@@ -4516,7 +4524,7 @@ function updateVillagers(w: WorldState, dt: number): void {
 
       // 1. In Winter & Spring, forage any player-ordered Berry Bushes first!
       if (seasonMod.hasBerries) {
-        const sideScore = (wx: number) => ((wx < CENTER_X ? -1 : 1) === v.side ? 0 : 1200);
+        const sideScore = (wx: number) => ((wx < getCenterX(w) ? -1 : 1) === v.side ? 0 : 1200);
         const markedBush = (w.berryBushes ?? [])
           .filter((b) => b.marked && b.berries > 0)
           .sort((a, b) => sideScore(a.x) + Math.abs(a.x - v.x) - (sideScore(b.x) + Math.abs(b.x - v.x)))[0];
@@ -4561,9 +4569,9 @@ function updateVillagers(w: WorldState, dt: number): void {
       // 2. WINTER: Zero farm production! Farmers become river Fishermen casting rods into the fjord (1 coin/fish)!
       if (isWinter) {
         const defWall = getOuterDefensiveWall(w, v.side);
-        const maxReach = defWall ? Math.max(95, Math.abs(defWall.x - CENTER_X) - 24) : 185;
+        const maxReach = defWall ? Math.max(95, Math.abs(defWall.x - getCenterX(w)) - 24) : 185;
         const fishOffset = Math.min(maxReach, 110 + (v.id % 5) * 24);
-        const fishX = CENTER_X + v.side * fishOffset;
+        const fishX = getCenterX(w) + v.side * fishOffset;
         v.state = 'fishing';
         v.targetId = null;
         if (moveToward(v, fishX, 44, dt)) {
@@ -4595,7 +4603,7 @@ function updateVillagers(w: WorldState, dt: number): void {
       if (!myFarm) {
         if (trySweepCoinsToBanker(w, v, dt, isEveningOrNight)) continue;
         // No farm built yet: cast fishing rod into river for 1 coin each
-        const fishX = CENTER_X + v.side * (120 + (v.id % 4) * 22);
+        const fishX = getCenterX(w) + v.side * (120 + (v.id % 4) * 22);
         v.state = 'fishing';
         if (moveToward(v, fishX, 44, dt)) {
           v.facing = v.side;
@@ -4702,7 +4710,7 @@ function updateEnemies(w: WorldState, dt: number): void {
     }
 
     const homePortal = w.portals.find((p) => p.side === e.side);
-    const homeX = homePortal ? homePortal.x : e.side === -1 ? 200 : WORLD_WIDTH - 200;
+    const homeX = homePortal ? homePortal.x : e.side === -1 ? 200 : getWorldWidth(w) - 200;
 
     if (e.retreating) {
       const speed = e.kind === 'frost_troll' ? 34 : e.kind === 'hel_crow' ? 76 : 68;
@@ -4723,7 +4731,7 @@ function updateEnemies(w: WorldState, dt: number): void {
     // Aerial Hel Crow hovers above ground & swoops at archers/monarch!
     if (e.kind === 'hel_crow') {
       e.y = GROUND_Y - 38 + Math.sin(w.elapsed * 5 + e.id) * 5;
-      moveToward(e, CENTER_X, 62, dt);
+      moveToward(e, getCenterX(w), 62, dt);
       if (monarch && monarch.hurtCooldown <= 0 && Math.abs(e.x - monarch.x) < 16) {
         monarch.hurtCooldown = 1.1;
         w.screenShake = 0.2;
@@ -4800,7 +4808,7 @@ function updateEnemies(w: WorldState, dt: number): void {
       continue;
     }
 
-    const dirToCenter: 1 | -1 = e.x < CENTER_X ? 1 : -1;
+    const dirToCenter: 1 | -1 = e.x < getCenterX(w) ? 1 : -1;
     let blockingWall: Wall | null = null;
     for (const wall of w.walls) {
       if (wall.level <= 0 || wall.destroyed || wall.hp <= 0) continue;
@@ -4926,7 +4934,7 @@ function updateEnemies(w: WorldState, dt: number): void {
       hel_crow: 62,
       frost_troll: 24,
     };
-    moveToward(e, CENTER_X, speedMap[e.kind], dt);
+    moveToward(e, getCenterX(w), speedMap[e.kind], dt);
   }
 }
 
@@ -5051,8 +5059,8 @@ function updateWildlife(w: WorldState, dt: number): void {
   const spawnRate = 0.45 * seasonAnimalMult * getIslandCoinDifficultyMult(w.currentIsland);
   if (!w.isNight && standingTrees.length > 0 && w.wildlife.length < maxWildlife && Math.random() < dt * spawnRate) {
     const homeTree = standingTrees[Math.floor(Math.random() * standingTrees.length)];
-    const spawnX = Math.max(320, Math.min(WORLD_WIDTH - 320, homeTree.x + (Math.random() - 0.5) * 30));
-    const isDeer = (homeTree.size === 'large' || Math.abs(spawnX - CENTER_X) > 290) && Math.random() < 0.38;
+    const spawnX = Math.max(320, Math.min(getWorldWidth(w) - 320, homeTree.x + (Math.random() - 0.5) * 30));
+    const isDeer = (homeTree.size === 'large' || Math.abs(spawnX - getCenterX(w)) > 290) && Math.random() < 0.38;
     w.wildlife.push({
       id: uid(w),
       kind: isDeer ? 'deer' : 'rabbit',
@@ -5080,7 +5088,7 @@ function updateWildlife(w: WorldState, dt: number): void {
       }
     }
     prey.x += prey.vx * dt;
-    prey.x = Math.max(320, Math.min(WORLD_WIDTH - 320, prey.x));
+    prey.x = Math.max(320, Math.min(getWorldWidth(w) - 320, prey.x));
   }
 }
 
@@ -5197,32 +5205,32 @@ function updateFireTrailsAndLightning(w: WorldState, dt: number): void {
 
 export function getTutorialTargetX(w: WorldState): number {
   const tut = w.tutorial;
-  if (!tut) return CENTER_X;
+  if (!tut) return getCenterX(w);
   if (tut.step === 'light_fire') return w.hall.x;
   if (tut.step === 'recruit_wanderers') {
-    // Point to the nearest vagrant camp that still has wanderers (closest is CENTER_X - 425)
+    // Point to the nearest vagrant camp that still has wanderers (closest is getCenterX(w) - 425)
     const campWithWanderer = w.camps
       .filter((c) => w.villagers.some((v) => v.role === 'wanderer' && Math.abs(v.x - c.x) < 95))
-      .sort((a, b) => Math.abs(a.x - CENTER_X) - Math.abs(b.x - CENTER_X))[0];
-    return campWithWanderer ? campWithWanderer.x : (w.camps[0]?.x ?? CENTER_X - 425);
+      .sort((a, b) => Math.abs(a.x - getCenterX(w)) - Math.abs(b.x - getCenterX(w)))[0];
+    return campWithWanderer ? campWithWanderer.x : (w.camps[0]?.x ?? getCenterX(w) - 425);
   }
   if (tut.step === 'buy_hammer') {
-    return w.shops.find((s) => s.kind === 'hammer')?.x ?? CENTER_X + 80;
+    return w.shops.find((s) => s.kind === 'hammer')?.x ?? getCenterX(w) + 80;
   }
   if (tut.step === 'build_right_wall') {
-    return w.walls.find((wall) => wall.side === 1 && wall.tier === 'inner')?.x ?? CENTER_X + 270;
+    return w.walls.find((wall) => wall.side === 1 && wall.tier === 'inner')?.x ?? getCenterX(w) + 270;
   }
   if (tut.step === 'build_left_wall') {
-    return w.walls.find((wall) => wall.side === -1 && wall.tier === 'inner')?.x ?? CENTER_X - 270;
+    return w.walls.find((wall) => wall.side === -1 && wall.tier === 'inner')?.x ?? getCenterX(w) - 270;
   }
   if (tut.step === 'buy_bow') {
-    return w.shops.find((s) => s.kind === 'bow')?.x ?? CENTER_X - 80;
+    return w.shops.find((s) => s.kind === 'bow')?.x ?? getCenterX(w) - 80;
   }
   if (tut.step === 'order_villager') {
     const hired =
       w.villagers.find((v) => v.role === 'archer' && v.state !== 'embarked') ??
       w.villagers.find((v) => v.role !== 'wanderer' && v.state !== 'embarked');
-    return hired ? hired.x : CENTER_X;
+    return hired ? hired.x : getCenterX(w);
   }
   return w.boat.x;
 }
@@ -5241,7 +5249,7 @@ export function getSpiritButtonWorldPos(w: WorldState): { x: number; y: number }
   const vh = Math.max(180, Math.round(w.viewHeight || LOGICAL_HEIGHT));
   const worldOffsetY = Math.round(vh * 0.778) - GROUND_Y;
   const m = w.monarchs[0];
-  const camX = m ? m.cameraX : Math.max(0, CENTER_X - vw / 2);
+  const camX = m ? m.cameraX : Math.max(0, getCenterX(w) - vw / 2);
   const btn = getSpiritButtonScreenPos(vw, vh);
   return {
     x: camX + btn.x,
@@ -5256,7 +5264,7 @@ export function ensureSpiritAdvisor(w: WorldState): SpiritAdvisorState {
       phase: 'docked',
       topic: null,
       message: '',
-      targetX: CENTER_X,
+      targetX: getCenterX(w),
       spiritX: btnPos.x,
       spiritY: btnPos.y,
       spiritFacing: 1,

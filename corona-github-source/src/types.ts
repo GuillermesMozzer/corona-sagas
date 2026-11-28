@@ -355,6 +355,8 @@ export interface BerryBush {
 }
 
 export interface IslandSnapshot {
+  worldWidth?: number;
+  centerX?: number;
   hall: Hall;
   forge: ForgeState | null;
   shops: ToolShop[];
@@ -767,6 +769,8 @@ export interface WorldState {
   elapsed: number;
   nextId: number;
   resources: Resources;
+  worldWidth?: number;
+  centerX?: number;
   monarchs: Monarch[];
   hall: Hall;
   banker: BankerState;
@@ -810,3 +814,16 @@ export interface WorldState {
     wallsBuilt: number;
   };
 }
+
+export function getWorldWidth(w: { worldWidth?: number } | null | undefined): number {
+  return w && typeof w.worldWidth === 'number' && w.worldWidth >= 2000 ? w.worldWidth : WORLD_WIDTH;
+}
+
+export function getCenterX(w: { centerX?: number; hall?: { x: number }; worldWidth?: number } | null | undefined): number {
+  if (!w) return CENTER_X;
+  if (typeof w.centerX === 'number' && w.centerX >= 800) return w.centerX;
+  if (w.hall && typeof w.hall.x === 'number' && w.hall.x >= 800) return w.hall.x;
+  if (typeof w.worldWidth === 'number' && w.worldWidth >= 2000) return Math.round(w.worldWidth / 2);
+  return CENTER_X;
+}
+

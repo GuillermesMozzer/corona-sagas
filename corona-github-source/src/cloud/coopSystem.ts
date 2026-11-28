@@ -19,7 +19,8 @@ import {
 } from '../config/reportForm';
 import { FIREBASE_CONFIG } from '../config/firebase';
 import {
-  CENTER_X,
+  getCenterX,
+  getWorldWidth,
   GROUND_Y,
   type CharacterAppearance,
   type InputState,
@@ -975,7 +976,10 @@ export function hostSyncCoopWorld(world: WorldState): Map<string, InputState> {
   guests.forEach((guest, idx) => {
     let m = world.monarchs.find((item) => item.playerUid === guest.uid);
     if (!m && hostMonarch) {
-      const spawnX = Math.max(160, Math.min(2400, (hostMonarch.x || CENTER_X) + (idx % 2 === 0 ? -24 : 24) * (idx + 1)));
+      const spawnX = Math.max(
+        175,
+        Math.min(getWorldWidth(world) - 185, (hostMonarch.x || getCenterX(world)) + (idx % 2 === 0 ? -24 : 24) * (idx + 1))
+      );
       const newMonarch: Monarch = {
         id: 100 + idx,
         x: spawnX,

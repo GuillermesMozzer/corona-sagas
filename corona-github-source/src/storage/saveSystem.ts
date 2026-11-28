@@ -112,6 +112,8 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
   state.viewHeight = state.viewHeight ?? 270;
   state.dayHalfMinutes = state.dayHalfMinutes ?? 3;
   state.currentIsland = state.currentIsland ?? 1;
+  state.worldWidth = state.worldWidth ?? (state.hall?.x ? Math.max(2800, state.hall.x * 2) : 2800);
+  state.centerX = state.centerX ?? state.hall?.x ?? CENTER_X;
   state.threatLevel = state.threatLevel ?? 1;
   state.worldMapContext = 'inspect';
   state.unlockedGods = state.unlockedGods ?? [];

@@ -20,11 +20,11 @@ import {
   listCampaignSlots,
 } from '../storage/saveSystem';
 import {
-  CENTER_X,
+  getCenterX,
+  getWorldWidth,
   GROUND_Y,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
-  WORLD_WIDTH,
   type CommandMode,
   type Enemy,
   type Monarch,
@@ -44,7 +44,7 @@ import {
   isFarmsUnlocked,
   isShopUnlocked,
 } from '../systems/simulation';
-import { ISLAND_DEFINITIONS, getIslandDef } from '../world/islands';
+import { ISLAND_DEFINITIONS, getIslandDef, type IslandTheme } from '../world/islands';
 import { GOD_DEFS, MOUNT_DEFS } from '../world/mountsAndGods';
 
 export interface UiHitRegion {
@@ -79,14 +79,6 @@ function rgbStr(c: RGB, alpha = 1): string {
     : `rgba(${c.r},${c.g},${c.b},${alpha.toFixed(3)})`;
 }
 
-const SKY_TOP_DAWN: RGB = { r: 44, g: 58, b: 92 };
-const SKY_BOT_DAWN: RGB = { r: 214, g: 132, b: 102 };
-const SKY_TOP_DAY: RGB = { r: 58, g: 94, b: 134 };
-const SKY_BOT_DAY: RGB = { r: 162, g: 196, b: 216 };
-const SKY_TOP_DUSK: RGB = { r: 34, g: 36, b: 68 };
-const SKY_BOT_DUSK: RGB = { r: 192, g: 92, b: 78 };
-const SKY_TOP_NIGHT: RGB = { r: 8, g: 15, b: 28 };
-const SKY_BOT_NIGHT: RGB = { r: 20, g: 38, b: 58 };
 const SKY_BOT_BLOOD: RGB = { r: 78, g: 24, b: 36 };
 
 export class PixelRenderer {
@@ -169,38 +161,46 @@ export class PixelRenderer {
     }
   }
 
-  private getSkyColors(tVal: number, isBloodMoon: boolean): { top: RGB; bot: RGB; nightFactor: number } {
+  private getSkyColors(
+    tVal: number,
+    isBloodMoon: boolean,
+    theme: IslandTheme
+  ): { top: RGB; bot: RGB; nightFactor: number } {
     let top: RGB;
     let bot: RGB;
     let nightFactor = 0;
 
+    const dawnTop = lerpRGB(theme.skyDuskTop, theme.skyDayTop, 0.35);
+    const dawnBot = lerpRGB(theme.skyDuskBot, { r: 238, g: 164, b: 120 }, 0.45);
+    const nightBot = isBloodMoon ? SKY_BOT_BLOOD : theme.skyNightBot;
+
     if (tVal < 0.05) {
       const k = tVal / 0.05;
-      top = lerpRGB(SKY_TOP_DAWN, SKY_TOP_DAY, k);
-      bot = lerpRGB(SKY_BOT_DAWN, SKY_BOT_DAY, k);
+      top = lerpRGB(dawnTop, theme.skyDayTop, k);
+      bot = lerpRGB(dawnBot, theme.skyDayBot, k);
       nightFactor = lerp(0.35, 0, k);
     } else if (tVal < 0.43) {
-      top = SKY_TOP_DAY;
-      bot = SKY_BOT_DAY;
+      top = theme.skyDayTop;
+      bot = theme.skyDayBot;
       nightFactor = 0;
     } else if (tVal < 0.49) {
       const k = (tVal - 0.43) / 0.06;
-      top = lerpRGB(SKY_TOP_DAY, SKY_TOP_DUSK, k);
-      bot = lerpRGB(SKY_BOT_DAY, SKY_BOT_DUSK, k);
+      top = lerpRGB(theme.skyDayTop, theme.skyDuskTop, k);
+      bot = lerpRGB(theme.skyDayBot, theme.skyDuskBot, k);
       nightFactor = lerp(0, 0.48, k);
     } else if (tVal < 0.54) {
       const k = (tVal - 0.49) / 0.05;
-      top = lerpRGB(SKY_TOP_DUSK, SKY_TOP_NIGHT, k);
-      bot = lerpRGB(SKY_BOT_DUSK, isBloodMoon ? SKY_BOT_BLOOD : SKY_BOT_NIGHT, k);
+      top = lerpRGB(theme.skyDuskTop, theme.skyNightTop, k);
+      bot = lerpRGB(theme.skyDuskBot, nightBot, k);
       nightFactor = lerp(0.48, 1, k);
     } else if (tVal < 0.95) {
-      top = SKY_TOP_NIGHT;
-      bot = isBloodMoon ? SKY_BOT_BLOOD : SKY_BOT_NIGHT;
+      top = theme.skyNightTop;
+      bot = nightBot;
       nightFactor = 1;
     } else {
       const k = (tVal - 0.95) / 0.05;
-      top = lerpRGB(SKY_TOP_NIGHT, SKY_TOP_DAWN, k);
-      bot = lerpRGB(isBloodMoon ? SKY_BOT_BLOOD : SKY_BOT_NIGHT, SKY_BOT_DAWN, k);
+      top = lerpRGB(theme.skyNightTop, dawnTop, k);
+      bot = lerpRGB(nightBot, dawnBot, k);
       nightFactor = lerp(1, 0.35, k);
     }
 
@@ -239,37 +239,44 @@ export class PixelRenderer {
       return;
     }
 
+    const islandDef = getIslandDef(w.currentIsland);
+    const theme = islandDef.theme;
+
     const monarch = this.getLocalMonarch(w);
     const shakeX = w.screenShake > 0 ? Math.round((Math.random() - 0.5) * 4) : 0;
     const shakeY = w.screenShake > 0 ? Math.round((Math.random() - 0.5) * 3) : 0;
-    const fallbackCam = Math.max(0, Math.round(1400 - this.viewW / 2));
+    const fallbackCam = Math.max(0, Math.round(getCenterX(w) - this.viewW / 2));
     const camX = Math.round((monarch ? monarch.cameraX : fallbackCam) + shakeX);
 
-    const { top, bot, nightFactor } = this.getSkyColors(w.timeOfDay, w.isBloodMoon);
+    const { top, bot, nightFactor } = this.getSkyColors(w.timeOfDay, w.isBloodMoon, theme);
 
     ctx.save();
     ctx.translate(0, shakeY);
 
-    // 1. Full-height dynamic Sky
+    // 1. Full-height dynamic Island Sky
     const grad = ctx.createLinearGradient(0, 0, 0, this.waterScreenY);
     grad.addColorStop(0, rgbStr(top));
     grad.addColorStop(1, rgbStr(bot));
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, this.viewW, this.waterScreenY);
 
-    if (nightFactor > 0.15) this.drawStarsAndAurora(ctx, w, nightFactor);
+    if (nightFactor > 0.15) this.drawStarsAndAurora(ctx, w, nightFactor, theme);
     this.drawCelestial(ctx, w);
+    if (theme.hasRainbow !== 'none') this.drawIslandRainbow(ctx, w, camX, nightFactor, theme);
     this.drawClouds(ctx, w, camX, nightFactor);
 
     // 2. World plane shifted smoothly by worldOffsetY (0 on landscape, >0 on tall portrait)
     ctx.save();
     ctx.translate(0, this.worldOffsetY);
 
-    this.drawParallaxMountains(ctx, camX, nightFactor, w.isBloodMoon);
-    this.drawParallaxForest(ctx, camX, nightFactor);
-    this.drawGround(ctx, w, camX, nightFactor);
+    this.drawParallaxMountains(ctx, w, camX, nightFactor, theme);
+    this.drawMonumentalGodStatue(ctx, w, camX, nightFactor, theme);
+    this.drawParallaxForest(ctx, w, camX, nightFactor, theme);
+    this.drawStorytellingScenery(ctx, w, camX, nightFactor, theme);
+    this.drawGround(ctx, w, camX, nightFactor, theme);
+    this.drawWorldEdges(ctx, w, camX, nightFactor, theme);
 
-    this.drawTrees(ctx, w, camX, nightFactor);
+    this.drawTrees(ctx, w, camX, nightFactor, theme);
     this.drawRocks(ctx, w, camX, nightFactor);
     this.drawBerryBushes(ctx, w, camX);
     this.drawCamps(ctx, w, camX);
@@ -1311,16 +1318,23 @@ export class PixelRenderer {
   // =========================================================================
   // SKY, PARALLAX & WORLD LAYERS (Responsive width/height)
   // =========================================================================
-  private drawStarsAndAurora(ctx: CanvasRenderingContext2D, w: WorldState, nightFactor: number): void {
+  private drawStarsAndAurora(
+    ctx: CanvasRenderingContext2D,
+    w: WorldState,
+    nightFactor: number,
+    theme: IslandTheme
+  ): void {
     for (const s of this.stars) {
       const twinkle = 0.45 + 0.55 * Math.sin(w.elapsed * 2.4 + s.phase);
       ctx.fillStyle = `rgba(225, 240, 255, ${(nightFactor * twinkle * 0.85).toFixed(2)})`;
       ctx.fillRect(Math.round(s.rx * this.viewW), Math.round(s.ry * this.waterScreenY), s.size, s.size);
     }
 
-    const auroraAlpha = Math.max(0, (nightFactor - 0.35) / 0.65) * (w.isBloodMoon ? 0.35 : 0.68);
+    const auroraAlpha = Math.max(0, (nightFactor - 0.35) / 0.65) * (w.isBloodMoon ? 0.35 : 0.72);
     if (auroraAlpha <= 0.02) return;
 
+    const p1 = theme.auroraPrimary;
+    const p2 = theme.auroraSecondary;
     const auroraBaseY = Math.round(this.waterScreenY * 0.24);
     for (let x = 0; x < this.viewW; x += 3) {
       const wave1 = Math.sin(x * 0.018 + w.elapsed * 0.45) * 14;
@@ -1335,10 +1349,10 @@ export class PixelRenderer {
         g.addColorStop(0.55, `rgba(255, 92, 122, ${(auroraAlpha * shimmer * 0.45).toFixed(3)})`);
         g.addColorStop(1, 'rgba(130, 30, 80, 0)');
       } else {
-        g.addColorStop(0, 'rgba(65, 240, 185, 0)');
-        g.addColorStop(0.45, `rgba(74, 232, 188, ${(auroraAlpha * shimmer * 0.45).toFixed(3)})`);
-        g.addColorStop(0.75, `rgba(76, 184, 245, ${(auroraAlpha * shimmer * 0.3).toFixed(3)})`);
-        g.addColorStop(1, 'rgba(55, 130, 210, 0)');
+        g.addColorStop(0, `rgba(${p1.r}, ${p1.g}, ${p1.b}, 0)`);
+        g.addColorStop(0.45, `rgba(${p1.r}, ${p1.g}, ${p1.b}, ${(auroraAlpha * shimmer * 0.48).toFixed(3)})`);
+        g.addColorStop(0.76, `rgba(${p2.r}, ${p2.g}, ${p2.b}, ${(auroraAlpha * shimmer * 0.34).toFixed(3)})`);
+        g.addColorStop(1, `rgba(${p2.r}, ${p2.g}, ${p2.b}, 0)`);
       }
       ctx.fillStyle = g;
       ctx.fillRect(x, Math.round(baseY - colHeight), 3, Math.round(colHeight + 12));
@@ -1375,6 +1389,54 @@ export class PixelRenderer {
     }
   }
 
+  private drawIslandRainbow(
+    ctx: CanvasRenderingContext2D,
+    w: WorldState,
+    camX: number,
+    nightFactor: number,
+    theme: IslandTheme
+  ): void {
+    const isBifrost = theme.hasRainbow === 'bifrost';
+    const dayVis = isBifrost ? lerp(0.55, 0.36, nightFactor) : Math.max(0, (1 - nightFactor * 1.15) * 0.38);
+    if (dayVis <= 0.02) return;
+
+    const worldMid = getCenterX(w);
+    const arcCx = Math.round(this.viewW * 0.54 - (camX - (worldMid - this.viewW / 2)) * 0.05);
+    const arcCy = this.groundScreenY + 12;
+    const baseR = Math.min(this.viewW * 0.56, this.groundScreenY * 0.96);
+    const bands = ['#ff6b6b', '#ffad54', '#ffe869', '#6fe87b', '#63d8ff', '#8f8cff', '#d98aff'];
+
+    const drawArc = (radius: number, alpha: number, bandW: number) => {
+      ctx.save();
+      ctx.lineWidth = bandW;
+      for (let i = 0; i < bands.length; i++) {
+        const pulse = isBifrost ? 0.8 + 0.2 * Math.sin(w.elapsed * 2.8 + i * 0.65) : 1;
+        ctx.globalAlpha = alpha * pulse;
+        ctx.strokeStyle = bands[i];
+        ctx.beginPath();
+        ctx.arc(arcCx, arcCy, Math.max(24, radius - i * bandW), Math.PI * 1.04, Math.PI * 1.96);
+        ctx.stroke();
+      }
+      ctx.restore();
+    };
+
+    drawArc(baseR, dayVis, isBifrost ? 3.2 : 2.4);
+    if (theme.hasRainbow === 'double') {
+      drawArc(baseR + 24, dayVis * 0.52, 1.8);
+    }
+    if (isBifrost) {
+      // Shimmering Bifrost celestial motes floating along the bridge
+      for (let i = 0; i < 16; i++) {
+        const angle = Math.PI * 1.08 + ((i / 15) * 0.84 + ((w.elapsed * 0.03 + i * 0.17) % 0.08)) * Math.PI;
+        const r = baseR - (i % 6) * 3;
+        const px = Math.round(arcCx + Math.cos(angle) * r);
+        const py = Math.round(arcCy + Math.sin(angle) * r);
+        ctx.fillStyle = `rgba(255, 250, 214, ${(dayVis * 1.1).toFixed(2)})`;
+        ctx.fillRect(px, py, 2, 2);
+      }
+    }
+  }
+
   private drawClouds(ctx: CanvasRenderingContext2D, w: WorldState, camX: number, nightFactor: number): void {
     const cloudCol = lerpRGB({ r: 220, g: 232, b: 242 }, { r: 34, g: 52, b: 74 }, nightFactor);
     ctx.fillStyle = rgbStr(cloudCol, 0.48);
@@ -1391,117 +1453,826 @@ export class PixelRenderer {
 
   private drawParallaxMountains(
     ctx: CanvasRenderingContext2D,
+    w: WorldState,
     camX: number,
     nightFactor: number,
-    isBloodMoon: boolean
+    theme: IslandTheme
   ): void {
     const farBase = lerpRGB(
-      { r: 78, g: 102, b: 128 },
-      isBloodMoon ? { r: 36, g: 24, b: 38 } : { r: 16, g: 28, b: 44 },
+      theme.farMountainDay,
+      w.isBloodMoon ? { r: 44, g: 22, b: 36 } : theme.farMountainNight,
       nightFactor
     );
-    const snowCap = lerpRGB({ r: 215, g: 229, b: 240 }, { r: 64, g: 88, b: 112 }, nightFactor);
+    const capCol = lerpRGB(theme.mountainCapDay, theme.mountainCapNight, nightFactor);
+    const midCol = lerpRGB(theme.midRidgeDay, theme.midRidgeNight, nightFactor);
+    const style = theme.mountainStyle;
 
-    const span = 120;
+    // 1. Optional Distant Sea-Stack Islands & Fjord Horizon Silhouettes
+    if (theme.hasDistantIslands) {
+      const islCol = lerpRGB(
+        lerpRGB(theme.farMountainDay, theme.skyDayBot, 0.45),
+        lerpRGB(theme.farMountainNight, theme.skyNightBot, 0.4),
+        nightFactor
+      );
+      const islSpan = 190;
+      const islScroll = Math.floor(camX * 0.06);
+      const islBase = Math.floor(islScroll / islSpan);
+      const islOff = ((islScroll % islSpan) + islSpan) % islSpan;
+      ctx.fillStyle = rgbStr(islCol, 0.72);
+      for (let i = -1; i < Math.ceil(this.viewW / islSpan) + 2; i++) {
+        const idx = islBase + i;
+        if (Math.abs(idx * 5) % 2 === 1 && style !== 'misty_archipelago') continue;
+        const ix = i * islSpan - islOff + 35;
+        const iw = 44 + (Math.abs(idx * 17) % 3) * 18;
+        const ih = 16 + (Math.abs(idx * 23) % 3) * 9;
+        ctx.beginPath();
+        ctx.moveTo(ix, GROUND_Y - 6);
+        ctx.lineTo(ix + iw * 0.25, GROUND_Y - 6 - ih * 0.8);
+        ctx.lineTo(ix + iw * 0.55, GROUND_Y - 6 - ih);
+        ctx.lineTo(ix + iw * 0.85, GROUND_Y - 6 - ih * 0.65);
+        ctx.lineTo(ix + iw, GROUND_Y - 6);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    // 2. Far Mountain Range (9 distinct silhouettes!)
+    const span = style === 'emerald_valleys' ? 148 : style === 'glacier_spires' ? 92 : 120;
     const farScroll = Math.floor(camX * 0.12);
     const farBaseIdx = Math.floor(farScroll / span);
     const offset = ((farScroll % span) + span) % span;
+
     for (let i = -1; i < Math.ceil(this.viewW / span) + 2; i++) {
       const worldIdx = farBaseIdx + i;
       const bx = i * span - offset;
-      const peakH = 72 + (Math.abs(worldIdx * 37 + 11) % 3) * 18;
-      const peakX = bx + 54;
-      const peakY = GROUND_Y - 26 - peakH;
+      const hVar = Math.abs(worldIdx * 37 + 11) % 3;
 
-      ctx.fillStyle = rgbStr(farBase);
-      ctx.beginPath();
-      ctx.moveTo(bx - 16, GROUND_Y);
-      ctx.lineTo(peakX, peakY);
-      ctx.lineTo(bx + span + 18, GROUND_Y);
-      ctx.closePath();
-      ctx.fill();
+      if (style === 'emerald_valleys') {
+        // Sweeping broad emerald highland valleys + high mist summits
+        const peakH = 54 + hVar * 16;
+        const peakY = GROUND_Y - 22 - peakH;
+        ctx.fillStyle = rgbStr(farBase);
+        ctx.beginPath();
+        ctx.moveTo(bx - 22, GROUND_Y);
+        ctx.quadraticCurveTo(bx + span * 0.28, peakY + 8, bx + span * 0.52, peakY);
+        ctx.quadraticCurveTo(bx + span * 0.78, peakY + 10, bx + span + 24, GROUND_Y);
+        ctx.closePath();
+        ctx.fill();
+        if (theme.hasWaterfalls && Math.abs(worldIdx) % 2 === 0) {
+          this.drawDistantWaterfall(ctx, w, bx + span * 0.52, peakY + 18, GROUND_Y - 12, nightFactor);
+        }
+      } else if (style === 'volcanic_calderas') {
+        // Flat-rimmed smoking volcano calderas with molten crater rims & rising smoke
+        const peakH = 68 + hVar * 16;
+        const peakY = GROUND_Y - 24 - peakH;
+        const cxPeak = bx + span * 0.5;
+        ctx.fillStyle = rgbStr(farBase);
+        ctx.beginPath();
+        ctx.moveTo(bx - 18, GROUND_Y);
+        ctx.lineTo(cxPeak - 16, peakY);
+        ctx.lineTo(cxPeak + 16, peakY);
+        ctx.lineTo(bx + span + 18, GROUND_Y);
+        ctx.closePath();
+        ctx.fill();
+        // Glowing lava crater lip + molten vein
+        const pulse = 0.65 + 0.35 * Math.sin(w.elapsed * 2.4 + worldIdx);
+        ctx.fillStyle = `rgba(255, 118, 52, ${(pulse * 0.85).toFixed(2)})`;
+        ctx.fillRect(Math.round(cxPeak - 13), Math.round(peakY), 26, 3);
+        ctx.fillStyle = `rgba(255, 198, 92, ${(pulse * 0.75).toFixed(2)})`;
+        ctx.fillRect(Math.round(cxPeak - 8), Math.round(peakY + 1), 16, 2);
+        // Drifting volcanic smoke plume
+        for (let s = 0; s < 4; s++) {
+          const drift = ((w.elapsed * 6 + s * 14 + worldIdx * 7) % 44);
+          const sx = Math.round(cxPeak - 6 + drift * 0.45 + Math.sin(w.elapsed + s) * 3);
+          const sy = Math.round(peakY - 4 - drift);
+          ctx.fillStyle = `rgba(72, 46, 50, ${Math.max(0.06, 0.36 - drift * 0.007).toFixed(2)})`;
+          ctx.fillRect(sx, sy, 12 + s * 3, 5);
+        }
+      } else if (style === 'dwarven_crags') {
+        // Stepped flat-topped basalt mesas & dwarven stone monolith ridges
+        const peakH = 62 + hVar * 18;
+        const peakY = GROUND_Y - 22 - peakH;
+        ctx.fillStyle = rgbStr(farBase);
+        ctx.beginPath();
+        ctx.moveTo(bx - 12, GROUND_Y);
+        ctx.lineTo(bx + 18, peakY + 24);
+        ctx.lineTo(bx + 32, peakY);
+        ctx.lineTo(bx + span - 30, peakY);
+        ctx.lineTo(bx + span - 14, peakY + 22);
+        ctx.lineTo(bx + span + 14, GROUND_Y);
+        ctx.closePath();
+        ctx.fill();
+        // Warm carved forge windows high in the dwarven cliff face
+        ctx.fillStyle = `rgba(255, 168, 68, ${lerp(0.45, 0.85, nightFactor).toFixed(2)})`;
+        ctx.fillRect(Math.round(bx + 44), Math.round(peakY + 18), 4, 7);
+        ctx.fillRect(Math.round(bx + 56), Math.round(peakY + 18), 4, 7);
+        ctx.fillRect(Math.round(bx + 68), Math.round(peakY + 18), 4, 7);
+      } else if (style === 'glacier_spires') {
+        // Razor crystalline glacier needles with brilliant pale ice facets
+        const peakH = 82 + hVar * 20;
+        const peakX = bx + span * 0.46;
+        const peakY = GROUND_Y - 26 - peakH;
+        ctx.fillStyle = rgbStr(farBase);
+        ctx.beginPath();
+        ctx.moveTo(bx - 10, GROUND_Y);
+        ctx.lineTo(peakX - 18, peakY + 34);
+        ctx.lineTo(peakX, peakY);
+        ctx.lineTo(peakX + 22, peakY + 28);
+        ctx.lineTo(bx + span + 12, GROUND_Y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = rgbStr(capCol, 0.92);
+        ctx.beginPath();
+        ctx.moveTo(peakX, peakY);
+        ctx.lineTo(peakX - 16, peakY + 36);
+        ctx.lineTo(peakX, peakY + 46);
+        ctx.closePath();
+        ctx.fill();
+      } else if (style === 'asgard_spires') {
+        // Majestic golden-capped mountain peaks + distant celestial Asgardian citadel spires
+        const peakH = 74 + hVar * 18;
+        const peakX = bx + 54;
+        const peakY = GROUND_Y - 26 - peakH;
+        ctx.fillStyle = rgbStr(farBase);
+        ctx.beginPath();
+        ctx.moveTo(bx - 16, GROUND_Y);
+        ctx.lineTo(peakX, peakY);
+        ctx.lineTo(bx + span + 18, GROUND_Y);
+        ctx.closePath();
+        ctx.fill();
+        // Golden Valhalla spire rising from summit
+        ctx.fillStyle = rgbStr(capCol);
+        ctx.fillRect(Math.round(peakX - 4), Math.round(peakY - 12), 8, 16);
+        ctx.fillRect(Math.round(peakX - 2), Math.round(peakY - 22), 4, 10);
+        ctx.fillRect(Math.round(peakX - 1), Math.round(peakY - 28), 2, 6);
+        if (theme.hasWaterfalls && Math.abs(worldIdx) % 2 === 1) {
+          this.drawDistantWaterfall(ctx, w, peakX + 16, peakY + 26, GROUND_Y - 10, nightFactor);
+        }
+      } else if (style === 'misty_archipelago') {
+        // Layered rounded misty islands & coastal crags
+        const peakH = 44 + hVar * 16;
+        const peakY = GROUND_Y - 18 - peakH;
+        ctx.fillStyle = rgbStr(farBase);
+        ctx.beginPath();
+        ctx.moveTo(bx - 16, GROUND_Y);
+        ctx.lineTo(bx + 24, peakY + 12);
+        ctx.lineTo(bx + 54, peakY);
+        ctx.lineTo(bx + 86, peakY + 14);
+        ctx.lineTo(bx + span + 14, GROUND_Y);
+        ctx.closePath();
+        ctx.fill();
+        if (theme.hasWaterfalls && Math.abs(worldIdx) % 3 === 0) {
+          this.drawDistantWaterfall(ctx, w, bx + 56, peakY + 14, GROUND_Y - 8, nightFactor);
+        }
+      } else {
+        // fjord_peaks, jagged_thunder, titan_canyon — dramatic Nordic peaks with sharp caps
+        const peakH = (style === 'titan_canyon' ? 84 : 72) + hVar * 18;
+        const peakX = bx + 54;
+        const peakY = GROUND_Y - 26 - peakH;
+        ctx.fillStyle = rgbStr(farBase);
+        ctx.beginPath();
+        ctx.moveTo(bx - 16, GROUND_Y);
+        ctx.lineTo(peakX - 22, peakY + 28);
+        ctx.lineTo(peakX, peakY);
+        ctx.lineTo(peakX + 24, peakY + 24);
+        ctx.lineTo(bx + span + 18, GROUND_Y);
+        ctx.closePath();
+        ctx.fill();
 
-      ctx.fillStyle = rgbStr(snowCap);
-      ctx.beginPath();
-      ctx.moveTo(peakX, peakY);
-      ctx.lineTo(peakX - 18, peakY + 26);
-      ctx.lineTo(peakX - 4, peakY + 20);
-      ctx.lineTo(peakX + 8, peakY + 28);
-      ctx.lineTo(peakX + 14, peakY + 20);
-      ctx.closePath();
-      ctx.fill();
+        ctx.fillStyle = rgbStr(capCol);
+        ctx.beginPath();
+        ctx.moveTo(peakX, peakY);
+        ctx.lineTo(peakX - 18, peakY + 26);
+        ctx.lineTo(peakX - 4, peakY + 20);
+        ctx.lineTo(peakX + 8, peakY + 28);
+        ctx.lineTo(peakX + 14, peakY + 20);
+        ctx.closePath();
+        ctx.fill();
+
+        if (theme.hasWaterfalls && Math.abs(worldIdx) % 3 === 1) {
+          this.drawDistantWaterfall(ctx, w, peakX + 12, peakY + 28, GROUND_Y - 12, nightFactor);
+        }
+      }
     }
 
-    const midCol = lerpRGB({ r: 44, g: 64, b: 82 }, { r: 12, g: 22, b: 34 }, nightFactor);
-    const midSpan = 96;
-    const midScroll = Math.floor(camX * 0.28);
+    // 3. Mid-ground Ridge Line
+    const midSpan = style === 'emerald_valleys' ? 116 : 96;
+    const midScroll = Math.floor(camX * 0.26);
     const midBaseIdx = Math.floor(midScroll / midSpan);
     const midOff = ((midScroll % midSpan) + midSpan) % midSpan;
     ctx.fillStyle = rgbStr(midCol);
     for (let i = -1; i < Math.ceil(this.viewW / midSpan) + 2; i++) {
       const worldIdx = midBaseIdx + i;
       const bx = i * midSpan - midOff;
-      const h = 42 + (Math.abs(worldIdx * 19 + 7) % 3) * 12;
+      const h = (style === 'emerald_valleys' ? 32 : 42) + (Math.abs(worldIdx * 19 + 7) % 3) * 12;
       ctx.beginPath();
       ctx.moveTo(bx - 10, GROUND_Y);
-      ctx.lineTo(bx + 42, GROUND_Y - h);
-      ctx.lineTo(bx + midSpan + 14, GROUND_Y);
+      if (style === 'emerald_valleys' || style === 'misty_archipelago') {
+        ctx.quadraticCurveTo(bx + midSpan * 0.5, GROUND_Y - h * 1.35, bx + midSpan + 14, GROUND_Y);
+      } else {
+        ctx.lineTo(bx + 42, GROUND_Y - h);
+        ctx.lineTo(bx + midSpan + 14, GROUND_Y);
+      }
       ctx.closePath();
       ctx.fill();
     }
   }
 
-  private drawParallaxForest(ctx: CanvasRenderingContext2D, camX: number, nightFactor: number): void {
-    const pineCol = lerpRGB({ r: 28, g: 46, b: 56 }, { r: 9, g: 16, b: 25 }, nightFactor);
-    const step = 20;
+  private drawDistantWaterfall(
+    ctx: CanvasRenderingContext2D,
+    w: WorldState,
+    x: number,
+    topY: number,
+    botY: number,
+    nightFactor: number
+  ): void {
+    const rx = Math.round(x);
+    const h = Math.max(8, Math.round(botY - topY));
+    ctx.fillStyle = `rgba(176, 228, 248, ${lerp(0.55, 0.25, nightFactor).toFixed(2)})`;
+    ctx.fillRect(rx - 2, Math.round(topY), 5, h);
+    ctx.fillStyle = `rgba(240, 252, 255, ${lerp(0.75, 0.35, nightFactor).toFixed(2)})`;
+    const foamShift = Math.floor((w.elapsed * 22) % 8);
+    for (let y = Math.round(topY) + foamShift; y < Math.round(botY); y += 8) {
+      ctx.fillRect(rx - 1, y, 3, 3);
+    }
+    // Misty splash pool at waterfall base
+    ctx.fillStyle = `rgba(220, 246, 255, ${lerp(0.45, 0.18, nightFactor).toFixed(2)})`;
+    ctx.fillRect(rx - 8, Math.round(botY - 3), 16, 4);
+  }
+
+  // =========================================================================
+  // COLOSSAL MONUMENTAL GOD STATUES (1 Unique Towering Landmark per Island!)
+  // =========================================================================
+  private drawMonumentalGodStatue(
+    ctx: CanvasRenderingContext2D,
+    w: WorldState,
+    camX: number,
+    nightFactor: number,
+    theme: IslandTheme
+  ): void {
+    const cxWorld = getCenterX(w);
+    // Anchored majestically slightly off-center behind the kingdom heart at 0.38x parallax!
+    const anchorWorldX = cxWorld + (w.currentIsland % 2 === 0 ? -90 : 110);
+    const sx = Math.round(this.viewW * 0.5 + (anchorWorldX - (camX + this.viewW * 0.5)) * 0.38);
+    if (sx < -140 || sx > this.viewW + 140) return;
+
+    const baseY = GROUND_Y - 8;
+    const stoneDark = lerpRGB(lerpRGB(theme.midRidgeDay, { r: 62, g: 72, b: 84 }, 0.5), { r: 16, g: 22, b: 34 }, nightFactor);
+    const stoneMid = lerpRGB(lerpRGB(theme.cliffRockDay, { r: 112, g: 124, b: 138 }, 0.45), { r: 30, g: 40, b: 56 }, nightFactor);
+    const stoneLight = lerpRGB(lerpRGB(theme.mountainCapDay, { r: 186, g: 198, b: 212 }, 0.5), { r: 58, g: 76, b: 98 }, nightFactor);
+    const pulse = 0.6 + 0.4 * Math.sin(w.elapsed * 2.2);
+
+    ctx.save();
+
+    // Shared colossal stone plinth
+    ctx.fillStyle = rgbStr(stoneDark);
+    ctx.fillRect(sx - 34, baseY - 18, 68, 22);
+    ctx.fillStyle = rgbStr(stoneMid);
+    ctx.fillRect(sx - 28, baseY - 24, 56, 8);
+    ctx.fillStyle = rgbStr(stoneLight, 0.55);
+    ctx.fillRect(sx - 28, baseY - 24, 56, 2);
+
+    const god = theme.monumentGod;
+
+    if (god === 'midgard_runestone') {
+      // Ilha I: Colossal Ancient Viking Wayfinder Monolith & Twin Standing Stones
+      ctx.fillStyle = rgbStr(stoneDark);
+      ctx.fillRect(sx - 30, baseY - 62, 12, 42);
+      ctx.fillRect(sx + 18, baseY - 58, 12, 38);
+      ctx.fillStyle = rgbStr(stoneMid);
+      ctx.beginPath();
+      ctx.moveTo(sx - 16, baseY - 22);
+      ctx.lineTo(sx - 12, baseY - 96);
+      ctx.lineTo(sx, baseY - 110);
+      ctx.lineTo(sx + 12, baseY - 96);
+      ctx.lineTo(sx + 16, baseY - 22);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = rgbStr(stoneLight, 0.7);
+      ctx.fillRect(sx - 11, baseY - 94, 4, 68);
+      // Glowing Elder Futhark rune spiral carved down the center
+      ctx.fillStyle = `rgba(124, 247, 255, ${(0.35 + pulse * 0.45).toFixed(2)})`;
+      ctx.fillRect(sx - 1, baseY - 92, 2, 54);
+      ctx.fillRect(sx - 6, baseY - 82, 12, 2);
+      ctx.fillRect(sx - 5, baseY - 68, 10, 2);
+      ctx.fillRect(sx - 4, baseY - 54, 8, 2);
+    } else if (god === 'freya') {
+      // Ilha II: Colossal Statue of Freya — Winged Falcon Cloak, Crown & Glowing Golden Chalice
+      // Wide carved stone falcon wings
+      ctx.fillStyle = rgbStr(stoneDark);
+      ctx.beginPath();
+      ctx.moveTo(sx - 12, baseY - 68);
+      ctx.lineTo(sx - 66, baseY - 102);
+      ctx.lineTo(sx - 56, baseY - 58);
+      ctx.lineTo(sx - 16, baseY - 40);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(sx + 12, baseY - 68);
+      ctx.lineTo(sx + 66, baseY - 102);
+      ctx.lineTo(sx + 56, baseY - 58);
+      ctx.lineTo(sx + 16, baseY - 40);
+      ctx.closePath();
+      ctx.fill();
+      // Wing feather highlights
+      ctx.fillStyle = rgbStr(stoneLight, 0.5);
+      ctx.fillRect(sx - 56, baseY - 92, 24, 2);
+      ctx.fillRect(sx - 48, baseY - 82, 22, 2);
+      ctx.fillRect(sx + 32, baseY - 92, 24, 2);
+      ctx.fillRect(sx + 26, baseY - 82, 22, 2);
+      // Draped robe & crowned head
+      ctx.fillStyle = rgbStr(stoneMid);
+      ctx.fillRect(sx - 15, baseY - 78, 30, 56);
+      ctx.fillRect(sx - 9, baseY - 98, 18, 20);
+      // Moss draping shoulders & golden floral crown
+      ctx.fillStyle = 'rgba(72, 152, 76, 0.65)';
+      ctx.fillRect(sx - 16, baseY - 76, 32, 6);
+      ctx.fillStyle = '#efc462';
+      ctx.fillRect(sx - 10, baseY - 103, 20, 4);
+      ctx.fillRect(sx - 2, baseY - 109, 4, 6);
+      // Radiant golden amber chalice held before chest
+      ctx.fillStyle = `rgba(255, 224, 118, ${(0.5 + pulse * 0.45).toFixed(2)})`;
+      ctx.fillRect(sx - 5, baseY - 66, 10, 8);
+      ctx.fillRect(sx - 2, baseY - 58, 4, 5);
+    } else if (god === 'thor') {
+      // Ilha III: Colossal Statue of Thor — Bearded Thunder God raising Mjölnir to the Storm Sky
+      ctx.fillStyle = rgbStr(stoneMid);
+      ctx.fillRect(sx - 20, baseY - 82, 40, 60); // Broad armored torso
+      ctx.fillRect(sx - 12, baseY - 102, 24, 20); // Head & helmet
+      // Winged thunder helm
+      ctx.fillStyle = rgbStr(stoneLight);
+      ctx.fillRect(sx - 18, baseY - 106, 6, 10);
+      ctx.fillRect(sx + 12, baseY - 106, 6, 10);
+      // Flowing braided beard
+      ctx.fillStyle = rgbStr(stoneDark);
+      ctx.fillRect(sx - 8, baseY - 84, 16, 16);
+      // Raised right arm holding colossal Mjölnir!
+      ctx.fillStyle = rgbStr(stoneMid);
+      ctx.fillRect(sx + 16, baseY - 114, 10, 38);
+      ctx.fillStyle = rgbStr(stoneLight);
+      ctx.fillRect(sx + 18, baseY - 126, 6, 16); // Handle
+      ctx.fillStyle = rgbStr(stoneDark);
+      ctx.fillRect(sx + 4, baseY - 142, 34, 18); // Giant Hammer Head
+      ctx.fillStyle = rgbStr(stoneLight, 0.8);
+      ctx.fillRect(sx + 6, baseY - 140, 30, 3);
+      // Periodic crackling blue-gold lightning around Mjölnir
+      if (Math.sin(w.elapsed * 3.8) > 0.55) {
+        ctx.fillStyle = '#9cf2ff';
+        ctx.fillRect(sx + 20, baseY - 156, 2, 14);
+        ctx.fillRect(sx + 16, baseY - 148, 8, 2);
+        ctx.fillRect(sx + 38, baseY - 136, 10, 2);
+      }
+      ctx.fillStyle = `rgba(148, 224, 255, ${(0.35 + pulse * 0.45).toFixed(2)})`;
+      ctx.fillRect(sx + 14, baseY - 135, 14, 4);
+    } else if (god === 'odin') {
+      // Ilha IV: Colossal Statue of Odin — Hooded Allfather, Spear Gungnir & Twin Ravens Huginn/Muninn
+      ctx.fillStyle = rgbStr(stoneMid);
+      ctx.beginPath();
+      ctx.moveTo(sx - 24, baseY - 22);
+      ctx.lineTo(sx - 18, baseY - 94);
+      ctx.lineTo(sx, baseY - 114);
+      ctx.lineTo(sx + 18, baseY - 94);
+      ctx.lineTo(sx + 24, baseY - 22);
+      ctx.closePath();
+      ctx.fill();
+      // Deep shadow inside hood
+      ctx.fillStyle = rgbStr(stoneDark);
+      ctx.fillRect(sx - 9, baseY - 98, 18, 16);
+      // Single glowing cyan all-seeing eye!
+      ctx.fillStyle = `rgba(124, 247, 255, ${(0.6 + pulse * 0.4).toFixed(2)})`;
+      ctx.fillRect(sx + 2, baseY - 92, 4, 3);
+      // Tall glacial spear Gungnir standing beside him
+      ctx.fillStyle = rgbStr(stoneLight);
+      ctx.fillRect(sx - 26, baseY - 134, 4, 112);
+      ctx.beginPath();
+      ctx.moveTo(sx - 24, baseY - 148);
+      ctx.lineTo(sx - 30, baseY - 132);
+      ctx.lineTo(sx - 18, baseY - 132);
+      ctx.closePath();
+      ctx.fill();
+      // Huginn & Muninn silhouette ravens perched on shoulders
+      ctx.fillStyle = '#0c1524';
+      ctx.fillRect(sx - 21, baseY - 90, 7, 5);
+      ctx.fillRect(sx - 23, baseY - 92, 3, 3);
+      ctx.fillRect(sx + 15, baseY - 90, 7, 5);
+      ctx.fillRect(sx + 20, baseY - 92, 3, 3);
+    } else if (god === 'loki') {
+      // Ilha V: Colossal Statue of Loki — Curved Horned Crown & Twin Coiling Serpents
+      ctx.fillStyle = rgbStr(stoneMid);
+      ctx.fillRect(sx - 15, baseY - 82, 30, 60);
+      ctx.fillRect(sx - 9, baseY - 102, 18, 20);
+      // Iconic sweeping curved Loki horns
+      ctx.fillStyle = rgbStr(stoneLight);
+      ctx.fillRect(sx - 16, baseY - 114, 5, 16);
+      ctx.fillRect(sx - 22, baseY - 124, 6, 12);
+      ctx.fillRect(sx + 11, baseY - 114, 5, 16);
+      ctx.fillRect(sx + 16, baseY - 124, 6, 12);
+      // Twin stone serpents coiling around the plinth with emerald eyes
+      ctx.fillStyle = rgbStr(stoneDark);
+      ctx.fillRect(sx - 32, baseY - 66, 14, 42);
+      ctx.fillRect(sx + 18, baseY - 66, 14, 42);
+      ctx.fillStyle = `rgba(92, 245, 168, ${(0.5 + pulse * 0.45).toFixed(2)})`;
+      ctx.fillRect(sx - 28, baseY - 60, 4, 3);
+      ctx.fillRect(sx + 24, baseY - 60, 4, 3);
+      ctx.fillRect(sx - 4, baseY - 94, 3, 2);
+      ctx.fillRect(sx + 2, baseY - 94, 3, 2);
+    } else if (god === 'nidavellir_smith') {
+      // Ilha VI: Colossal Dwarven Master Smith Brokkr — Braided Beard, Titanic Hammer & Blazing Furnace Chest
+      ctx.fillStyle = rgbStr(stoneMid);
+      ctx.fillRect(sx - 26, baseY - 80, 52, 58);
+      ctx.fillRect(sx - 15, baseY - 102, 30, 22);
+      // Broad dwarven crown & twin braided beard columns
+      ctx.fillStyle = '#d49a4a';
+      ctx.fillRect(sx - 16, baseY - 107, 32, 5);
+      ctx.fillStyle = rgbStr(stoneLight);
+      ctx.fillRect(sx - 12, baseY - 82, 8, 28);
+      ctx.fillRect(sx + 4, baseY - 82, 8, 28);
+      // Blazing furnace heart built into the statue's chest!
+      ctx.fillStyle = `rgba(255, 128, 38, ${(0.55 + pulse * 0.4).toFixed(2)})`;
+      ctx.fillRect(sx - 8, baseY - 58, 16, 16);
+      ctx.fillStyle = `rgba(255, 226, 118, ${(0.7 + pulse * 0.3).toFixed(2)})`;
+      ctx.fillRect(sx - 4, baseY - 54, 8, 10);
+      // Resting giant forge hammer on the right
+      ctx.fillStyle = rgbStr(stoneDark);
+      ctx.fillRect(sx + 24, baseY - 96, 8, 74);
+      ctx.fillRect(sx + 14, baseY - 110, 28, 16);
+    } else if (god === 'surtr') {
+      // Ilha VII: Colossal Fire Giant Surtr — Obsidian Horns & Towering Blazing Molten Sword
+      ctx.fillStyle = rgbStr(stoneDark);
+      ctx.fillRect(sx - 22, baseY - 86, 44, 64);
+      ctx.fillRect(sx - 13, baseY - 108, 26, 22);
+      // Giant curved demon/fire-giant horns
+      ctx.fillRect(sx - 22, baseY - 120, 8, 18);
+      ctx.fillRect(sx - 28, baseY - 130, 8, 14);
+      ctx.fillRect(sx + 14, baseY - 120, 8, 18);
+      ctx.fillRect(sx + 20, baseY - 130, 8, 14);
+      // Burning eyes & magma cracks across torso
+      ctx.fillStyle = `rgba(255, 96, 36, ${(0.65 + pulse * 0.35).toFixed(2)})`;
+      ctx.fillRect(sx - 6, baseY - 98, 4, 3);
+      ctx.fillRect(sx + 3, baseY - 98, 4, 3);
+      ctx.fillRect(sx - 10, baseY - 68, 20, 3);
+      ctx.fillRect(sx - 6, baseY - 52, 12, 3);
+      // Colossal flaming sword thrust toward the sky!
+      ctx.fillStyle = '#ff6a26';
+      ctx.fillRect(sx + 22, baseY - 148, 8, 92);
+      ctx.fillStyle = '#ffe07d';
+      ctx.fillRect(sx + 24, baseY - 144, 4, 84);
+      ctx.fillStyle = rgbStr(stoneMid);
+      ctx.fillRect(sx + 14, baseY - 60, 24, 6);
+    } else if (god === 'ymir') {
+      // Ilha VIII: Colossal Frost Giant Ymir — Seated on Ancient Glacier Throne with Jagged Ice Crown
+      // Massive glacier throne backrest
+      ctx.fillStyle = rgbStr(stoneDark);
+      ctx.fillRect(sx - 38, baseY - 116, 76, 94);
+      ctx.fillStyle = rgbStr(stoneLight, 0.72);
+      ctx.beginPath();
+      ctx.moveTo(sx - 38, baseY - 116);
+      ctx.lineTo(sx - 24, baseY - 134);
+      ctx.lineTo(sx - 10, baseY - 116);
+      ctx.lineTo(sx, baseY - 142);
+      ctx.lineTo(sx + 10, baseY - 116);
+      ctx.lineTo(sx + 24, baseY - 134);
+      ctx.lineTo(sx + 38, baseY - 116);
+      ctx.closePath();
+      ctx.fill();
+      // Titanic frost giant silhouette seated within
+      ctx.fillStyle = rgbStr(stoneMid);
+      ctx.fillRect(sx - 20, baseY - 84, 40, 62);
+      ctx.fillRect(sx - 12, baseY - 104, 24, 20);
+      ctx.fillStyle = `rgba(140, 238, 255, ${(0.5 + pulse * 0.45).toFixed(2)})`;
+      ctx.fillRect(sx - 6, baseY - 96, 4, 3);
+      ctx.fillRect(sx + 3, baseY - 96, 4, 3);
+    } else {
+      // Ilha IX: Colossal Golden-Marble Heimdall & Gates of Asgard
+      // Twin golden celestial archway pillars
+      ctx.fillStyle = lerpRGB({ r: 198, g: 172, b: 108 }, { r: 78, g: 68, b: 96 }, nightFactor)
+        ? rgbStr(lerpRGB({ r: 198, g: 172, b: 108 }, { r: 78, g: 68, b: 96 }, nightFactor))
+        : '#c6ac6c';
+      ctx.fillRect(sx - 44, baseY - 118, 12, 96);
+      ctx.fillRect(sx + 32, baseY - 118, 12, 96);
+      ctx.fillRect(sx - 48, baseY - 126, 96, 10);
+      // Radiant golden portal shimmer behind Heimdall
+      ctx.fillStyle = `rgba(255, 232, 138, ${(0.18 + pulse * 0.22).toFixed(2)})`;
+      ctx.fillRect(sx - 32, baseY - 116, 64, 92);
+      // Guardian Heimdall with horned golden helm & raised Gjallarhorn!
+      ctx.fillStyle = rgbStr(stoneLight);
+      ctx.fillRect(sx - 14, baseY - 82, 28, 60);
+      ctx.fillRect(sx - 9, baseY - 102, 18, 20);
+      ctx.fillStyle = '#ffe58a';
+      ctx.fillRect(sx - 15, baseY - 110, 4, 12);
+      ctx.fillRect(sx + 11, baseY - 110, 4, 12);
+      // Gjallarhorn lifted triumphantly
+      ctx.fillRect(sx + 12, baseY - 98, 14, 5);
+      ctx.fillRect(sx + 24, baseY - 102, 6, 10);
+    }
+
+    ctx.restore();
+  }
+
+  private drawParallaxForest(
+    ctx: CanvasRenderingContext2D,
+    _w: WorldState,
+    camX: number,
+    nightFactor: number,
+    theme: IslandTheme
+  ): void {
+    const pineCol = lerpRGB(theme.forestFarDay, { r: 9, g: 16, b: 25 }, nightFactor);
+    const style = theme.vegetationStyle;
+    const step = style === 'lush_vale' || style === 'golden_yggdrasil' ? 24 : 20;
     const forestScroll = Math.floor(camX * 0.5);
     const forestBaseIdx = Math.floor(forestScroll / step);
     const off = ((forestScroll % step) + step) % step;
+
     ctx.fillStyle = rgbStr(pineCol);
     for (let i = -1; i < Math.ceil(this.viewW / step) + 2; i++) {
       const worldIdx = forestBaseIdx + i;
       const tx = i * step - off;
       const h = 24 + (Math.abs(worldIdx * 13 + 5) % 4) * 7;
       const topY = GROUND_Y - h;
-      ctx.fillRect(tx + 8, topY, 3, h);
-      ctx.beginPath();
-      ctx.moveTo(tx + 9, topY - 4);
-      ctx.lineTo(tx, GROUND_Y - 4);
-      ctx.lineTo(tx + 19, GROUND_Y - 4);
-      ctx.closePath();
-      ctx.fill();
+
+      if (style === 'lush_vale' || style === 'golden_yggdrasil') {
+        // Broad rounded ancient oaks / golden Yggdrasil canopies
+        ctx.fillRect(tx + 10, topY + 6, 4, h - 6);
+        ctx.fillRect(tx + 2, topY + 2, 20, 10);
+        ctx.fillRect(tx + 5, topY - 4, 14, 8);
+      } else if (style === 'ash_deadwood') {
+        // Stark jagged volcanic deadwood spires
+        ctx.fillRect(tx + 8, topY, 3, h);
+        ctx.fillRect(tx + 3, topY + 6, 6, 2);
+        ctx.fillRect(tx + 11, topY + 10, 6, 2);
+      } else {
+        ctx.fillRect(tx + 8, topY, 3, h);
+        ctx.beginPath();
+        ctx.moveTo(tx + 9, topY - 4);
+        ctx.lineTo(tx, GROUND_Y - 4);
+        ctx.lineTo(tx + 19, GROUND_Y - 4);
+        ctx.closePath();
+        ctx.fill();
+      }
     }
 
-    const mistGrad = ctx.createLinearGradient(0, GROUND_Y - 26, 0, GROUND_Y);
-    mistGrad.addColorStop(0, 'rgba(170, 204, 224, 0)');
-    mistGrad.addColorStop(1, `rgba(170, 204, 224, ${lerp(0.16, 0.05, nightFactor).toFixed(2)})`);
+    const mc = theme.mistColor;
+    const mistGrad = ctx.createLinearGradient(0, GROUND_Y - 28, 0, GROUND_Y);
+    mistGrad.addColorStop(0, `rgba(${mc.r}, ${mc.g}, ${mc.b}, 0)`);
+    mistGrad.addColorStop(1, `rgba(${mc.r}, ${mc.g}, ${mc.b}, ${lerp(0.2, 0.06, nightFactor).toFixed(2)})`);
     ctx.fillStyle = mistGrad;
-    ctx.fillRect(0, GROUND_Y - 26, this.viewW, 26);
+    ctx.fillRect(0, GROUND_Y - 28, this.viewW, 28);
   }
 
-  private drawGround(ctx: CanvasRenderingContext2D, w: WorldState, camX: number, nightFactor: number): void {
-    const season = w.season ?? 'summer';
-    const dayGrass =
-      season === 'winter'
-        ? { r: 186, g: 208, b: 222 }
-        : season === 'autumn'
-          ? { r: 146, g: 112, b: 58 }
-          : season === 'spring'
-            ? { r: 78, g: 146, b: 84 }
-            : { r: 88, g: 130, b: 78 };
-    const dayAccent =
-      season === 'winter'
-        ? { r: 226, g: 240, b: 250 }
-        : season === 'autumn'
-          ? { r: 196, g: 120, b: 46 }
-          : season === 'spring'
-            ? { r: 120, g: 184, b: 108 }
-            : { r: 114, g: 158, b: 92 };
+  // =========================================================================
+  // ENVIRONMENTAL STORYTELLING LANDMARKS (Silent History Across Each Island!)
+  // =========================================================================
+  private drawStorytellingScenery(
+    ctx: CanvasRenderingContext2D,
+    w: WorldState,
+    camX: number,
+    nightFactor: number,
+    theme: IslandTheme
+  ): void {
+    const mapW = getWorldWidth(w);
+    const cxWorld = getCenterX(w);
+    const isl = w.currentIsland;
+    const stoneCol = rgbStr(lerpRGB(theme.cliffRockDay, { r: 22, g: 30, b: 42 }, nightFactor));
+    const stoneHi = rgbStr(lerpRGB(theme.mountainCapDay, { r: 58, g: 72, b: 92 }, nightFactor), 0.6);
+    const woodCol = rgbStr(lerpRGB({ r: 86, g: 62, b: 44 }, { r: 24, g: 20, b: 24 }, nightFactor));
 
-    const grassTop = lerpRGB(dayGrass, { r: 28, g: 42, b: 48 }, nightFactor);
-    const accentEdge = lerpRGB(dayAccent, { r: 70, g: 94, b: 112 }, nightFactor);
-    const soil = lerpRGB({ r: 54, g: 45, b: 42 }, { r: 19, g: 19, b: 26 }, nightFactor);
-    const stoneBank = lerpRGB({ r: 74, g: 82, b: 92 }, { r: 24, g: 32, b: 42 }, nightFactor);
+    // Deterministic world-space lore landmarks spaced cleanly outside the immediate town hall
+    const spacing = 420;
+    for (let wx = 340; wx <= mapW - 340; wx += spacing) {
+      if (Math.abs(wx - cxWorld) < 260) continue;
+      const sx = Math.round(wx - camX);
+      if (sx < -60 || sx > this.viewW + 60) continue;
+      const variant = Math.abs(Math.floor(wx / spacing) + isl) % 3;
+
+      if (isl === 1) {
+        // Midgard: Viking landing cairns, mossy stone arch, weathered old runestone
+        if (variant === 0) {
+          ctx.fillStyle = stoneCol;
+          ctx.fillRect(sx - 8, GROUND_Y - 12, 16, 12);
+          ctx.fillRect(sx - 5, GROUND_Y - 20, 10, 8);
+          ctx.fillRect(sx - 3, GROUND_Y - 25, 6, 5);
+        } else if (variant === 1) {
+          ctx.fillStyle = stoneCol;
+          ctx.fillRect(sx - 14, GROUND_Y - 24, 5, 24);
+          ctx.fillRect(sx + 9, GROUND_Y - 24, 5, 24);
+          ctx.fillRect(sx - 16, GROUND_Y - 29, 32, 6);
+          ctx.fillStyle = 'rgba(72, 138, 72, 0.55)';
+          ctx.fillRect(sx - 14, GROUND_Y - 30, 28, 2);
+        } else {
+          ctx.fillStyle = stoneCol;
+          ctx.fillRect(sx - 5, GROUND_Y - 26, 10, 26);
+          ctx.fillStyle = 'rgba(124, 247, 255, 0.45)';
+          ctx.fillRect(sx - 1, GROUND_Y - 21, 2, 12);
+        }
+      } else if (isl === 2) {
+        // Vale de Freya: Overgrown flower dolmens, ancient battle shields, offering arches
+        if (variant === 0) {
+          ctx.fillStyle = stoneCol;
+          ctx.fillRect(sx - 14, GROUND_Y - 20, 6, 20);
+          ctx.fillRect(sx + 8, GROUND_Y - 20, 6, 20);
+          ctx.fillRect(sx - 18, GROUND_Y - 26, 36, 7);
+          ctx.fillStyle = '#f5a8c8';
+          ctx.fillRect(sx - 12, GROUND_Y - 28, 4, 2);
+          ctx.fillRect(sx + 6, GROUND_Y - 28, 4, 2);
+        } else if (variant === 1) {
+          // Ancient planted Viking shields & spear from past battle
+          ctx.fillStyle = woodCol;
+          ctx.fillRect(sx - 1, GROUND_Y - 26, 2, 26);
+          ctx.fillStyle = '#5c9c6b';
+          ctx.fillRect(sx - 9, GROUND_Y - 12, 12, 12);
+          ctx.fillStyle = '#efc462';
+          ctx.fillRect(sx - 5, GROUND_Y - 8, 4, 4);
+        } else {
+          ctx.fillStyle = stoneCol;
+          ctx.fillRect(sx - 8, GROUND_Y - 16, 16, 16);
+          ctx.fillStyle = '#ffe58a';
+          ctx.fillRect(sx - 4, GROUND_Y - 19, 8, 3);
+        }
+      } else if (isl === 3) {
+        // Picos do Trovão: Lightning-split giant stump, warrior oath stones, cracked shields
+        if (variant === 0) {
+          ctx.fillStyle = woodCol;
+          ctx.fillRect(sx - 8, GROUND_Y - 18, 16, 18);
+          ctx.fillRect(sx - 10, GROUND_Y - 24, 6, 8);
+          ctx.fillRect(sx + 4, GROUND_Y - 22, 5, 6);
+        } else if (variant === 1) {
+          ctx.fillStyle = stoneCol;
+          ctx.fillRect(sx - 12, GROUND_Y - 30, 7, 30);
+          ctx.fillRect(sx + 4, GROUND_Y - 22, 7, 22);
+          ctx.fillStyle = `rgba(146, 218, 255, ${(0.35 + 0.35 * Math.sin(w.elapsed * 3 + wx)).toFixed(2)})`;
+          ctx.fillRect(sx - 9, GROUND_Y - 24, 2, 14);
+        } else {
+          ctx.fillStyle = '#8e98ad';
+          ctx.fillRect(sx - 10, GROUND_Y - 10, 20, 10);
+          ctx.fillStyle = '#ffd15c';
+          ctx.fillRect(sx - 2, GROUND_Y - 22, 4, 14);
+        }
+      } else if (isl === 4) {
+        // Fiorde Glacial: Half-buried frozen Drakkar wreck, whalebone arch, frozen spears
+        if (variant === 0) {
+          // Tilted frozen Viking shipwreck hull!
+          ctx.fillStyle = woodCol;
+          ctx.beginPath();
+          ctx.moveTo(sx - 22, GROUND_Y);
+          ctx.lineTo(sx - 16, GROUND_Y - 14);
+          ctx.lineTo(sx + 18, GROUND_Y - 6);
+          ctx.lineTo(sx + 24, GROUND_Y);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = stoneHi;
+          ctx.fillRect(sx - 14, GROUND_Y - 14, 18, 3);
+        } else if (variant === 1) {
+          // Giant curved whalebone ribs arch
+          ctx.fillStyle = stoneHi;
+          ctx.fillRect(sx - 16, GROUND_Y - 24, 3, 24);
+          ctx.fillRect(sx - 13, GROUND_Y - 28, 10, 3);
+          ctx.fillRect(sx + 13, GROUND_Y - 24, 3, 24);
+          ctx.fillRect(sx + 3, GROUND_Y - 28, 10, 3);
+        } else {
+          ctx.fillStyle = '#8ad6f5';
+          ctx.fillRect(sx - 6, GROUND_Y - 28, 12, 28);
+          ctx.fillStyle = '#e8f9ff';
+          ctx.fillRect(sx - 4, GROUND_Y - 26, 3, 22);
+        }
+      } else if (isl === 5) {
+        // Bosque de Fenrir: Broken chains of Fenrir anchored to boulders, leaning misty tower, wolf totem
+        if (variant === 0) {
+          ctx.fillStyle = stoneCol;
+          ctx.fillRect(sx - 14, GROUND_Y - 16, 28, 16);
+          ctx.fillStyle = '#485463';
+          for (let c = 0; c < 5; c++) {
+            ctx.fillRect(sx - 12 + c * 6, GROUND_Y - 20 - (c % 2) * 3, 4, 4);
+          }
+        } else if (variant === 1) {
+          // Ruined leaning watchtower in the fog
+          ctx.fillStyle = stoneCol;
+          ctx.fillRect(sx - 9, GROUND_Y - 38, 18, 38);
+          ctx.fillRect(sx - 11, GROUND_Y - 42, 6, 5);
+          ctx.fillRect(sx + 5, GROUND_Y - 40, 6, 4);
+          ctx.fillStyle = `rgba(104, 242, 178, ${(0.35 + 0.35 * Math.sin(w.elapsed * 2 + wx)).toFixed(2)})`;
+          ctx.fillRect(sx - 2, GROUND_Y - 28, 4, 6);
+        } else {
+          ctx.fillStyle = stoneCol;
+          ctx.fillRect(sx - 6, GROUND_Y - 26, 12, 26);
+          ctx.fillRect(sx - 8, GROUND_Y - 30, 4, 5);
+          ctx.fillRect(sx + 4, GROUND_Y - 30, 4, 5);
+        }
+      } else if (isl === 6) {
+        // Forjas de Nidavellir: Dwarven stone aqueduct arches, giant cracked anvil, glowing vents
+        if (variant === 0) {
+          ctx.fillStyle = stoneCol;
+          ctx.fillRect(sx - 20, GROUND_Y - 34, 7, 34);
+          ctx.fillRect(sx + 13, GROUND_Y - 34, 7, 34);
+          ctx.fillRect(sx - 24, GROUND_Y - 40, 48, 8);
+          ctx.fillStyle = '#d49a4a';
+          ctx.fillRect(sx - 22, GROUND_Y - 38, 44, 2);
+        } else if (variant === 1) {
+          // Colossal ancient anvil monument
+          ctx.fillStyle = '#383238';
+          ctx.fillRect(sx - 10, GROUND_Y - 12, 20, 12);
+          ctx.fillRect(sx - 16, GROUND_Y - 20, 32, 8);
+          ctx.fillStyle = '#ff9c42';
+          ctx.fillRect(sx - 8, GROUND_Y - 21, 16, 2);
+        } else {
+          ctx.fillStyle = stoneCol;
+          ctx.fillRect(sx - 10, GROUND_Y - 18, 20, 18);
+          ctx.fillStyle = `rgba(255, 148, 54, ${(0.45 + 0.35 * Math.sin(w.elapsed * 3 + wx)).toFixed(2)})`;
+          ctx.fillRect(sx - 4, GROUND_Y - 12, 8, 8);
+        }
+      } else if (isl === 7) {
+        // Muspelheim: Charred ship ribs, obsidian sword monoliths, glowing lava crack
+        if (variant === 0) {
+          ctx.fillStyle = '#261b1e';
+          for (let r = -2; r <= 2; r++) {
+            ctx.fillRect(sx + r * 6, GROUND_Y - 16 + Math.abs(r) * 2, 2, 16 - Math.abs(r) * 2);
+          }
+          ctx.fillRect(sx - 16, GROUND_Y - 3, 32, 3);
+        } else if (variant === 1) {
+          ctx.fillStyle = '#22171d';
+          ctx.fillRect(sx - 4, GROUND_Y - 34, 8, 34);
+          ctx.fillRect(sx - 10, GROUND_Y - 24, 20, 4);
+          ctx.fillStyle = `rgba(255, 102, 42, ${(0.5 + 0.4 * Math.sin(w.elapsed * 4 + wx)).toFixed(2)})`;
+          ctx.fillRect(sx - 1, GROUND_Y - 30, 2, 22);
+        } else {
+          ctx.fillStyle = '#ff6a26';
+          ctx.fillRect(sx - 12, GROUND_Y - 3, 24, 2);
+          ctx.fillStyle = '#ffe07d';
+          ctx.fillRect(sx - 6, GROUND_Y - 3, 12, 1);
+        }
+      } else if (isl === 8) {
+        // Abismo de Jotunheim: Colossal frost-giant ribcage, shattered ice bridge pillars, giant frozen axe
+        if (variant === 0) {
+          ctx.fillStyle = stoneHi;
+          for (let r = -2; r <= 2; r++) {
+            const rx = sx + r * 8;
+            ctx.fillRect(rx, GROUND_Y - 26, 3, 26);
+            ctx.fillRect(rx - 2, GROUND_Y - 28, 7, 3);
+          }
+        } else if (variant === 1) {
+          ctx.fillStyle = stoneCol;
+          ctx.fillRect(sx - 12, GROUND_Y - 38, 10, 38);
+          ctx.fillRect(sx + 8, GROUND_Y - 26, 10, 26);
+          ctx.fillStyle = stoneHi;
+          ctx.fillRect(sx - 12, GROUND_Y - 38, 10, 3);
+        } else {
+          // Colossal frost-giant axe embedded in the permafrost
+          ctx.fillStyle = woodCol;
+          ctx.fillRect(sx - 2, GROUND_Y - 34, 4, 34);
+          ctx.fillStyle = '#92d6f5';
+          ctx.fillRect(sx + 2, GROUND_Y - 32, 12, 14);
+        }
+      } else {
+        // Portões de Asgard: Golden marble colonnades, luminous crystal obelisks, sunlit temple arches
+        if (variant === 0) {
+          ctx.fillStyle = '#d9c58e';
+          ctx.fillRect(sx - 16, GROUND_Y - 36, 6, 36);
+          ctx.fillRect(sx + 10, GROUND_Y - 36, 6, 36);
+          ctx.fillRect(sx - 20, GROUND_Y - 41, 40, 6);
+          ctx.fillStyle = '#fff5bd';
+          ctx.fillRect(sx - 18, GROUND_Y - 40, 36, 2);
+        } else if (variant === 1) {
+          ctx.fillStyle = '#ffe58a';
+          ctx.fillRect(sx - 4, GROUND_Y - 32, 8, 32);
+          ctx.fillStyle = `rgba(148, 240, 255, ${(0.55 + 0.4 * Math.sin(w.elapsed * 3 + wx)).toFixed(2)})`;
+          ctx.fillRect(sx - 2, GROUND_Y - 26, 4, 18);
+        } else {
+          ctx.fillStyle = '#d9c58e';
+          ctx.fillRect(sx - 10, GROUND_Y - 18, 20, 18);
+          ctx.fillStyle = '#ffe58a';
+          ctx.fillRect(sx - 6, GROUND_Y - 22, 12, 4);
+        }
+      }
+    }
+  }
+
+  private drawGround(
+    ctx: CanvasRenderingContext2D,
+    w: WorldState,
+    camX: number,
+    nightFactor: number,
+    theme: IslandTheme
+  ): void {
+    const season = w.season ?? 'summer';
+    // Blend each island's distinct biome ground palette with the active season!
+    const seasonGrass =
+      season === 'winter'
+        ? lerpRGB(theme.grassDay, { r: 196, g: 218, b: 232 }, 0.62)
+        : season === 'autumn'
+          ? lerpRGB(theme.grassDay, { r: 162, g: 114, b: 56 }, 0.48)
+          : season === 'spring'
+            ? lerpRGB(theme.grassDay, { r: 96, g: 166, b: 92 }, 0.35)
+            : theme.grassDay;
+    const seasonAccent =
+      season === 'winter'
+        ? lerpRGB(theme.grassAccentDay, { r: 232, g: 244, b: 252 }, 0.68)
+        : season === 'autumn'
+          ? lerpRGB(theme.grassAccentDay, { r: 212, g: 132, b: 52 }, 0.45)
+          : theme.grassAccentDay;
+
+    const grassTop = lerpRGB(seasonGrass, { r: 24, g: 38, b: 46 }, nightFactor);
+    const accentEdge = lerpRGB(seasonAccent, { r: 66, g: 90, b: 108 }, nightFactor);
+    const soil = lerpRGB(theme.soilDay, { r: 17, g: 17, b: 24 }, nightFactor);
+    const stoneBank = lerpRGB(theme.cliffRockDay, { r: 22, g: 30, b: 40 }, nightFactor);
 
     ctx.fillStyle = rgbStr(grassTop);
     ctx.fillRect(0, GROUND_Y - 2, this.viewW, 3);
@@ -1521,32 +2292,161 @@ export class PixelRenderer {
         ctx.fillStyle = rgbStr(grassTop);
         ctx.fillRect(sx + 14, GROUND_Y - 4, 2, 2);
         ctx.fillRect(sx + 17, GROUND_Y - 3, 1, 2);
-        if (season === 'spring') {
-          ctx.fillStyle = Math.abs(tile) % 2 === 0 ? '#f7b2d4' : '#ffe588';
+        if (season === 'spring' || w.currentIsland === 2 || w.currentIsland === 9) {
+          ctx.fillStyle = w.currentIsland === 9 ? '#ffe58a' : Math.abs(tile) % 2 === 0 ? '#f7b2d4' : '#ffe588';
           ctx.fillRect(sx + 14, GROUND_Y - 5, 2, 1);
         }
       }
     }
   }
 
-  private drawTrees(ctx: CanvasRenderingContext2D, w: WorldState, camX: number, nightFactor: number): void {
+  // =========================================================================
+  // NATURAL MAP BOUNDARIES: WESTERN BEACH / OCEAN (LEFT) & MOUNTAIN WALL (RIGHT)
+  // =========================================================================
+  private drawWorldEdges(
+    ctx: CanvasRenderingContext2D,
+    w: WorldState,
+    camX: number,
+    nightFactor: number,
+    theme: IslandTheme
+  ): void {
+    const mapW = getWorldWidth(w);
+
+    // 1. LEFT EDGE (x = 0..230): PRAIA / COSTA DO MAR (Beach sloping into animated ocean surf!)
+    const beachEndSX = Math.round(230 - camX);
+    if (beachEndSX > -20) {
+      const sandMain = lerpRGB(theme.beachSandDay, { r: 46, g: 52, b: 64 }, nightFactor);
+      const sandLight = lerpRGB(
+        {
+          r: Math.min(255, theme.beachSandDay.r + 24),
+          g: Math.min(255, theme.beachSandDay.g + 22),
+          b: Math.min(255, theme.beachSandDay.b + 18),
+        },
+        { r: 72, g: 82, b: 96 },
+        nightFactor
+      );
+      const oceanCol = lerpRGB(theme.waterTintDay, { r: 8, g: 16, b: 28 }, nightFactor);
+      const foamCol = rgbStr(lerpRGB({ r: 232, g: 248, b: 255 }, { r: 102, g: 134, b: 162 }, nightFactor), 0.85);
+      const rockCol = rgbStr(lerpRGB(theme.cliffRockDay, { r: 22, g: 30, b: 42 }, nightFactor));
+
+      // Sandy beach stretch from x = 115..230 blending smoothly into grass
+      const sandLeft = Math.round(108 - camX);
+      const sandW = Math.max(0, beachEndSX - sandLeft);
+      ctx.fillStyle = rgbStr(sandMain);
+      ctx.fillRect(sandLeft, GROUND_Y - 2, sandW, 6);
+      ctx.fillStyle = rgbStr(sandLight);
+      ctx.fillRect(sandLeft + 10, GROUND_Y - 3, Math.max(0, sandW - 24), 2);
+
+      // Open ocean sea water from x = 0..145 with animated rolling surf waves!
+      const seaRight = Math.round(146 - camX);
+      if (seaRight > 0) {
+        ctx.fillStyle = rgbStr(oceanCol);
+        ctx.fillRect(0, GROUND_Y - 2, seaRight, 9);
+        const waveShift = Math.round(Math.sin(w.elapsed * 2.4) * 5);
+        ctx.fillStyle = foamCol;
+        ctx.fillRect(Math.max(0, seaRight - 14 + waveShift), GROUND_Y - 2, 16, 2);
+        ctx.fillRect(Math.max(0, seaRight - 36 - waveShift), GROUND_Y - 1, 14, 1);
+        ctx.fillRect(Math.max(0, seaRight - 68 + waveShift), GROUND_Y - 2, 18, 2);
+      }
+
+      // Coastal sea rocks, driftwood & weathered shore post marking the Western Beach
+      const rx1 = Math.round(126 - camX);
+      ctx.fillStyle = rockCol;
+      ctx.fillRect(rx1 - 8, GROUND_Y - 8, 16, 9);
+      ctx.fillRect(rx1 - 5, GROUND_Y - 12, 10, 5);
+      const rx2 = Math.round(166 - camX);
+      ctx.fillStyle = '#5c4430';
+      ctx.fillRect(rx2 - 6, GROUND_Y - 4, 14, 3);
+      ctx.fillRect(rx2 - 2, GROUND_Y - 11, 2, 9);
+      // Tall sea stack rising out of the western ocean
+      const stackX = Math.round(58 - camX);
+      if (stackX > -40) {
+        ctx.fillStyle = rockCol;
+        ctx.beginPath();
+        ctx.moveTo(stackX - 24, GROUND_Y + 2);
+        ctx.lineTo(stackX - 14, GROUND_Y - 38);
+        ctx.lineTo(stackX + 4, GROUND_Y - 48);
+        ctx.lineTo(stackX + 18, GROUND_Y - 24);
+        ctx.lineTo(stackX + 26, GROUND_Y + 2);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    // 2. RIGHT EDGE (x = mapW - 225..mapW): MURALHA DE MONTANHAS / PENHASCO (Impassable Towering Cliff!)
+    const cliffStartSX = Math.round(mapW - 225 - camX);
+    if (cliffStartSX < this.viewW + 20) {
+      const cliffDark = lerpRGB(theme.midRidgeDay, theme.midRidgeNight, nightFactor);
+      const cliffMid = lerpRGB(theme.cliffRockDay, { r: 22, g: 30, b: 44 }, nightFactor);
+      const cliffLight = lerpRGB(theme.mountainCapDay, theme.mountainCapNight, nightFactor);
+      const rightEdge = this.viewW + 40;
+
+      // Towering sheer mountain cliff face closing the Eastern end of the island
+      ctx.fillStyle = rgbStr(cliffDark);
+      ctx.beginPath();
+      ctx.moveTo(cliffStartSX + 26, GROUND_Y + 4);
+      ctx.lineTo(cliffStartSX + 42, GROUND_Y - 54);
+      ctx.lineTo(cliffStartSX + 62, GROUND_Y - 118);
+      ctx.lineTo(cliffStartSX + 96, GROUND_Y - 172);
+      ctx.lineTo(rightEdge, GROUND_Y - 185);
+      ctx.lineTo(rightEdge, GROUND_Y + 6);
+      ctx.closePath();
+      ctx.fill();
+
+      // Craggy mid-rock ledges & carved cliff striations
+      ctx.fillStyle = rgbStr(cliffMid);
+      ctx.beginPath();
+      ctx.moveTo(cliffStartSX + 44, GROUND_Y + 4);
+      ctx.lineTo(cliffStartSX + 58, GROUND_Y - 46);
+      ctx.lineTo(cliffStartSX + 82, GROUND_Y - 98);
+      ctx.lineTo(cliffStartSX + 118, GROUND_Y - 150);
+      ctx.lineTo(rightEdge, GROUND_Y - 158);
+      ctx.lineTo(rightEdge, GROUND_Y + 6);
+      ctx.closePath();
+      ctx.fill();
+
+      // Highlight ridges / snow or lava trim along cliff ledges
+      ctx.fillStyle = theme.hasVolcanoGlow
+        ? `rgba(255, 118, 46, ${lerp(0.65, 0.85, nightFactor).toFixed(2)})`
+        : rgbStr(cliffLight, 0.72);
+      ctx.fillRect(cliffStartSX + 44, GROUND_Y - 52, 26, 3);
+      ctx.fillRect(cliffStartSX + 64, GROUND_Y - 96, 34, 3);
+      ctx.fillRect(cliffStartSX + 92, GROUND_Y - 138, 42, 4);
+
+      // Foreground boulders at cliff foot blocking passage cleanly at x ≈ mapW - 165
+      ctx.fillStyle = rgbStr(cliffMid);
+      ctx.fillRect(cliffStartSX + 38, GROUND_Y - 18, 22, 20);
+      ctx.fillRect(cliffStartSX + 54, GROUND_Y - 30, 26, 32);
+      ctx.fillStyle = rgbStr(cliffDark);
+      ctx.fillRect(cliffStartSX + 44, GROUND_Y - 12, 16, 14);
+    }
+  }
+
+  private drawTrees(
+    ctx: CanvasRenderingContext2D,
+    w: WorldState,
+    camX: number,
+    nightFactor: number,
+    theme: IslandTheme
+  ): void {
     const season = w.season ?? 'summer';
+    const vStyle = theme.vegetationStyle;
     const dayDark =
       season === 'autumn'
-        ? { r: 118, g: 64, b: 32 }
+        ? lerpRGB(theme.treeDarkDay, { r: 122, g: 64, b: 32 }, 0.55)
         : season === 'winter'
-          ? { r: 30, g: 54, b: 60 }
+          ? lerpRGB(theme.treeDarkDay, { r: 30, g: 56, b: 68 }, 0.5)
           : season === 'spring'
-            ? { r: 32, g: 76, b: 48 }
-            : { r: 28, g: 66, b: 46 };
+            ? lerpRGB(theme.treeDarkDay, { r: 36, g: 88, b: 52 }, 0.35)
+            : theme.treeDarkDay;
     const dayMid =
       season === 'autumn'
-        ? { r: 168, g: 98, b: 40 }
+        ? lerpRGB(theme.treeMidDay, { r: 176, g: 102, b: 42 }, 0.55)
         : season === 'winter'
-          ? { r: 44, g: 76, b: 82 }
+          ? lerpRGB(theme.treeMidDay, { r: 48, g: 82, b: 92 }, 0.5)
           : season === 'spring'
-            ? { r: 52, g: 112, b: 64 }
-            : { r: 44, g: 94, b: 58 };
+            ? lerpRGB(theme.treeMidDay, { r: 58, g: 126, b: 70 }, 0.35)
+            : theme.treeMidDay;
     const darkGreen = lerpRGB(dayDark, { r: 11, g: 22, b: 28 }, nightFactor);
     const midGreen = lerpRGB(dayMid, { r: 16, g: 31, b: 38 }, nightFactor);
     const snow = lerpRGB({ r: 218, g: 234, b: 244 }, { r: 72, g: 98, b: 118 }, nightFactor);
@@ -1561,9 +2461,9 @@ export class PixelRenderer {
           const sproutH = Math.max(3, Math.round(tr.chopProgress * 12));
           ctx.fillStyle = '#4d3625';
           ctx.fillRect(sx - 1, GROUND_Y - sproutH, 2, sproutH);
-          ctx.fillStyle = season === 'autumn' ? '#d4873b' : '#6cc46a';
+          ctx.fillStyle = rgbStr(dayMid);
           ctx.fillRect(sx - 3, GROUND_Y - sproutH - 2, 6, 3);
-          ctx.fillStyle = season === 'autumn' ? '#f2b85c' : '#a0ea96';
+          ctx.fillStyle = rgbStr(theme.grassAccentDay);
           ctx.fillRect(sx - 1, GROUND_Y - sproutH - 3, 2, 2);
         }
         continue;
@@ -1576,35 +2476,66 @@ export class PixelRenderer {
       const trunkW = sz === 'large' ? 6 : sz === 'medium' ? 4 : 3;
       const trunkH = sz === 'large' ? 18 : sz === 'medium' ? 14 : 11;
 
-      ctx.fillStyle = '#3d2c24';
+      // Distinct bark tint per biome (white birch in Vale de Freya, charcoal in Muspel, golden oak in Asgard!)
+      ctx.fillStyle =
+        vStyle === 'lush_vale'
+          ? '#8c7e70'
+          : vStyle === 'ash_deadwood'
+            ? '#2a2224'
+            : vStyle === 'golden_yggdrasil'
+              ? '#6e5232'
+              : '#3d2c24';
       ctx.fillRect(bx - Math.floor(trunkW / 2), GROUND_Y - trunkH, trunkW, trunkH);
 
       const tiers = sz === 'large' ? 4 : sz === 'medium' ? 3 : 2;
       const baseHalfW = sz === 'large' ? 16 : sz === 'medium' ? 13 : 9;
-      for (let tier = 0; tier < tiers; tier++) {
-        const ty = GROUND_Y - (trunkH - 2) - tier * Math.floor((tr.height - trunkH) / tiers);
-        const halfW = Math.max(4, baseHalfW - tier * 2.5);
-        const topY = ty - (sz === 'large' ? 18 : sz === 'medium' ? 15 : 13);
-        const shift = Math.round((sway * (tier + 1)) / tiers);
 
-        ctx.fillStyle = rgbStr(tier % 2 === 0 ? darkGreen : midGreen);
-        ctx.beginPath();
-        ctx.moveTo(bx + shift, topY);
-        ctx.lineTo(bx - halfW, ty);
-        ctx.lineTo(bx + halfW, ty);
-        ctx.closePath();
-        ctx.fill();
+      if (vStyle === 'lush_vale' || vStyle === 'golden_yggdrasil') {
+        // Broad leafy Nordic birch / golden Yggdrasil canopy clusters!
+        for (let tier = 0; tier < tiers; tier++) {
+          const ty = GROUND_Y - trunkH - tier * Math.floor((tr.height - trunkH) / (tiers + 0.2));
+          const cw = Math.max(10, Math.round((baseHalfW * 2.05) - tier * 4));
+          const ch = sz === 'large' ? 12 : 10;
+          const shift = Math.round((sway * (tier + 1)) / tiers);
+          ctx.fillStyle = rgbStr(tier % 2 === 0 ? darkGreen : midGreen);
+          ctx.fillRect(Math.round(bx + shift - cw / 2), Math.round(ty - ch), cw, ch);
+          if (vStyle === 'golden_yggdrasil') {
+            ctx.fillStyle = 'rgba(255, 232, 128, 0.45)';
+            ctx.fillRect(Math.round(bx + shift - cw / 3), Math.round(ty - ch), Math.round(cw * 0.6), 2);
+          } else if (season === 'winter') {
+            ctx.fillStyle = rgbStr(snow, 0.85);
+            ctx.fillRect(Math.round(bx + shift - cw / 2 + 2), Math.round(ty - ch), cw - 4, 2);
+          }
+        }
+      } else {
+        for (let tier = 0; tier < tiers; tier++) {
+          const ty = GROUND_Y - (trunkH - 2) - tier * Math.floor((tr.height - trunkH) / tiers);
+          const halfW = Math.max(4, baseHalfW - tier * 2.5);
+          const topY = ty - (sz === 'large' ? 18 : sz === 'medium' ? 15 : 13);
+          const shift = Math.round((sway * (tier + 1)) / tiers);
 
-        if (season === 'winter') {
-          ctx.fillStyle = rgbStr(snow, 0.88);
-          ctx.fillRect(bx + shift - 2, topY + 2, 4, 2);
-          ctx.fillRect(bx + shift - Math.floor(halfW * 0.55), topY + 6, Math.floor(halfW * 0.5), 2);
-        } else if (season === 'autumn') {
-          ctx.fillStyle = 'rgba(235, 165, 62, 0.65)';
-          ctx.fillRect(bx + shift - 2, topY + 3, 4, 2);
-        } else if (season === 'spring') {
-          ctx.fillStyle = 'rgba(146, 224, 134, 0.55)';
-          ctx.fillRect(bx + shift - 1, topY + 2, 3, 2);
+          ctx.fillStyle = rgbStr(tier % 2 === 0 ? darkGreen : midGreen);
+          ctx.beginPath();
+          ctx.moveTo(bx + shift, topY);
+          ctx.lineTo(bx - halfW, ty);
+          ctx.lineTo(bx + halfW, ty);
+          ctx.closePath();
+          ctx.fill();
+
+          if (season === 'winter' || vStyle === 'frost_spruce' || vStyle === 'glacial_pine') {
+            ctx.fillStyle = rgbStr(snow, 0.88);
+            ctx.fillRect(bx + shift - 2, topY + 2, 4, 2);
+            ctx.fillRect(bx + shift - Math.floor(halfW * 0.55), topY + 6, Math.floor(halfW * 0.5), 2);
+          } else if (vStyle === 'ash_deadwood') {
+            ctx.fillStyle = 'rgba(255, 118, 52, 0.55)';
+            ctx.fillRect(bx + shift - 1, topY + 2, 2, 2);
+          } else if (season === 'autumn' || vStyle === 'amber_cedar') {
+            ctx.fillStyle = 'rgba(235, 165, 62, 0.65)';
+            ctx.fillRect(bx + shift - 2, topY + 3, 4, 2);
+          } else if (season === 'spring') {
+            ctx.fillStyle = 'rgba(146, 224, 134, 0.55)';
+            ctx.fillRect(bx + shift - 1, topY + 2, 3, 2);
+          }
         }
       }
 
@@ -4004,8 +4935,13 @@ export class PixelRenderer {
 
     const waterH = Math.max(10, this.viewH - this.waterScreenY);
     const waterGrad = ctx.createLinearGradient(0, this.waterScreenY, 0, this.viewH);
-    const wTop = lerpRGB({ r: 24, g: 52, b: 74 }, { r: 7, g: 16, b: 28 }, nightFactor);
-    const wBot = lerpRGB({ r: 10, g: 24, b: 38 }, { r: 3, g: 8, b: 16 }, nightFactor);
+    const islWater = getIslandDef(w.currentIsland).theme.waterTintDay;
+    const wTop = lerpRGB(islWater, { r: 7, g: 16, b: 28 }, nightFactor);
+    const wBot = lerpRGB(
+      { r: Math.round(islWater.r * 0.45), g: Math.round(islWater.g * 0.45), b: Math.round(islWater.b * 0.5) },
+      { r: 3, g: 8, b: 16 },
+      nightFactor
+    );
     waterGrad.addColorStop(0, rgbStr(wTop));
     waterGrad.addColorStop(1, rgbStr(wBot));
     ctx.fillStyle = waterGrad;
@@ -4704,7 +5640,8 @@ export class PixelRenderer {
     ctx.fillStyle = 'rgba(6, 12, 20, 0.62)';
     ctx.fillRect(mapX, mapY, mapW, 4);
 
-    const toMapX = (wx: number) => mapX + Math.round((wx / WORLD_WIDTH) * mapW);
+    const mapWorldW = getWorldWidth(w);
+    const toMapX = (wx: number) => mapX + Math.round((wx / mapWorldW) * mapW);
     for (const p of w.portals) {
       if (p.destroyed) continue;
       ctx.fillStyle = '#7cf7ff';
@@ -4797,7 +5734,7 @@ export class PixelRenderer {
     // Subtle animated spectral chevron ahead of fingertip when guiding player
     if (!isMovingBetweenButton) {
       const m = w.monarchs[0];
-      const targetX = tut ? getTutorialTargetX(w) : (adv?.targetX ?? CENTER_X);
+      const targetX = tut ? getTutorialTargetX(w) : (adv?.targetX ?? getCenterX(w));
       const farFromTarget = m ? Math.abs(targetX - m.x) >= 58 : true;
       if (farFromTarget || tut?.step === 'farewell') {
         ctx.fillStyle = '#d4fbff';
