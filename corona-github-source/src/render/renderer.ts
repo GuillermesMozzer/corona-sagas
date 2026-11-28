@@ -6395,12 +6395,15 @@ export class PixelRenderer {
     const isDiamond = pr.currency === 'diamond';
     const isBanker = pr.targetType === 'banker';
     const isBlocked = Boolean(pr.blockedReason);
+    const isMobile =
+      this.viewW < 420 ||
+      (typeof window !== 'undefined' && Boolean(window.matchMedia?.('(pointer: coarse)').matches));
     const showCta =
       Boolean(pr.label) &&
       (isBlocked || !pr.actionClass || !w.completedActionClasses?.[pr.actionClass]);
 
     // Fixed coin slot row anchored at sy - 8 so flying coins land dead-center inside each slot!
-    const coinRowY = sy - 8;
+    const coinRowY = sy - (isMobile ? 10 : 8);
 
     // 1. BLOCKED PROMPT (transparent text only, no dark box!)
     if (isBlocked && pr.blockedReason) {
@@ -6416,11 +6419,12 @@ export class PixelRenderer {
       return;
     }
 
-    // 2. BANKER PROMPT (ONLY shown when passing near Banker — zero dark boxes!)
+    // 2. BANKER PROMPT (ONLY shown when passing near Banker — enlarged touch targets on mobile!)
     //    Row 1: [Coin icon] [Total Gold]  [+X% in green]
     //    Row 2: [Deposit Coin Slot]   [Withdraw Coin + Down Arrow Button]
     if (isBanker) {
-      const centerX = Math.max(38, Math.min(this.viewW - 38, sx));
+      const marginX = isMobile ? 46 : 38;
+      const centerX = Math.max(marginX, Math.min(this.viewW - marginX, sx));
       const balance = pr.bankBalance ?? w.banker.balance;
       const ratePct = pr.bankRatePct ?? getBankerDailyRatePct(w.hall.level);
       const balTxt = `${balance}`;
@@ -6432,7 +6436,7 @@ export class PixelRenderer {
       const pctW = Math.ceil(ctx.measureText(pctTxt).width);
       const infoTotalW = 8 + balW + 7 + pctW;
       const infoStartX = Math.round(centerX - infoTotalW / 2);
-      const infoY = coinRowY - 6;
+      const infoY = coinRowY - (isMobile ? 9 : 6);
 
       // Coin icon + total coins in the bank
       this.drawMinimalCoinIcon(ctx, infoStartX, infoY - 6);
@@ -6446,31 +6450,56 @@ export class PixelRenderer {
       ctx.fillStyle = '#6fe87b';
       ctx.fillText(pctTxt, infoStartX + 9 + balW + 6, infoY);
 
+      const btnOffset = isMobile ? 20 : 10;
+      const depCenterX = centerX - btnOffset;
+      const wdCenterX = centerX + btnOffset;
+
+      // Subtle tactile touch pads behind Banker Deposit & Withdraw on mobile
+      if (isMobile) {
+        ctx.fillStyle = 'rgba(10, 18, 30, 0.56)';
+        ctx.fillRect(depCenterX - 15, coinRowY - 5, 30, 22);
+        ctx.strokeStyle = 'rgba(247, 210, 101, 0.55)';
+        ctx.strokeRect(depCenterX - 14.5, coinRowY - 4.5, 29, 21);
+
+        ctx.fillStyle = 'rgba(10, 18, 30, 0.56)';
+        ctx.fillRect(wdCenterX - 15, coinRowY - 5, 30, 22);
+        ctx.strokeStyle = balance > 0 ? 'rgba(111, 232, 123, 0.55)' : 'rgba(130, 150, 170, 0.35)';
+        ctx.strokeRect(wdCenterX - 14.5, coinRowY - 4.5, 29, 21);
+      }
+
       // Left control: Deposit Slot (1 coin per click, jumping from monarch into this slot!)
-      const depCenterX = centerX - 10;
-      const depSlotX = Math.round(depCenterX - 3.5);
+      const depSize = isMobile ? 11 : 7;
+      const depSlotX = Math.round(depCenterX - depSize / 2);
       ctx.fillStyle = 'rgba(8, 12, 18, 0.72)';
-      ctx.fillRect(depSlotX - 1, coinRowY - 1, 9, 9);
+      ctx.fillRect(depSlotX - 1, coinRowY - 1, depSize + 2, depSize + 2);
       ctx.fillStyle = pr.pending > 0 ? 'rgba(255, 224, 102, 0.35)' : 'rgba(247, 210, 101, 0.16)';
-      ctx.fillRect(depSlotX, coinRowY, 7, 7);
+      ctx.fillRect(depSlotX, coinRowY, depSize, depSize);
       ctx.strokeStyle = pr.pending > 0 ? '#fff5bd' : '#f7d265';
       ctx.lineWidth = 1;
-      ctx.strokeRect(depSlotX + 0.5, coinRowY + 0.5, 6, 6);
-      this.addHit('prompt_coin_slot', depCenterX - 9, coinRowY - 6, 18, 22);
+      ctx.strokeRect(depSlotX + 0.5, coinRowY + 0.5, depSize - 1, depSize - 1);
+      if (isMobile) {
+        this.addHit('prompt_coin_slot', depCenterX - 19, coinRowY - 16, 38, 46);
+      } else {
+        this.addHit('prompt_coin_slot', depCenterX - 9, coinRowY - 6, 18, 22);
+      }
 
       // Right control: Withdraw Button (coin icon + downward arrow -> coins jump out to monarch!)
-      const wdCenterX = centerX + 10;
-      this.drawWithdrawCoinIcon(ctx, wdCenterX, coinRowY, balance > 0);
-      this.addHit('prompt_bank_withdraw', wdCenterX - 9, coinRowY - 6, 18, 22);
+      this.drawWithdrawCoinIcon(ctx, wdCenterX, isMobile ? coinRowY + 1 : coinRowY, balance > 0);
+      if (isMobile) {
+        this.addHit('prompt_bank_withdraw', wdCenterX - 19, coinRowY - 16, 38, 46);
+      } else {
+        this.addHit('prompt_bank_withdraw', wdCenterX - 9, coinRowY - 6, 18, 22);
+      }
 
       ctx.textAlign = 'left';
       return;
     }
 
-    // 3. STANDARD COMMAND PROMPTS (NO dark background boxes!)
+    // 3. STANDARD COMMAND PROMPTS (Enlarged visual slots + generous thumb touch target on mobile!)
     const isLargeCost = pr.cost > 10;
-    const slotStep = 10;
-    const slotsW = isLargeCost ? 78 : pr.cost * slotStep - 3;
+    const slotSize = isMobile ? 10 : 7;
+    const slotStep = isMobile ? 13 : 10;
+    const slotsW = isLargeCost ? (isMobile ? 96 : 78) : pr.cost * slotStep - (slotStep - slotSize);
 
     const matItems: Array<{ kind: 'wood' | 'stone' | 'iron'; need: number; have: number }> = [];
     if (pr.woodCost && pr.woodCost > 0) matItems.push({ kind: 'wood', need: pr.woodCost, have: w.resources.wood });
@@ -6480,63 +6509,80 @@ export class PixelRenderer {
     const matsW = matItems.length * matItemW;
 
     const ctaW = showCta ? pr.label.length * 4.5 : 0;
-    const spanW = Math.max(slotsW, matsW, ctaW, 24);
+    const spanW = Math.max(slotsW, matsW, ctaW, isMobile ? 42 : 24);
     const centerX = Math.max(
       Math.ceil(spanW / 2) + 8,
       Math.min(this.viewW - Math.ceil(spanW / 2) - 8, sx)
     );
 
-    // Tappable hit area directly over the floating slots (no dark box)
-    const hitH = 18 + (showCta ? 10 : 0) + (matItems.length > 0 ? 12 : 0);
-    const hitTop = coinRowY - (showCta ? 12 : 5);
-    this.addHit('prompt_coin_slot', Math.round(centerX - spanW / 2) - 8, hitTop, spanW + 16, hitH);
+    // Generous tappable hit area directly over & around the floating coin slots (thumb-friendly on mobile!)
+    const hitW = isMobile ? Math.max(spanW + 34, 86) : spanW + 16;
+    const hitH = isMobile
+      ? Math.max(26 + (showCta ? 12 : 0) + (matItems.length > 0 ? 14 : 0) + 20, 62)
+      : 18 + (showCta ? 10 : 0) + (matItems.length > 0 ? 12 : 0);
+    const hitTop = isMobile ? coinRowY - (showCta ? 24 : 18) : coinRowY - (showCta ? 12 : 5);
+    this.addHit('prompt_coin_slot', Math.round(centerX - hitW / 2), hitTop, hitW, hitH);
+
+    // Subtle tactile touch-pad halo around the coin slots on mobile so players can clearly see & hit the tap zone!
+    if (isMobile) {
+      const padW = Math.max(slotsW + 18, 52);
+      const padH = slotSize + 10;
+      const padX = Math.round(centerX - padW / 2);
+      const padY = coinRowY - 5;
+      ctx.fillStyle = 'rgba(10, 18, 30, 0.50)';
+      ctx.fillRect(padX, padY, padW, padH);
+      ctx.strokeStyle = isDiamond ? 'rgba(126, 245, 255, 0.50)' : 'rgba(247, 210, 101, 0.50)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(padX + 0.5, padY + 0.5, padW - 1, padH - 1);
+    }
 
     // CTA label ONLY appears before the player has executed this action class once!
     if (showCta) {
       ctx.fillStyle = isDiamond ? '#b5fbff' : '#f2f7fc';
       ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
       ctx.textAlign = 'center';
-      ctx.fillText(pr.label, centerX, coinRowY - 5);
+      ctx.fillText(pr.label, centerX, coinRowY - (isMobile ? 9 : 5));
     }
 
-    // Floating Coin / Diamond Slots (NO background box behind them — only crisp individual slots!)
+    // Floating Coin / Diamond Slots
     if (isLargeCost) {
-      const barW = 46;
+      const barW = isMobile ? 58 : 46;
+      const barH = isMobile ? 9 : 5;
       const barX = Math.round(centerX - barW / 2 - 10);
-      this.drawMinimalCoinIcon(ctx, barX - 10, coinRowY);
+      this.drawMinimalCoinIcon(ctx, barX - 10, coinRowY + (isMobile ? 1 : 0));
 
       ctx.fillStyle = 'rgba(8, 12, 18, 0.72)';
-      ctx.fillRect(barX - 1, coinRowY, barW + 2, 7);
+      ctx.fillRect(barX - 1, coinRowY, barW + 2, barH + 2);
       ctx.fillStyle = 'rgba(247, 210, 101, 0.2)';
-      ctx.fillRect(barX, coinRowY + 1, barW, 5);
+      ctx.fillRect(barX, coinRowY + 1, barW, barH);
       ctx.fillStyle = '#f7d265';
-      ctx.fillRect(barX, coinRowY + 1, Math.round(barW * Math.min(1, pr.paid / pr.cost)), 5);
+      ctx.fillRect(barX, coinRowY + 1, Math.round(barW * Math.min(1, pr.paid / pr.cost)), barH);
 
       ctx.textAlign = 'left';
       ctx.fillStyle = '#ffe58a';
       ctx.font = 'bold 7px "Pixelify Sans", monospace';
-      ctx.fillText(`${pr.paid}/${pr.cost}`, barX + barW + 4, coinRowY + 6);
+      ctx.fillText(`${pr.paid}/${pr.cost}`, barX + barW + 4, coinRowY + (isMobile ? 8 : 6));
     } else {
       const startX = Math.round(centerX - slotsW / 2);
       const fullCol = isDiamond ? '#7ef5ff' : '#f7d265';
       const shineCol = isDiamond ? '#ebfeff' : '#fff5bd';
-      const emptyCol = isDiamond ? 'rgba(126, 245, 255, 0.16)' : 'rgba(247, 210, 101, 0.16)';
+      const emptyCol = isDiamond ? 'rgba(126, 245, 255, 0.20)' : 'rgba(247, 210, 101, 0.20)';
       for (let i = 0; i < pr.cost; i++) {
         const cx = startX + i * slotStep;
         // Subtle 1px dark pixel contour tightly hugging each slot so it stays readable over bright sky
-        ctx.fillStyle = 'rgba(8, 12, 18, 0.72)';
-        ctx.fillRect(cx - 1, coinRowY - 1, 9, 9);
+        ctx.fillStyle = 'rgba(8, 12, 18, 0.75)';
+        ctx.fillRect(cx - 1, coinRowY - 1, slotSize + 2, slotSize + 2);
         if (i < pr.paid) {
           ctx.fillStyle = fullCol;
-          ctx.fillRect(cx, coinRowY, 7, 7);
+          ctx.fillRect(cx, coinRowY, slotSize, slotSize);
           ctx.fillStyle = shineCol;
-          ctx.fillRect(cx + 1, coinRowY + 1, 2, 2);
+          ctx.fillRect(cx + 1, coinRowY + 1, isMobile ? 3 : 2, isMobile ? 3 : 2);
         } else {
           ctx.fillStyle = emptyCol;
-          ctx.fillRect(cx, coinRowY, 7, 7);
+          ctx.fillRect(cx, coinRowY, slotSize, slotSize);
           ctx.strokeStyle = i < pr.paid + pr.pending ? shineCol : fullCol;
           ctx.lineWidth = 1;
-          ctx.strokeRect(cx + 0.5, coinRowY + 0.5, 6, 6);
+          ctx.strokeRect(cx + 0.5, coinRowY + 0.5, slotSize - 1, slotSize - 1);
         }
       }
     }
@@ -6544,7 +6590,7 @@ export class PixelRenderer {
     // Material requirements row (Wood / Stone / Iron icons + required amounts, zero dark box!)
     if (matItems.length > 0) {
       let mx = Math.round(centerX - matsW / 2 + 2);
-      const my = coinRowY + 11;
+      const my = coinRowY + slotSize + (isMobile ? 7 : 4);
       ctx.textAlign = 'left';
       ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
       for (const item of matItems) {
