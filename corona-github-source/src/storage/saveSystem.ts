@@ -306,14 +306,27 @@ export function saveCampaign(w: WorldState, slotOverride?: number): void {
     const pendingWithdrawCoins = (w.flyingCoins ?? []).filter(
       (fc) => fc.targetType === 'banker_withdraw'
     ).length;
+    const pendingTributeCoins = (w.flyingCoins ?? []).filter(
+      (fc) => fc.targetType === 'villager_tribute' && fc.targetId === 0
+    ).length;
+    const baseMonarch = w.monarchs[0];
+    const tributeAdd = baseMonarch
+      ? Math.min(pendingTributeCoins, Math.max(0, baseMonarch.maxCoins - baseMonarch.coins))
+      : 0;
+    const tributeOverflow = pendingTributeCoins - tributeAdd;
+    const savedMonarch = baseMonarch
+      ? { ...baseMonarch, coins: baseMonarch.coins + tributeAdd }
+      : null;
+    const extraBankerCoins = pendingWithdrawCoins + tributeOverflow;
     const cleanState: WorldState = {
       ...w,
       mode: 'playing',
       saveSlot: slot,
-      monarchs: w.monarchs.length > 0 ? [w.monarchs[0]] : [],
+      monarchs: savedMonarch ? [savedMonarch] : [],
+      resources: savedMonarch ? { ...w.resources, gold: savedMonarch.coins } : w.resources,
       banker:
-        pendingWithdrawCoins > 0
-          ? { ...w.banker, balance: w.banker.balance + pendingWithdrawCoins }
+        extraBankerCoins > 0
+          ? { ...w.banker, balance: w.banker.balance + extraBankerCoins }
           : w.banker,
       activeCommand: 'none',
       touchCommandMode: 'none',

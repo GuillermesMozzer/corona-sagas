@@ -724,12 +724,21 @@ function markActionClassCompleted(w: WorldState, actionClass: string): void {
   map[actionClass] = true;
 }
 
+function countInFlightCoinsToMonarch(w: WorldState, monarchIndex: number): number {
+  let count = 0;
+  for (const fc of w.flyingCoins) {
+    if (fc.targetType === 'banker_withdraw' && monarchIndex === 0) count += 1;
+    else if (fc.targetType === 'villager_tribute' && fc.targetId === monarchIndex) count += 1;
+  }
+  return count;
+}
+
 export function withdrawFromBanker(w: WorldState): boolean {
   const m = w.monarchs[0];
   if (!m || w.mode !== 'playing' || w.hall.level < 1) return false;
   if (Math.abs(m.x - w.banker.x) > 46) return false;
   if (w.banker.balance <= 0) return false;
-  const inFlightToMonarch = w.flyingCoins.filter((fc) => fc.targetType === 'banker_withdraw').length;
+  const inFlightToMonarch = countInFlightCoinsToMonarch(w, 0);
   const room = Math.max(0, m.maxCoins - (m.coins + inFlightToMonarch));
   if (room <= 0) {
     showBanner(w, 'BOLSA CHEIA', `Sua bolsa comporta até ${m.maxCoins} moedas!`, '#ffe066');
@@ -1467,6 +1476,22 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
     }
     if (!w.flyingCoins.some((other) => other.targetType === 'banker_withdraw')) {
       saveCampaign(w);
+    }
+    return;
+  }
+
+  if (fc.targetType === 'villager_tribute') {
+    const m = w.monarchs[fc.targetId] ?? w.monarchs[0];
+    if (m && m.coins < m.maxCoins) {
+      m.coins += 1;
+      if (fc.targetId === 0 || m === w.monarchs[0]) {
+        w.resources.gold = m.coins;
+      }
+      sound.playCoinPickup();
+      spawnBurst(w, m.x, GROUND_Y - 18 - m.flyY, 5, '#ffe066', 'spark', 28);
+    } else if (m) {
+      // Pouch filled mid-flight: drop gently on the ground so no coin is ever lost
+      spawnCoin(w, m.x, GROUND_Y - 14 - m.flyY, (Math.random() - 0.5) * 28, -50, false, 0.28);
     }
     return;
   }
@@ -2758,12 +2783,37 @@ function updateMonarch(
 }
 
 function updateFlyingCoins(w: WorldState, dt: number): void {
-  const m = w.monarchs[0];
+  const m0 = w.monarchs[0];
   for (let i = w.flyingCoins.length - 1; i >= 0; i--) {
     const fc = w.flyingCoins[i];
-    if (fc.targetType === 'banker_withdraw' && m) {
-      fc.targetX = m.x;
-      fc.targetY = GROUND_Y - 16 - m.flyY;
+    if (fc.targetType === 'banker_withdraw' && m0) {
+      fc.targetX = m0.x;
+      fc.targetY = GROUND_Y - 16 - m0.flyY;
+    } else if (fc.targetType === 'villager_tribute') {
+      const targetM = w.monarchs[fc.targetId] ?? m0;
+      if (targetM) {
+        fc.targetX = targetM.x;
+        fc.targetY = GROUND_Y - 18 - targetM.flyY;
+      }
+      if (fc.progress > 0 && fc.progress < 1 && Math.random() < dt * 26) {
+        const p = fc.progress;
+        const ease = 1 - Math.pow(1 - p, 2);
+        const wx = fc.startX + (fc.targetX - fc.startX) * ease;
+        const arcH = 26 + Math.min(18, Math.abs(fc.targetX - fc.startX) * 0.22);
+        const wy = fc.startY + (fc.targetY - fc.startY) * ease - Math.sin(p * Math.PI) * arcH;
+        spawnParticle(w, {
+          x: wx,
+          y: wy,
+          vx: (Math.random() - 0.5) * 14,
+          vy: -6 - Math.random() * 12,
+          size: 1.5,
+          color: '#ffe58a',
+          alpha: 0.9,
+          life: 0.28,
+          maxLife: 0.28,
+          kind: 'spark',
+        });
+      }
     }
     fc.progress += dt / fc.duration;
     if (fc.progress >= 1) {
@@ -3655,7 +3705,6 @@ function buildBuilderTaskAssignments(
 }
 
 function updateVillagers(w: WorldState, dt: number): void {
-  const monarch = w.monarchs[0];
   const isEveningOrNight = w.timeOfDay >= 0.46 && w.timeOfDay < 0.98;
   const builderAssignments = buildBuilderTaskAssignments(w, isEveningOrNight);
 
@@ -3694,21 +3743,39 @@ function updateVillagers(w: WorldState, dt: number): void {
       continue;
     }
 
-    // Hand carried coins to Monarch if crossing paths (anyone returning swept coins delivers straight to the Banker!)
-    if (
-      v.role !== 'peasant' &&
-      v.state !== 'returning_coins' &&
-      v.carriedCoins > 0 &&
-      monarch &&
-      Math.abs(v.x - monarch.x) < 26 &&
-      monarch.coins < monarch.maxCoins
-    ) {
-      const give = Math.min(v.carriedCoins, monarch.maxCoins - monarch.coins);
-      v.carriedCoins -= give;
-      monarch.coins += give;
-      w.resources.gold = monarch.coins;
-      sound.playCoinPickup();
-      spawnBurst(w, v.x, GROUND_Y - 16, 4, '#f7d265', 'spark', 24);
+    // Whenever ANY subject carrying coins crosses paths with a Monarch (either walks past the other)
+    // and the Monarch has pouch space, animate the coins leaping in an arc from the subject to the King!
+    if (v.role !== 'wanderer' && v.carriedCoins > 0) {
+      for (let mi = 0; mi < w.monarchs.length; mi++) {
+        const mTarget = w.monarchs[mi];
+        if (!mTarget || Math.abs(v.x - mTarget.x) >= 28) continue;
+        const inFlight = countInFlightCoinsToMonarch(w, mi);
+        const room = Math.max(0, mTarget.maxCoins - (mTarget.coins + inFlight));
+        if (room <= 0) continue;
+
+        const give = Math.min(v.carriedCoins, room);
+        v.carriedCoins -= give;
+        if (v.carriedCoins <= 0 && v.state === 'returning_coins') {
+          v.state = 'idle';
+        }
+        sound.playCoinDrop();
+        spawnBurst(w, v.x, GROUND_Y - 15, 5, '#ffe066', 'spark', 28);
+        for (let ci = 0; ci < give; ci++) {
+          w.flyingCoins.push({
+            id: uid(w),
+            startX: v.x + ((ci % 3) - 1) * 2.5,
+            startY: GROUND_Y - 14,
+            targetX: mTarget.x,
+            targetY: GROUND_Y - 18 - mTarget.flyY,
+            progress: -ci * 0.14,
+            duration: 0.36,
+            currency: 'coin',
+            targetType: 'villager_tribute',
+            targetId: mi,
+          });
+        }
+        break;
+      }
     }
 
     // --- WANDERER (must be hired with 1 coin OR attracted by a Brewery beer -> becomes Peasant!) ---

@@ -482,6 +482,7 @@ export type PromptTargetType =
   | 'hall'
   | 'banker'
   | 'banker_withdraw'
+  | 'villager_tribute'
   | 'forge_build'
   | 'forge_smelt'
   | 'shop'
