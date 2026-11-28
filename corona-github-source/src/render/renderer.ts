@@ -31,6 +31,7 @@ import {
   type Villager,
   type WorldState,
 } from '../types';
+import { PRECIOUS_METALS, WEAPON_DEFS, getIslandMetalId } from '../world/arsenal';
 import {
   countArchersAssignedToTower,
   getBankerDailyRatePct,
@@ -3577,18 +3578,47 @@ export class PixelRenderer {
     // 1. Nordic God Shrine (Thor, Freya, Odin, Loki — 1 per island!)
     if (w.godShrine) {
       const sx = Math.round(w.godShrine.x - camX);
-      if (sx > -48 && sx < this.viewW + 48) {
+      if (sx > -64 && sx < this.viewW + 64) {
         const def = GOD_DEFS[w.godShrine.godId];
         const isActive = w.activeGod === w.godShrine.godId;
-        const pulse = 0.65 + 0.35 * Math.sin(w.elapsed * 3.5);
+        const isRitual = Boolean(w.godShrine.ritualActive);
+        const pulse = 0.65 + 0.35 * Math.sin(w.elapsed * (isRitual ? 7.5 : 3.5));
 
-        // Sacred aura when blessed or unlocked
-        if (w.godShrine.unlocked) {
-          ctx.fillStyle = isActive
-            ? `rgba(255, 224, 110, ${(0.22 * pulse).toFixed(2)})`
-            : `rgba(126, 245, 255, ${(0.14 * pulse).toFixed(2)})`;
+        // Celestial Rapture Beam reaching down from the sky during Tribute Sacrifice Ritual!
+        if (isRitual) {
+          ctx.save();
+          const beamW = Math.round(18 + Math.sin(w.elapsed * 9) * 3);
+          const grad = ctx.createLinearGradient(sx, GROUND_Y - 190, sx, GROUND_Y);
+          grad.addColorStop(0, 'rgba(255, 255, 255, 0.05)');
+          grad.addColorStop(0.55, `${def.color}55`);
+          grad.addColorStop(1, `${def.color}bb`);
+          ctx.fillStyle = grad;
+          ctx.fillRect(sx - Math.floor(beamW / 2), GROUND_Y - 190, beamW, 190);
+
+          // Intense inner white rapture column
+          ctx.fillStyle = `rgba(255, 252, 232, ${(0.35 + pulse * 0.25).toFixed(2)})`;
+          ctx.fillRect(sx - 3, GROUND_Y - 190, 6, 190);
+
+          // Rising celestial motes inside beam
+          for (let i = 0; i < 6; i++) {
+            const prog = ((w.elapsed * 0.9 + i * 0.17) % 1);
+            const my = Math.round(GROUND_Y - 10 - prog * 165);
+            const mx = sx + Math.round(Math.sin(w.elapsed * 5 + i * 2.1) * 6);
+            ctx.fillStyle = i % 2 === 0 ? '#ffffff' : def.color;
+            ctx.fillRect(mx, my, 2, 2);
+          }
+          ctx.restore();
+        }
+
+        // Sacred aura when blessed, unlocked, or ritual in progress
+        if (w.godShrine.unlocked || isRitual) {
+          ctx.fillStyle = isRitual
+            ? `${def.color}48`
+            : isActive
+              ? `rgba(255, 224, 110, ${(0.22 * pulse).toFixed(2)})`
+              : `rgba(126, 245, 255, ${(0.14 * pulse).toFixed(2)})`;
           ctx.beginPath();
-          ctx.arc(sx, GROUND_Y - 22, isActive ? 24 : 18, 0, Math.PI * 2);
+          ctx.arc(sx, GROUND_Y - 22, isRitual ? 28 : isActive ? 24 : 18, 0, Math.PI * 2);
           ctx.fill();
         }
 
@@ -3603,9 +3633,9 @@ export class PixelRenderer {
         ctx.fillRect(sx - 6, GROUND_Y - 40, 12, 5);
 
         // Glowing God Rune Emblem
-        ctx.fillStyle = w.godShrine.unlocked ? def.color : '#8da3b8';
+        ctx.fillStyle = w.godShrine.unlocked || isRitual ? def.color : '#8da3b8';
         ctx.fillRect(sx - 3, GROUND_Y - 30, 6, 12);
-        ctx.fillStyle = isActive ? '#ffffff' : '#182230';
+        ctx.fillStyle = isActive || isRitual ? '#ffffff' : '#182230';
         ctx.fillRect(sx - 1, GROUND_Y - 27, 2, 6);
 
         // God name plate
@@ -3615,6 +3645,17 @@ export class PixelRenderer {
         ctx.font = 'bold 6px "Pixelify Sans", monospace';
         ctx.textAlign = 'center';
         ctx.fillText(def.name.toUpperCase(), sx, GROUND_Y - 44);
+
+        // Tribute counter badge during active ritual
+        if (isRitual) {
+          const done = w.godShrine.tributeCompleted ?? 0;
+          const need = w.godShrine.tributeNeeded ?? def.tributeCount;
+          ctx.fillStyle = 'rgba(8, 14, 24, 0.88)';
+          ctx.fillRect(sx - 24, GROUND_Y - 60, 48, 8);
+          ctx.fillStyle = '#ffe58a';
+          ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
+          ctx.fillText(`TRIBUTO ${done}/${need}`, sx, GROUND_Y - 54);
+        }
         ctx.textAlign = 'left';
       }
     }
@@ -3681,6 +3722,178 @@ export class PixelRenderer {
         if (w.puzzle.solved) {
           ctx.fillStyle = 'rgba(126, 245, 255, 0.16)';
           ctx.fillRect(sx - 16, GROUND_Y - 46, 32, 46);
+        }
+      }
+    }
+
+    // 4. Divine Weapon & Magic Relic Altar (1 unique relic per island!)
+    if (w.weaponShrine) {
+      const sx = Math.round(w.weaponShrine.x - camX);
+      if (sx > -56 && sx < this.viewW + 56) {
+        const def = WEAPON_DEFS[w.weaponShrine.weaponId];
+        const heldBySomeone = w.monarchs.some((m) => m.weapon === w.weaponShrine!.weaponId);
+        const pulse = 0.65 + 0.35 * Math.sin(w.elapsed * 4.2);
+        const floatY = Math.round(Math.sin(w.elapsed * 3.4) * 2);
+
+        // Runic aura behind relic
+        ctx.fillStyle = heldBySomeone ? 'rgba(120, 145, 168, 0.12)' : `${def.color}36`;
+        ctx.beginPath();
+        ctx.arc(sx, GROUND_Y - 26 + floatY, Math.round(14 + pulse * 4), 0, Math.PI * 2);
+        ctx.fill();
+
+        // Carved Obsidian & Runic Altar Pedestal
+        ctx.fillStyle = '#394452';
+        ctx.fillRect(sx - 14, GROUND_Y - 5, 28, 5);
+        ctx.fillStyle = '#4d5c6e';
+        ctx.fillRect(sx - 10, GROUND_Y - 12, 20, 7);
+        ctx.fillStyle = '#252f3d';
+        ctx.fillRect(sx - 7, GROUND_Y - 17, 14, 5);
+        // Glowing rune bar on altar front
+        ctx.fillStyle = heldBySomeone ? '#586a7d' : def.color;
+        ctx.fillRect(sx - 5, GROUND_Y - 10, 10, 2);
+
+        // Floating Pixel Weapon Sprite above Altar (dimmed if already claimed by a player)
+        if (!heldBySomeone) {
+          const wy = GROUND_Y - 28 + floatY;
+          const wid = w.weaponShrine.weaponId;
+          if (wid === 'thor_hammer') {
+            ctx.fillStyle = '#8a5d32';
+            ctx.fillRect(sx - 1, wy + 1, 2, 8);
+            ctx.fillStyle = '#b4c8dc';
+            ctx.fillRect(sx - 6, wy - 4, 12, 6);
+            ctx.fillStyle = def.color;
+            ctx.fillRect(sx - 4, wy - 2, 8, 2);
+          } else if (wid === 'freya_bow') {
+            ctx.fillStyle = def.color;
+            ctx.fillRect(sx - 3, wy - 5, 2, 12);
+            ctx.fillRect(sx - 1, wy - 6, 3, 2);
+            ctx.fillRect(sx - 1, wy + 6, 3, 2);
+            ctx.fillStyle = '#fff3d6';
+            ctx.fillRect(sx + 1, wy - 5, 1, 12);
+            ctx.fillRect(sx - 5, wy, 10, 1);
+          } else if (wid === 'tyr_shield') {
+            ctx.fillStyle = '#5f768c';
+            ctx.beginPath();
+            ctx.arc(sx, wy, 6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = def.color;
+            ctx.beginPath();
+            ctx.arc(sx, wy, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(sx - 1, wy - 1, 2, 2);
+          } else if (wid === 'loki_staff' || wid === 'baldr_scepter') {
+            ctx.fillStyle = '#734b28';
+            ctx.fillRect(sx - 1, wy - 3, 2, 12);
+            ctx.fillStyle = def.color;
+            ctx.fillRect(sx - 3, wy - 7, 6, 5);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(sx - 1, wy - 5, 2, 2);
+          } else if (wid === 'ymir_rune') {
+            ctx.fillStyle = '#47657a';
+            ctx.fillRect(sx - 4, wy - 6, 8, 12);
+            ctx.fillStyle = def.color;
+            ctx.fillRect(sx - 2, wy - 4, 4, 8);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(sx - 1, wy - 2, 2, 4);
+          } else if (wid === 'heimdall_horn') {
+            ctx.fillStyle = def.color;
+            ctx.fillRect(sx - 5, wy + 1, 8, 3);
+            ctx.fillRect(sx + 2, wy - 3, 4, 6);
+            ctx.fillStyle = '#fff2c4';
+            ctx.fillRect(sx + 4, wy - 3, 2, 6);
+          } else {
+            // Gungnir spear or Surtr flaming blade
+            ctx.fillStyle = '#7a5230';
+            ctx.fillRect(sx - 1, wy + 2, 2, 7);
+            ctx.fillStyle = def.color;
+            ctx.fillRect(sx - 2, wy - 7, 4, 9);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(sx - 1, wy - 6, 2, 6);
+          }
+        }
+
+        // Relic name plate
+        ctx.fillStyle = 'rgba(8, 14, 24, 0.82)';
+        ctx.fillRect(sx - 28, GROUND_Y - 47, 56, 8);
+        ctx.fillStyle = heldBySomeone ? '#8fa3b8' : def.color;
+        ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(heldBySomeone ? `${def.shortTag} (EM USO)` : def.name.slice(0, 14).toUpperCase(), sx, GROUND_Y - 41);
+        ctx.textAlign = 'left';
+      }
+    }
+
+    // 5. Precious Metal Mine (1 unique precious metal per island — mined by Builders!)
+    if (w.preciousMine) {
+      const mine = w.preciousMine;
+      const shakeX = mine.hitShake > 0 ? Math.round(Math.sin(w.elapsed * 55) * 1.5) : 0;
+      const sx = Math.round(mine.x - camX) + shakeX;
+      if (sx > -64 && sx < this.viewW + 64) {
+        const metalDef = PRECIOUS_METALS[mine.metalId];
+
+        // Rocky outcrop mound behind mineshaft
+        ctx.fillStyle = '#3d4754';
+        ctx.fillRect(sx - 24, GROUND_Y - 22, 48, 22);
+        ctx.fillStyle = '#4e5b6b';
+        ctx.fillRect(sx - 20, GROUND_Y - 29, 40, 10);
+        ctx.fillStyle = '#5e6d80';
+        ctx.fillRect(sx - 14, GROUND_Y - 34, 28, 7);
+
+        // Sparkling Precious Metal Ore Veins embedded in rock face
+        const glisten = Math.floor(w.elapsed * 6) % 2 === 0;
+        ctx.fillStyle = metalDef.color;
+        ctx.fillRect(sx - 18, GROUND_Y - 19, 5, 4);
+        ctx.fillRect(sx + 13, GROUND_Y - 22, 5, 4);
+        ctx.fillRect(sx - 7, GROUND_Y - 31, 6, 3);
+        ctx.fillStyle = glisten ? '#ffffff' : metalDef.highlight;
+        ctx.fillRect(sx - 17, GROUND_Y - 18, 2, 2);
+        ctx.fillRect(sx + 14, GROUND_Y - 21, 2, 2);
+        ctx.fillRect(sx - 5, GROUND_Y - 30, 2, 2);
+
+        // Dark Tunnel Entrance + Heavy Nordic Timber Arch
+        ctx.fillStyle = '#0d121a';
+        ctx.fillRect(sx - 9, GROUND_Y - 19, 18, 19);
+        ctx.fillStyle = '#5c3c22';
+        ctx.fillRect(sx - 12, GROUND_Y - 21, 3, 21);
+        ctx.fillRect(sx + 9, GROUND_Y - 21, 3, 21);
+        ctx.fillRect(sx - 14, GROUND_Y - 24, 28, 4);
+        ctx.fillStyle = '#78502f';
+        ctx.fillRect(sx - 13, GROUND_Y - 24, 26, 1);
+
+        // Minecart Wooden Ties & Iron Rails
+        ctx.fillStyle = '#5c3c22';
+        ctx.fillRect(sx - 6, GROUND_Y - 2, 12, 2);
+        ctx.fillStyle = '#8fa3b8';
+        ctx.fillRect(sx - 5, GROUND_Y - 3, 10, 1);
+
+        // Hanging Warm Miner Lantern
+        const lanternFlick = Math.floor(w.elapsed * 10) % 2;
+        ctx.fillStyle = '#332215';
+        ctx.fillRect(sx + 7, GROUND_Y - 20, 1, 3);
+        ctx.fillStyle = lanternFlick ? '#ffe58a' : '#ffad42';
+        ctx.fillRect(sx + 6, GROUND_Y - 17, 3, 4);
+        ctx.fillStyle = 'rgba(255, 210, 100, 0.22)';
+        ctx.beginPath();
+        ctx.arc(sx + 7.5, GROUND_Y - 15, 7, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Metal Name Plate
+        ctx.fillStyle = 'rgba(8, 14, 24, 0.82)';
+        ctx.fillRect(sx - 28, GROUND_Y - 45, 56, 8);
+        ctx.fillStyle = metalDef.highlight;
+        ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`MINA: ${metalDef.name.toUpperCase()}`, sx, GROUND_Y - 39);
+        ctx.textAlign = 'left';
+
+        // Active Mining Progress Bar when marked for Builders
+        if (mine.marked) {
+          const barW = 28;
+          ctx.fillStyle = 'rgba(8, 14, 24, 0.85)';
+          ctx.fillRect(sx - 14, GROUND_Y - 52, barW, 4);
+          ctx.fillStyle = metalDef.highlight;
+          ctx.fillRect(sx - 13, GROUND_Y - 51, Math.round((barW - 2) * Math.min(1, mine.mineProgress)), 2);
         }
       }
     }
@@ -3964,6 +4177,44 @@ export class PixelRenderer {
         ctx.fillRect(sx + 3, GROUND_Y - 5, 6, 5);
         ctx.fillStyle = '#697482';
         ctx.fillRect(sx - 5, GROUND_Y - 4, 10, 4);
+      } else if (wall.spectralNightShield) {
+        // Tyr's Spectral Circular Nordic Shield Wall (replaces fallen wall for 1 night!)
+        const pulse = 0.72 + 0.28 * Math.sin(w.elapsed * 6.5);
+        const h = 34;
+        ctx.save();
+        // Translucent golden-cyan rune barrier pillar
+        ctx.fillStyle = `rgba(116, 224, 255, ${(0.28 * pulse).toFixed(2)})`;
+        ctx.fillRect(sx - 10, GROUND_Y - h, 20, h);
+        ctx.strokeStyle = wall.hitFlash > 0 ? '#ffffff' : '#9eeeff';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(sx - 9.5, GROUND_Y - h + 0.5, 19, h - 1);
+
+        // Glowing Circular Nordic Shield Emblem centered on the barrier
+        const cy = GROUND_Y - 17;
+        ctx.fillStyle = wall.hitFlash > 0 ? '#ffffff' : '#2d5878';
+        ctx.beginPath();
+        ctx.arc(sx, cy, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#ffd966';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(sx, cy, 9, 0, Math.PI * 2);
+        ctx.stroke();
+        // Inner Nordic spokes + Tyr rune boss
+        ctx.fillStyle = '#9eeeff';
+        ctx.fillRect(sx - 7, cy - 1, 14, 2);
+        ctx.fillRect(sx - 1, cy - 7, 2, 14);
+        ctx.fillStyle = '#fff5cc';
+        ctx.fillRect(sx - 2, cy - 2, 4, 4);
+        ctx.restore();
+
+        if (wall.hp < wall.maxHp) {
+          const pct = Math.max(0, wall.hp / Math.max(1, wall.maxHp));
+          ctx.fillStyle = 'rgba(8, 14, 24, 0.85)';
+          ctx.fillRect(sx - 10, GROUND_Y - h - 7, 20, 3);
+          ctx.fillStyle = '#7ef5ff';
+          ctx.fillRect(sx - 9, GROUND_Y - h - 6, Math.round(18 * pct), 1);
+        }
       } else if (wall.level === 0) {
         ctx.fillStyle = '#5c4e43';
         ctx.fillRect(sx - 10, GROUND_Y - 4, 20, 4);
@@ -4185,16 +4436,56 @@ export class PixelRenderer {
       }
     }
 
-    const walkBob = Math.abs(v.vx) > 4 ? Math.round(Math.abs(Math.sin(v.animTime)) * 1.5) : 0;
-    const stride = Math.abs(v.vx) > 4 ? Math.round(Math.sin(v.animTime) * 2) : 0;
-    const primary = w.crest.primaryColor;
-    const secondary = w.crest.secondaryColor;
+    const isAscending = v.state === 'tribute_ascending';
+    const isMarchingTribute = v.state === 'tribute_march';
+    if (isAscending) {
+      baseY -= Math.round(v.ascendY ?? 0);
+    }
 
-    ctx.fillStyle = '#2d2522';
+    const walkBob = isAscending
+      ? Math.round(Math.sin(w.elapsed * 12) * 1.5)
+      : Math.abs(v.vx) > 4
+        ? Math.round(Math.abs(Math.sin(v.animTime)) * 1.5)
+        : 0;
+    const stride = isAscending ? 0 : Math.abs(v.vx) > 4 ? Math.round(Math.sin(v.animTime) * 2) : 0;
+    const primary = v.isSummoned ? '#38ef7d' : w.crest.primaryColor;
+    const secondary = v.isSummoned ? '#b8ffd2' : w.crest.secondaryColor;
+
+    ctx.save();
+    if (isAscending) {
+      const fade = Math.max(0.25, 1 - (v.ascendY ?? 0) / 140);
+      ctx.globalAlpha = fade;
+      // Glowing celestial rapture halo surrounding the ascending subject
+      const godCol = w.godShrine ? GOD_DEFS[w.godShrine.godId].color : '#ffe58a';
+      ctx.fillStyle = `${godCol}66`;
+      ctx.beginPath();
+      ctx.arc(sx, baseY - 9, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255, 255, 240, 0.5)';
+      ctx.fillRect(sx - 4, baseY - 17, 8, 17);
+    } else if (v.isSummoned) {
+      // Spectral emerald shimmer around Loki's summoned archers & warriors
+      ctx.globalAlpha = 0.88;
+      ctx.fillStyle = 'rgba(56, 239, 125, 0.24)';
+      ctx.beginPath();
+      ctx.arc(sx, baseY - 9, 9, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (isMarchingTribute) {
+      // Sacred tribute halo above queuing subject's head
+      const godCol = w.godShrine ? GOD_DEFS[w.godShrine.godId].color : '#ffe58a';
+      ctx.strokeStyle = godCol;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(sx, baseY - 19 - walkBob, 4, 1.5, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = v.isSummoned ? '#164d2c' : '#2d2522';
     ctx.fillRect(sx - 2 + stride, baseY - 4, 2, 4);
     ctx.fillRect(sx + 1 - stride, baseY - 4, 2, 4);
 
-    if (v.role === 'wanderer') ctx.fillStyle = '#6c5a4c';
+    if (v.isSummoned) ctx.fillStyle = '#25b863';
+    else if (v.role === 'wanderer') ctx.fillStyle = '#6c5a4c';
     else if (v.role === 'peasant') ctx.fillStyle = '#9c866d';
     else if (v.role === 'warrior') ctx.fillStyle = primary;
     else if (v.role === 'archer') ctx.fillStyle = primary;
@@ -4208,15 +4499,15 @@ export class PixelRenderer {
       ctx.fillRect(sx - 3, baseY - 7 - walkBob, 6, 1);
     }
 
-    ctx.fillStyle = '#e5be9e';
+    ctx.fillStyle = v.isSummoned ? '#a8ffcb' : '#e5be9e';
     ctx.fillRect(sx - 2, baseY - 15 - walkBob, 4, 4);
 
     if (v.role === 'warrior') {
-      ctx.fillStyle = '#9aa8b8';
+      ctx.fillStyle = v.isSummoned ? '#6fffab' : '#9aa8b8';
       ctx.fillRect(sx - 3, baseY - 17 - walkBob, 6, 3);
       ctx.fillStyle = secondary;
       ctx.fillRect(sx - 1, baseY - 16 - walkBob, 2, 1);
-      ctx.fillStyle = '#d4e2f0';
+      ctx.fillStyle = v.isSummoned ? '#d4ffe5' : '#d4e2f0';
       ctx.fillRect(sx + v.facing * 4, baseY - 16 - walkBob, 2, 7);
       ctx.fillStyle = primary;
       ctx.fillRect(sx - v.facing * 4 - 1, baseY - 12 - walkBob, 4, 6);
@@ -4225,7 +4516,7 @@ export class PixelRenderer {
     } else if (v.role === 'archer') {
       ctx.fillStyle = primary;
       ctx.fillRect(sx - 3, baseY - 16 - walkBob, 6, 2);
-      ctx.fillStyle = '#c48d4e';
+      ctx.fillStyle = v.isSummoned ? '#9affc3' : '#c48d4e';
       ctx.fillRect(sx + v.facing * 3, baseY - 13 - walkBob, 2, 7);
     } else if (v.role === 'builder') {
       ctx.fillStyle = primary;
@@ -4286,8 +4577,18 @@ export class PixelRenderer {
       ctx.textAlign = 'left';
     }
 
+    ctx.restore();
+
     // Recruited villagers (everyone except wanderers) can be tapped/clicked to choose left/right!
-    if (w.mode === 'playing' && v.role !== 'wanderer' && v.state !== 'embarked' && v.state !== 'boarding') {
+    if (
+      w.mode === 'playing' &&
+      v.role !== 'wanderer' &&
+      !v.isSummoned &&
+      v.state !== 'embarked' &&
+      v.state !== 'boarding' &&
+      !isAscending &&
+      !isMarchingTribute
+    ) {
       const screenY = baseY + this.worldOffsetY;
       this.addHit(`villager_pick_${v.id}`, sx - 9, screenY - 22, 18, 25);
 
@@ -4670,12 +4971,36 @@ export class PixelRenderer {
     const isQueen = app.gender === 'queen';
 
     const capeSway = moving ? (m.sprinting ? 5 : 3) : 1;
-    ctx.fillStyle = primary;
-    ctx.fillRect(-f * (4 + capeSway) - (f > 0 ? 4 : 0), -21 - bob + riderYOffset, 6 + capeSway, isQueen ? 8 : 7);
+    const armor = m.armor ?? {};
+    const cloakMetal = armor.cloak ? PRECIOUS_METALS[armor.cloak] : null;
+    const chestMetal = armor.chestplate
+      ? PRECIOUS_METALS[armor.chestplate]
+      : armor.royal_aegis
+        ? PRECIOUS_METALS[armor.royal_aegis]
+        : null;
+    const pauldronMetal = armor.pauldrons ? PRECIOUS_METALS[armor.pauldrons] : null;
+    const helmetMetal = armor.helmet ? PRECIOUS_METALS[armor.helmet] : null;
 
-    // Body / Tunic or Royal Gown
-    ctx.fillStyle = outfit.tunic;
+    ctx.fillStyle = cloakMetal ? cloakMetal.color : primary;
+    ctx.fillRect(-f * (4 + capeSway) - (f > 0 ? 4 : 0), -21 - bob + riderYOffset, 6 + capeSway, isQueen ? 8 : 7);
+    if (cloakMetal) {
+      ctx.fillStyle = cloakMetal.highlight;
+      ctx.fillRect(-f * (4 + capeSway) - (f > 0 ? 4 : 0), -15 - bob + riderYOffset, 6 + capeSway, 1);
+    }
+
+    // Body / Tunic or Royal Gown (+ Forged Precious-Metal Chestplate & Pauldrons!)
+    ctx.fillStyle = chestMetal ? chestMetal.color : outfit.tunic;
     ctx.fillRect(-3, -21 - bob + riderYOffset, 6, 8);
+    if (chestMetal) {
+      ctx.fillStyle = chestMetal.highlight;
+      ctx.fillRect(-2, -20 - bob + riderYOffset, 4, 2);
+      ctx.fillRect(-1, -18 - bob + riderYOffset, 2, 3);
+    }
+    if (pauldronMetal) {
+      ctx.fillStyle = pauldronMetal.highlight;
+      ctx.fillRect(-4, -22 - bob + riderYOffset, 2, 3);
+      ctx.fillRect(2, -22 - bob + riderYOffset, 2, 3);
+    }
     if (isQueen) {
       // Refined royal waist & flowing skirt hem
       ctx.fillStyle = primary;
@@ -4684,7 +5009,7 @@ export class PixelRenderer {
       ctx.fillRect(-3, -16 - bob + riderYOffset, 6, 1);
       ctx.fillRect(-2, -13 - bob + riderYOffset, 4, 1);
     } else {
-      ctx.fillStyle = secondary;
+      ctx.fillStyle = armor.belt ? PRECIOUS_METALS[armor.belt].highlight : secondary;
       ctx.fillRect(-3, -15 - bob + riderYOffset, 6, 1);
     }
 
@@ -4707,13 +5032,82 @@ export class PixelRenderer {
         ctx.fillRect(f > 0 ? 1 : -2, -20 - bob + riderYOffset, 2, 1);
       }
     }
-    if (outfit.hasHood) {
+    if (helmetMetal) {
+      ctx.fillStyle = helmetMetal.color;
+      ctx.fillRect(-3, -26 - bob + riderYOffset, 6, 2);
+      ctx.fillStyle = helmetMetal.highlight;
+      ctx.fillRect(-2, -26 - bob + riderYOffset, 4, 1);
+    } else if (outfit.hasHood) {
       ctx.fillStyle = outfit.tunic;
       ctx.fillRect(-3, -26 - bob + riderYOffset, 6, 2);
     }
 
     if (m.hasCrown) {
+      if (m.crownShieldReady) {
+        ctx.strokeStyle = 'rgba(132, 232, 255, 0.72)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(0, -27 - bob + riderYOffset, 5.5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
       this.drawCrownSprite(ctx, w, 0, -27 - bob + riderYOffset);
+    }
+
+    // Equipped Divine Weapon / Magic Relic held visibly at the Monarch's side!
+    if (m.weapon) {
+      const wDef = WEAPON_DEFS[m.weapon];
+      const wx = f * 5;
+      const wy = -19 - bob + riderYOffset;
+      const glowReady = (m.weaponCooldown ?? 0) <= 0;
+      if (glowReady) {
+        ctx.fillStyle = `${wDef.color}3a`;
+        ctx.beginPath();
+        ctx.arc(wx, wy, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (m.weapon === 'thor_hammer') {
+        ctx.fillStyle = '#7d522a';
+        ctx.fillRect(wx, wy - 1, 1, 6);
+        ctx.fillStyle = '#c4d8eb';
+        ctx.fillRect(wx - 2, wy - 4, 5, 3);
+        ctx.fillStyle = wDef.color;
+        ctx.fillRect(wx - 1, wy - 3, 3, 1);
+      } else if (m.weapon === 'freya_bow') {
+        ctx.fillStyle = wDef.color;
+        ctx.fillRect(wx, wy - 4, 1, 8);
+        ctx.fillStyle = '#fff5d6';
+        ctx.fillRect(wx + f, wy - 3, 1, 6);
+      } else if (m.weapon === 'tyr_shield') {
+        ctx.fillStyle = '#3b5873';
+        ctx.beginPath();
+        ctx.arc(-f * 4, wy + 1, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = wDef.color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(-f * 4, wy + 1, 4, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (m.weapon === 'loki_staff' || m.weapon === 'baldr_scepter') {
+        ctx.fillStyle = '#6b4626';
+        ctx.fillRect(wx, wy - 3, 1, 9);
+        ctx.fillStyle = wDef.color;
+        ctx.fillRect(wx - 1, wy - 6, 3, 3);
+      } else if (m.weapon === 'ymir_rune') {
+        ctx.fillStyle = wDef.color;
+        ctx.fillRect(wx - 1, wy - 3, 3, 5);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(wx, wy - 2, 1, 3);
+      } else if (m.weapon === 'heimdall_horn') {
+        ctx.fillStyle = wDef.color;
+        ctx.fillRect(wx - 1, wy - 1, 4, 2);
+        ctx.fillRect(wx + f * 2, wy - 2, 2, 4);
+      } else {
+        // Gungnir spear / Surtr blade
+        ctx.fillStyle = '#734b28';
+        ctx.fillRect(wx, wy, 1, 5);
+        ctx.fillStyle = wDef.color;
+        ctx.fillRect(wx, wy - 6, 2, 6);
+      }
     }
 
     // Subtle pixel name tag in Co-op so teammates recognize each other
@@ -5452,6 +5846,42 @@ export class PixelRenderer {
       }
     }
 
+    // Island Precious Ore & Forged Armor compact indicators (progressive: shown once obtained)
+    const curMetalId = getIslandMetalId(w.currentIsland);
+    const curMetal = PRECIOUS_METALS[curMetalId];
+    const curOreQty = w.resources.preciousOres?.[curMetalId] ?? 0;
+    const armorCount = Object.keys(monarch.armor ?? {}).length;
+    if (curOreQty > 0 || armorCount > 0) {
+      if ((drewGroup1 || resItems.length > 0) && cx > 8) cx += 6;
+      ctx.font = 'bold 7px "Pixelify Sans", monospace';
+      if (curOreQty > 0) {
+        const txt = `${curOreQty}`;
+        const wItem = 8 + Math.ceil(ctx.measureText(txt).width);
+        ensureRoom(wItem);
+        // Tiny glowing precious ore nugget icon
+        ctx.fillStyle = curMetal.color;
+        ctx.fillRect(cx + 1, cy - 5, 5, 4);
+        ctx.fillStyle = curMetal.highlight;
+        ctx.fillRect(cx + 2, cy - 4, 2, 2);
+        ctx.fillStyle = curMetal.highlight;
+        ctx.fillText(txt, cx + 8, cy);
+        cx += wItem + 6;
+      }
+      if (armorCount > 0) {
+        const txt = `${armorCount}/9`;
+        const wItem = 8 + Math.ceil(ctx.measureText(txt).width);
+        ensureRoom(wItem);
+        // Tiny pixel breastplate/shield icon
+        ctx.fillStyle = '#c4d4e6';
+        ctx.fillRect(cx + 1, cy - 6, 5, 5);
+        ctx.fillStyle = '#ffe58a';
+        ctx.fillRect(cx + 2, cy - 5, 3, 2);
+        ctx.fillStyle = '#ffe58a';
+        ctx.fillText(txt, cx + 8, cy);
+        cx += wItem + 6;
+      }
+    }
+
     // 4. TOP-LEFT GROUP 3 (after breathing space): Sword, Hammer, Bow, Seed with LEFT count & RIGHT count!
     const unitItems: Array<{
       id: string;
@@ -5549,6 +5979,42 @@ export class PixelRenderer {
       ctx.fillText(arrow, ti.x, ti.y + 3);
       ctx.restore();
       ctx.textAlign = 'left';
+    }
+
+    // Clickable Divine Weapon / Magic Cast Button ([F]) neatly left of Mount Power & Spirit Button!
+    if (monarch.weapon && w.mode === 'playing') {
+      const wDef = WEAPON_DEFS[monarch.weapon];
+      const cd = monarch.weaponCooldown ?? 0;
+      const ready = cd <= 0;
+      const wBtnW = 34;
+      const wBtnH = 22;
+      const rightAnchor = monarch.mount !== 'starter' ? this.viewW - 58 : this.viewW - 34;
+      const bx = Math.round(rightAnchor - wBtnW);
+      const by = Math.round(this.viewH - 29);
+
+      this.addHit('hud_weapon_power', bx - 2, by - 2, wBtnW + 4, wBtnH + 4);
+
+      ctx.save();
+      ctx.fillStyle = ready ? 'rgba(12, 24, 42, 0.88)' : 'rgba(10, 16, 26, 0.72)';
+      ctx.fillRect(bx, by, wBtnW, wBtnH);
+      ctx.strokeStyle = ready ? wDef.color : '#48596b';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx + 0.5, by + 0.5, wBtnW - 1, wBtnH - 1);
+      if (ready) {
+        ctx.fillStyle = `${wDef.color}28`;
+        ctx.fillRect(bx + 1, by + 1, wBtnW - 2, 3);
+      }
+
+      ctx.textAlign = 'center';
+      ctx.fillStyle = ready ? wDef.color : '#7e91a6';
+      ctx.font = 'bold 6px "Pixelify Sans", monospace';
+      ctx.fillText(wDef.shortTag.slice(0, 6), bx + Math.floor(wBtnW / 2), by + 10);
+
+      ctx.fillStyle = ready ? '#ffe58a' : '#9bb0c4';
+      ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
+      ctx.fillText(ready ? '[F] USAR' : `${Math.ceil(cd)}s`, bx + Math.floor(wBtnW / 2), by + 18);
+      ctx.textAlign = 'left';
+      ctx.restore();
     }
 
     // Minimal Mount Active Power Indicator (⚡) shifted cleanly left of the bottom-right Blue Spirit Button

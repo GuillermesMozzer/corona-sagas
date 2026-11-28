@@ -1,4 +1,10 @@
 import { CENTER_X, type CrestConfig, type ResourceSize, type WorldState } from '../types';
+import { computeArmorBonuses } from '../world/arsenal';
+import {
+  createDefaultForge,
+  createDefaultPreciousMine,
+  createDefaultWeaponShrine,
+} from '../world/initWorld';
 import { ISLAND_DEFINITIONS } from '../world/islands';
 
 export const MAX_SAVE_SLOTS = 8;
@@ -186,20 +192,34 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
     if (leftInner) leftInner.isBrewerySite = true;
     if (rightInner) rightInner.isBrewerySite = true;
   }
-  if (state.currentIsland >= 2 && !state.forge) {
-    state.forge = {
-      x: CENTER_X - 68,
-      built: false,
-      coinsPaid: 0,
-      underConstruction: false,
-      buildProgress: 0,
-      smelting: false,
-      smeltProgress: 0,
-      smeltCoinsPaid: 0,
-      smeltQueue: 0,
-    };
-  } else if (state.currentIsland === 1) {
-    state.forge = state.forge ?? null;
+  const cx = state.centerX ?? CENTER_X;
+  state.resources.preciousOres = state.resources.preciousOres ?? {};
+  if (!state.forge) {
+    state.forge = createDefaultForge(cx);
+  } else {
+    state.forge.armorCoinsPaid = state.forge.armorCoinsPaid ?? 0;
+    state.forge.armorForgedSlot = state.forge.armorForgedSlot ?? null;
+  }
+  if (!state.weaponShrine) {
+    state.weaponShrine = createDefaultWeaponShrine(state.currentIsland, cx);
+  }
+  if (!state.preciousMine) {
+    state.preciousMine = createDefaultPreciousMine(
+      state.currentIsland,
+      () => {
+        state.nextId = (state.nextId ?? 7000) + 1;
+        return state.nextId;
+      },
+      cx
+    );
+  }
+  if (state.godShrine) {
+    state.godShrine.ritualActive = state.godShrine.ritualActive ?? false;
+    state.godShrine.tributeNeeded = state.godShrine.tributeNeeded ?? 0;
+    state.godShrine.tributeCompleted = state.godShrine.tributeCompleted ?? 0;
+    state.godShrine.tributeQueueIds = state.godShrine.tributeQueueIds ?? [];
+    state.godShrine.ascenderId = state.godShrine.ascenderId ?? null;
+    state.godShrine.ascendProgress = state.godShrine.ascendProgress ?? 0;
   }
   if (!state.towers || state.towers.length === 0) {
     let tid = (state.nextId ?? 5000) + 1;
@@ -250,13 +270,17 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
   for (const v of state.villagers ?? []) {
     v.assignedTowerId = v.assignedTowerId ?? null;
   }
-  if (state.monarchs?.[0]) {
-    const m = state.monarchs[0];
+  for (const m of state.monarchs ?? []) {
     m.flyTimer = m.flyTimer ?? 0;
     m.flyY = m.flyY ?? 0;
     m.roarTimer = m.roarTimer ?? 0;
     m.wolfBiteCooldown = m.wolfBiteCooldown ?? 0;
-    m.maxCoins = Math.max(30, 30 + Math.max(0, (state.hall?.level ?? 1) - 1) * 5);
+    m.weapon = m.weapon ?? null;
+    m.weaponCooldown = m.weaponCooldown ?? 0;
+    m.armor = m.armor ?? {};
+    const armorBonus = computeArmorBonuses(m.armor);
+    m.crownShieldReady = m.crownShieldReady ?? armorBonus.hasCrownShield;
+    m.maxCoins = Math.max(30, 30 + Math.max(0, (state.hall?.level ?? 1) - 1) * 5 + armorBonus.pouchBonus);
   }
   return state;
 }

@@ -23,6 +23,7 @@ import {
   type Monarch,
   type MountShrine,
   type Portal,
+  type PreciousMine,
   type ResourceSize,
   type Rock,
   type RunePuzzle,
@@ -32,9 +33,11 @@ import {
   type VagrantCamp,
   type Villager,
   type Wall,
+  type WeaponShrine,
   type Wildlife,
   type WorldState,
 } from '../types';
+import { getIslandMetalId, getIslandWeaponId } from './arsenal';
 import { ISLAND_DEFINITIONS, getIslandDef } from './islands';
 
 const DAY_LEN_KEY = 'corona_daymin_v1';
@@ -103,8 +106,7 @@ export function createDefaultIslandBuffs(islandId: number, cx = CENTER_X): Islan
   ];
 }
 
-export function createDefaultForge(islandId: number, cx = CENTER_X): ForgeState | null {
-  if (islandId < 2) return null;
+export function createDefaultForge(_islandId: number, cx = CENTER_X): ForgeState | null {
   return {
     x: cx - 68,
     built: false,
@@ -115,6 +117,33 @@ export function createDefaultForge(islandId: number, cx = CENTER_X): ForgeState 
     smeltProgress: 0,
     smeltCoinsPaid: 0,
     smeltQueue: 0,
+    armorCoinsPaid: 0,
+    armorForgedSlot: null,
+  };
+}
+
+export function createDefaultWeaponShrine(islandId: number, cx = CENTER_X): WeaponShrine {
+  return {
+    weaponId: getIslandWeaponId(islandId),
+    x: cx - 910,
+    coinsPaid: 0,
+    claimedByPlayerUid: null,
+  };
+}
+
+export function createDefaultPreciousMine(
+  islandId: number,
+  uid: () => number,
+  cx = CENTER_X
+): PreciousMine {
+  return {
+    id: uid(),
+    metalId: getIslandMetalId(islandId),
+    x: cx + 910,
+    marked: false,
+    mineProgress: 0,
+    coinsPaid: 0,
+    hitShake: 0,
   };
 }
 
@@ -321,6 +350,12 @@ export function generateIslandSnapshot(
       }
     : null;
 
+  // 1 Unique Divine Weapon / Magic Shrine per island (Islands 1..9)
+  const weaponShrine = createDefaultWeaponShrine(islandId, cx);
+
+  // 1 Unique Precious Metal Mine per island (Islands 1..9 -> Builders mine ore to forge Armor!)
+  const preciousMine = createDefaultPreciousMine(islandId, uid, cx);
+
   // Special Mount Shrine
   const mountShrine: MountShrine | null = def.mountId
     ? {
@@ -373,7 +408,7 @@ export function generateIslandSnapshot(
   const portals: Portal[] = [];
 
   const leftOuter = 265; // Just inland from the Western Beach / Ocean edge
-  const leftInner = Math.max(leftOuter + 140, cx - 980);
+  const leftInner = Math.max(leftOuter + 140, cx - 1060);
   for (let i = 0; i < leftCount; i++) {
     const frac = leftCount === 1 ? 0 : i / (leftCount - 1);
     const px = Math.round(leftOuter + frac * (leftInner - leftOuter));
@@ -392,7 +427,7 @@ export function generateIslandSnapshot(
   }
 
   const rightOuter = mapW - 265; // Just before the Eastern Mountain Cliff wall
-  const rightInner = Math.min(rightOuter - 140, cx + 980);
+  const rightInner = Math.min(rightOuter - 140, cx + 1060);
   for (let i = 0; i < rightCount; i++) {
     const frac = rightCount === 1 ? 0 : i / (rightCount - 1);
     const px = Math.round(rightInner + frac * (rightOuter - rightInner));
@@ -421,6 +456,8 @@ export function generateIslandSnapshot(
     { x: boatX, r: 68 },
     { x: dock.x, r: 46 },
     ...(godShrine ? [{ x: godShrine.x, r: 42 }] : []),
+    { x: weaponShrine.x, r: 46 },
+    { x: preciousMine.x, r: 52 },
     ...(mountShrine ? [{ x: mountShrine.x, r: 42 }] : []),
     ...(puzzle ? [{ x: puzzle.x, r: 42 }] : []),
     ...islandBuffs.map((b) => ({ x: b.x, r: 34 })),
@@ -438,8 +475,8 @@ export function generateIslandSnapshot(
     { x: cx - 462, variant: 1 },
     { x: cx + 686, variant: 2 },
     { x: cx - 686, variant: 2 },
-    { x: cx - 885, variant: 0 },
-    { x: cx + 885, variant: 1 },
+    { x: cx - 855, variant: 0 },
+    { x: cx + 855, variant: 1 },
     { x: cx - 990, variant: 2 },
     { x: cx + 990, variant: 0 },
   ];
@@ -581,6 +618,8 @@ export function generateIslandSnapshot(
     boat,
     dock,
     godShrine,
+    weaponShrine,
+    preciousMine,
     mountShrine,
     puzzle,
     camps,
@@ -646,6 +685,10 @@ export function createInitialWorld(
     flyY: 0,
     roarTimer: 0,
     wolfBiteCooldown: 0,
+    weapon: null,
+    weaponCooldown: 0,
+    armor: {},
+    crownShieldReady: false,
     hasCrown: true,
     crownX: startX,
     crownY: GROUND_Y - 22,
@@ -750,6 +793,7 @@ export function createInitialWorld(
       stone: 2,
       iron: 0,
       food: 0,
+      preciousOres: {},
     },
     monarchs: [monarch],
     banker,

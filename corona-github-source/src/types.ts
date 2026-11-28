@@ -59,6 +59,39 @@ export interface CrestConfig {
 
 export type CommandMode = 'none' | 'attack' | 'archer' | 'build' | 'produce';
 
+export type WeaponId =
+  | 'freya_bow'
+  | 'tyr_shield'
+  | 'thor_hammer'
+  | 'odin_gungnir'
+  | 'loki_staff'
+  | 'ymir_rune'
+  | 'surtr_blade'
+  | 'heimdall_horn'
+  | 'baldr_scepter';
+
+export type PreciousMetalId =
+  | 'copper'
+  | 'bronze'
+  | 'silver'
+  | 'frost_steel'
+  | 'mithril'
+  | 'dwarf_gold'
+  | 'obsidian'
+  | 'jotun_iron'
+  | 'asgard_uru';
+
+export type ArmorSlot =
+  | 'gloves'
+  | 'boots'
+  | 'cloak'
+  | 'helmet'
+  | 'chestplate'
+  | 'pauldrons'
+  | 'greaves'
+  | 'belt'
+  | 'royal_aegis';
+
 export interface Resources {
   gold: number;
   diamonds: number;
@@ -66,6 +99,7 @@ export interface Resources {
   stone: number;
   iron: number;
   food: number;
+  preciousOres?: Partial<Record<PreciousMetalId, number>>;
 }
 
 export interface Monarch {
@@ -87,6 +121,10 @@ export interface Monarch {
   flyY: number;     // Current height above ground while flying
   roarTimer: number; // Bear roar / Ice wave visual effect timer
   wolfBiteCooldown: number;
+  weapon?: WeaponId | null;
+  weaponCooldown?: number;
+  armor?: Partial<Record<ArmorSlot, PreciousMetalId>>;
+  crownShieldReady?: boolean;
   hasCrown: boolean;
   crownX: number;
   crownY: number;
@@ -126,6 +164,8 @@ export type VillagerState =
   | 'fishing'
   | 'boarding'
   | 'embarked'
+  | 'tribute_march'
+  | 'tribute_ascending'
   | 'fleeing';
 
 export interface Villager {
@@ -149,11 +189,14 @@ export interface Villager {
   carriedCoins: number;
   orderFlashTimer: number;
   orderDir: -1 | 0 | 1;
+  isSummoned?: boolean;
+  summonLife?: number;
+  ascendY?: number;
 }
 
 export type Season = 'summer' | 'autumn' | 'winter' | 'spring';
 
-export type BuilderTaskKind = 'wall' | 'tower' | 'forge' | 'boat' | 'dock' | 'farm' | 'brewery' | 'rock' | 'tree';
+export type BuilderTaskKind = 'wall' | 'tower' | 'forge' | 'boat' | 'dock' | 'farm' | 'brewery' | 'rock' | 'tree' | 'mine';
 
 export interface PriorityTaskRef {
   kind: BuilderTaskKind;
@@ -176,6 +219,7 @@ export interface Wall {
   coinsPaid: number;
   hitFlash: number;
   orderedAt?: number;
+  spectralNightShield?: boolean;
 }
 
 export interface ArcherTower {
@@ -253,6 +297,8 @@ export interface ForgeState {
   smeltProgress: number;
   smeltCoinsPaid: number;
   smeltQueue: number;
+  armorCoinsPaid?: number;
+  armorForgedSlot?: ArmorSlot | null;
   orderedAt?: number;
 }
 
@@ -312,8 +358,32 @@ export interface GodShrine {
   x: number;
   unlocked: boolean; // Paid 3 diamonds
   diamondsPaid: number;
-  blessed: boolean;  // Paid activation coins
+  blessed: boolean;  // Paid activation coins + completed tribute ritual
   coinsPaid: number;
+  ritualActive?: boolean;
+  tributeNeeded?: number;
+  tributeCompleted?: number;
+  tributeQueueIds?: number[];
+  ascenderId?: number | null;
+  ascendProgress?: number;
+}
+
+export interface WeaponShrine {
+  weaponId: WeaponId;
+  x: number;
+  coinsPaid: number;
+  claimedByPlayerUid?: string | null;
+}
+
+export interface PreciousMine {
+  id: number;
+  metalId: PreciousMetalId;
+  x: number;
+  marked: boolean;
+  mineProgress: number;
+  coinsPaid: number;
+  hitShake: number;
+  orderedAt?: number;
 }
 
 export interface MountShrine {
@@ -367,6 +437,8 @@ export interface IslandSnapshot {
   boat: BoatState;
   dock: DockState;
   godShrine: GodShrine | null;
+  weaponShrine?: WeaponShrine | null;
+  preciousMine?: PreciousMine | null;
   mountShrine: MountShrine | null;
   puzzle: RunePuzzle | null;
   camps: VagrantCamp[];
@@ -487,6 +559,7 @@ export type PromptTargetType =
   | 'villager_tribute'
   | 'forge_build'
   | 'forge_smelt'
+  | 'forge_armor'
   | 'shop'
   | 'wall'
   | 'tower'
@@ -495,6 +568,7 @@ export type PromptTargetType =
   | 'buff_forge'
   | 'tree'
   | 'rock'
+  | 'precious_mine'
   | 'berry_bush'
   | 'brewery_build'
   | 'brewery_beer'
@@ -504,6 +578,7 @@ export type PromptTargetType =
   | 'boat_bell'
   | 'dock_build'
   | 'god_shrine'
+  | 'weapon_shrine'
   | 'mount_shrine'
   | 'puzzle';
 
@@ -600,6 +675,7 @@ export interface InputState {
   rightJustPressed: boolean;
   sprint: boolean;
   powerJustPressed: boolean;
+  weaponJustPressed?: boolean;
   drop: boolean;
   dropJustPressed: boolean;
   cmdZ: boolean;
@@ -783,6 +859,8 @@ export interface WorldState {
   boat: BoatState;
   dock: DockState;
   godShrine: GodShrine | null;
+  weaponShrine?: WeaponShrine | null;
+  preciousMine?: PreciousMine | null;
   mountShrine: MountShrine | null;
   puzzle: RunePuzzle | null;
   camps: VagrantCamp[];

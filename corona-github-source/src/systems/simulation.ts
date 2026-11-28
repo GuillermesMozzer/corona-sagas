@@ -37,7 +37,20 @@ import {
   type Wall,
   type WorldState,
 } from '../types';
-import { generateIslandSnapshot, heightForTreeSize, sizeFromVariant } from '../world/initWorld';
+import {
+  ARMOR_DEFS,
+  computeArmorBonuses,
+  getIslandArmorSlot,
+  PRECIOUS_METALS,
+  WEAPON_DEFS,
+} from '../world/arsenal';
+import {
+  createDefaultPreciousMine,
+  createDefaultWeaponShrine,
+  generateIslandSnapshot,
+  heightForTreeSize,
+  sizeFromVariant,
+} from '../world/initWorld';
 import { getIslandDef } from '../world/islands';
 import { GOD_DEFS, MOUNT_DEFS } from '../world/mountsAndGods';
 
@@ -484,7 +497,8 @@ function syncCurrentIslandProgress(w: WorldState): void {
   entry.constructionBuff = isConstructionBuffActive(w);
   entry.forgeBuff = isForgeBuffActive(w);
   if (w.monarchs[0]) {
-    w.monarchs[0].maxCoins = Math.max(30, 30 + Math.max(0, w.hall.level - 1) * 5);
+    const armorBonus = computeArmorBonuses(w.monarchs[0].armor);
+    w.monarchs[0].maxCoins = Math.max(30, 30 + Math.max(0, w.hall.level - 1) * 5 + armorBonus.pouchBonus);
   }
 }
 
@@ -493,9 +507,9 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
   const targetProgress = w.islands.find((i) => i.id === targetIslandId);
   if (!targetProgress) return false;
 
-  // Save current island snapshot (excluding embarked crew who travel with the Monarch!)
-  const embarkedCrew = w.villagers.filter((v) => v.state === 'embarked');
-  const stayingVillagers = w.villagers.filter((v) => v.state !== 'embarked');
+  // Save current island snapshot (excluding embarked crew & transient summoned spirits!)
+  const embarkedCrew = w.villagers.filter((v) => v.state === 'embarked' && !v.isSummoned);
+  const stayingVillagers = w.villagers.filter((v) => v.state !== 'embarked' && !v.isSummoned);
 
   syncCurrentIslandProgress(w);
   const curProgress = w.islands.find((i) => i.id === w.currentIsland);
@@ -523,6 +537,8 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
       boat: savedBoat,
       dock: { ...w.dock },
       godShrine: w.godShrine ? { ...w.godShrine } : null,
+      weaponShrine: w.weaponShrine ? { ...w.weaponShrine } : null,
+      preciousMine: w.preciousMine ? { ...w.preciousMine } : null,
       mountShrine: w.mountShrine ? { ...w.mountShrine } : null,
       puzzle: w.puzzle ? { ...w.puzzle } : null,
       camps: w.camps.map((c) => ({ ...c })),
@@ -571,6 +587,12 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     };
     w.dock = { ...nextSnap.dock };
     w.godShrine = nextSnap.godShrine ? { ...nextSnap.godShrine } : null;
+    w.weaponShrine = nextSnap.weaponShrine
+      ? { ...nextSnap.weaponShrine }
+      : createDefaultWeaponShrine(targetIslandId, w.centerX);
+    w.preciousMine = nextSnap.preciousMine
+      ? { ...nextSnap.preciousMine }
+      : createDefaultPreciousMine(targetIslandId, () => uid(w), w.centerX);
     w.mountShrine = nextSnap.mountShrine ? { ...nextSnap.mountShrine } : null;
     w.puzzle = nextSnap.puzzle ? { ...nextSnap.puzzle } : null;
     w.camps = nextSnap.camps.map((c) => ({ ...c }));
@@ -612,6 +634,8 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     w.boat = { ...fresh.boat, waterDropProgress: fresh.boat.built ? 1 : 0, attackCooldown: 0 };
     w.dock = fresh.dock;
     w.godShrine = fresh.godShrine;
+    w.weaponShrine = fresh.weaponShrine ?? null;
+    w.preciousMine = fresh.preciousMine ?? null;
     w.mountShrine = fresh.mountShrine;
     w.puzzle = fresh.puzzle;
     w.camps = fresh.camps;
@@ -916,26 +940,57 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
             targetId: 0,
           };
         }
-      } else if (w.forge.built && w.forge.smeltQueue < 5) {
-        const sCost = getForgeSmeltResourceCost();
-        const pending = countPendingFlyingCoins(w, 'forge_smelt', 0);
-        if (w.forge.smeltCoinsPaid < sCost.coins) {
-          const outIron = getForgeIronOutput(w);
-          bestDist = forgeDist;
-          best = {
-            x: w.forge.x,
-            y: GROUND_Y - 42,
-            label: `${t('prompt_forge_smelt')} (+${outIron})`,
-            actionClass: 'forge_smelt',
-            cost: sCost.coins,
-            paid: w.forge.smeltCoinsPaid,
-            pending,
-            woodCost: sCost.wood,
-            stoneCost: sCost.stone,
-            ironCost: 0,
-            targetType: 'forge_smelt',
-            targetId: 0,
-          };
+      } else if (w.forge.built) {
+        const armorSlot = getIslandArmorSlot(w.currentIsland);
+        const armorDef = ARMOR_DEFS[armorSlot];
+        const metalDef = PRECIOUS_METALS[armorDef.metalId];
+        const alreadyForged = Boolean(m.armor?.[armorSlot]);
+        const oreHave = w.resources.preciousOres?.[armorDef.metalId] ?? 0;
+        const armorPaid = w.forge.armorCoinsPaid ?? 0;
+        const canPrioritizeArmor = !alreadyForged && (oreHave >= armorDef.oreCost || armorPaid > 0 || w.currentIsland === 1);
+
+        if (canPrioritizeArmor) {
+          const pending = countPendingFlyingCoins(w, 'forge_armor', 0);
+          if (armorPaid < armorDef.coinCost) {
+            bestDist = forgeDist;
+            const missingOre = Math.max(0, armorDef.oreCost - oreHave);
+            best = {
+              x: w.forge.x,
+              y: GROUND_Y - 42,
+              label: `Forjar ${armorDef.name} (${armorDef.oreCost} ${metalDef.name.split(' ')[0]})`,
+              actionClass: 'forge_armor',
+              cost: armorDef.coinCost,
+              paid: armorPaid,
+              pending,
+              woodCost: armorDef.woodCost,
+              stoneCost: armorDef.stoneCost,
+              ironCost: 0,
+              blockedReason: missingOre > 0 ? `Falta ${missingOre} ${metalDef.name} (Mina)` : undefined,
+              targetType: 'forge_armor',
+              targetId: 0,
+            };
+          }
+        } else if (w.forge.smeltQueue < 5) {
+          const sCost = getForgeSmeltResourceCost();
+          const pending = countPendingFlyingCoins(w, 'forge_smelt', 0);
+          if (w.forge.smeltCoinsPaid < sCost.coins) {
+            const outIron = getForgeIronOutput(w);
+            bestDist = forgeDist;
+            best = {
+              x: w.forge.x,
+              y: GROUND_Y - 42,
+              label: `${t('prompt_forge_smelt')} (+${outIron})`,
+              actionClass: 'forge_smelt',
+              cost: sCost.coins,
+              paid: w.forge.smeltCoinsPaid,
+              pending,
+              woodCost: sCost.wood,
+              stoneCost: sCost.stone,
+              ironCost: 0,
+              targetType: 'forge_smelt',
+              targetId: 0,
+            };
+          }
         }
       }
     }
@@ -1210,8 +1265,8 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
     }
   }
 
-  // 7b. God Shrine (1 per island: 3 Diamonds to unlock -> Coins to invoke blessing!)
-  if (w.godShrine) {
+  // 7b. God Shrine (Diamonds + Coins + Subject Tributes marching in queue to ascend!)
+  if (w.godShrine && !w.godShrine.ritualActive) {
     const d = Math.abs(m.x - w.godShrine.x);
     if (d < 30 && d < bestDist) {
       const godDef = GOD_DEFS[w.godShrine.godId];
@@ -1222,7 +1277,7 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
           best = {
             x: w.godShrine.x,
             y: GROUND_Y - 48,
-            label: `${godDef.name.toUpperCase()} (${godDef.diamondCost}◆)`,
+            label: `${godDef.name.toUpperCase()} (${godDef.diamondCost}◆ · ${godDef.tributeCount} súd.)`,
             actionClass: 'god_unlock',
             cost: godDef.diamondCost,
             paid: w.godShrine.diamondsPaid,
@@ -1234,20 +1289,75 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
         }
       } else if (w.activeGod !== w.godShrine.godId) {
         if (w.godShrine.coinsPaid < godDef.coinCost) {
+          const availSubjects = getEligibleTributeSubjects(w).length;
           bestDist = d;
           best = {
             x: w.godShrine.x,
             y: GROUND_Y - 48,
-            label: `INVOCAR ${godDef.name.toUpperCase()}`,
+            label: `INVOCAR ${godDef.name.toUpperCase()} (${godDef.tributeCount} súditos)`,
             actionClass: 'god_invoke',
             cost: godDef.coinCost,
             paid: w.godShrine.coinsPaid,
             pending,
             currency: 'coin',
+            blockedReason:
+              availSubjects < godDef.tributeCount
+                ? `Precisa ${godDef.tributeCount} súditos (tem ${availSubjects})`
+                : undefined,
             targetType: 'god_shrine',
             targetId: 0,
           };
         }
+      }
+    }
+  }
+
+  // 7b2. Divine Weapon / Magic Shrine (1 unique weapon per island, 1 weapon per Monarch, never duplicated!)
+  if (w.weaponShrine) {
+    const d = Math.abs(m.x - w.weaponShrine.x);
+    if (d < 30 && d < bestDist && m.weapon !== w.weaponShrine.weaponId) {
+      const wDef = WEAPON_DEFS[w.weaponShrine.weaponId];
+      const heldByOther = w.monarchs.some((other) => other !== m && other.weapon === w.weaponShrine!.weaponId);
+      const pending = countPendingFlyingCoins(w, 'weapon_shrine', 0);
+      if (w.weaponShrine.coinsPaid < wDef.coinCost) {
+        bestDist = d;
+        best = {
+          x: w.weaponShrine.x,
+          y: GROUND_Y - 46,
+          label: `${wDef.name.toUpperCase()} (${wDef.shortTag})`,
+          actionClass: 'weapon_shrine',
+          cost: wDef.coinCost,
+          paid: w.weaponShrine.coinsPaid,
+          pending,
+          currency: 'coin',
+          blockedReason: heldByOther ? 'Em uso por outro Monarca' : undefined,
+          targetType: 'weapon_shrine',
+          targetId: 0,
+        };
+      }
+    }
+  }
+
+  // 7b3. Precious Metal Mine (Pay 2 coins to send Builders to mine precious ore for Forging Armor!)
+  if (w.preciousMine && !w.preciousMine.marked) {
+    const d = Math.abs(m.x - w.preciousMine.x);
+    if (d < 30 && d < bestDist) {
+      const metalDef = PRECIOUS_METALS[w.preciousMine.metalId];
+      const pending = countPendingFlyingCoins(w, 'precious_mine', w.preciousMine.id);
+      if (w.preciousMine.coinsPaid < 2) {
+        bestDist = d;
+        best = {
+          x: w.preciousMine.x,
+          y: GROUND_Y - 44,
+          label: `Minerar ${metalDef.name} (+3)`,
+          actionClass: 'precious_mine',
+          cost: 2,
+          paid: w.preciousMine.coinsPaid,
+          pending,
+          currency: 'coin',
+          targetType: 'precious_mine',
+          targetId: w.preciousMine.id,
+        };
       }
     }
   }
@@ -1842,6 +1952,122 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
     return;
   }
 
+  if (fc.targetType === 'forge_armor' && w.forge && w.forge.built) {
+    const m =
+      w.monarchs.length > 1
+        ? w.monarchs.reduce((best, cur) =>
+            Math.abs(cur.x - fc.targetX) < Math.abs(best.x - fc.targetX) ? cur : best
+          )
+        : w.monarchs[0];
+    const armorSlot = getIslandArmorSlot(w.currentIsland);
+    const armorDef = ARMOR_DEFS[armorSlot];
+    const metalDef = PRECIOUS_METALS[armorDef.metalId];
+    if (m && !m.armor?.[armorSlot]) {
+      w.forge.armorCoinsPaid = (w.forge.armorCoinsPaid ?? 0) + 1;
+      if (w.forge.armorCoinsPaid >= armorDef.coinCost) {
+        const oreHave = w.resources.preciousOres?.[armorDef.metalId] ?? 0;
+        const matCost: ResourceCost = {
+          coins: armorDef.coinCost,
+          wood: armorDef.woodCost,
+          stone: armorDef.stoneCost,
+          iron: 0,
+        };
+        if (oreHave < armorDef.oreCost || !hasRequiredMaterials(w, matCost)) {
+          w.forge.armorCoinsPaid = Math.max(0, w.forge.armorCoinsPaid - 1);
+          m.coins = Math.min(m.maxCoins, m.coins + 1);
+          if (m === w.monarchs[0]) w.resources.gold = m.coins;
+          showBanner(
+            w,
+            'MINÉRIO / RECURSOS INSUFICIENTES',
+            `Precisa de ${armorDef.oreCost} ${metalDef.name} + ${armorDef.woodCost} Mad + ${armorDef.stoneCost} Ped`,
+            '#ff9b52'
+          );
+          return;
+        }
+        w.resources.preciousOres = w.resources.preciousOres ?? {};
+        w.resources.preciousOres[armorDef.metalId] = Math.max(0, oreHave - armorDef.oreCost);
+        consumeMaterials(w, matCost);
+        w.forge.armorCoinsPaid = 0;
+        w.forge.armorForgedSlot = armorSlot;
+        m.armor = { ...(m.armor ?? {}), [armorSlot]: armorDef.metalId };
+        const armorBonuses = computeArmorBonuses(m.armor);
+        m.maxCoins = Math.max(30, 30 + Math.max(0, w.hall.level - 1) * 5 + armorBonuses.pouchBonus);
+        if (armorDef.crownShield) m.crownShieldReady = true;
+        markActionClassCompleted(w, 'forge_armor');
+        sound.playHorn(false);
+        sound.playBuildComplete();
+        spawnBurst(w, w.forge.x, GROUND_Y - 26, 26, metalDef.highlight, 'spark', 72);
+        showBanner(
+          w,
+          `ARMADURA FORJADA: ${armorDef.name.toUpperCase()}!`,
+          `${metalDef.name} · ${armorDef.bonusDesc}`,
+          metalDef.highlight
+        );
+        saveCampaign(w);
+      }
+    }
+    return;
+  }
+
+  if (fc.targetType === 'weapon_shrine' && w.weaponShrine) {
+    const m =
+      w.monarchs.length > 1
+        ? w.monarchs.reduce((best, cur) =>
+            Math.abs(cur.x - fc.targetX) < Math.abs(best.x - fc.targetX) ? cur : best
+          )
+        : w.monarchs[0];
+    const wDef = WEAPON_DEFS[w.weaponShrine.weaponId];
+    if (m) {
+      const heldByOther = w.monarchs.some((other) => other !== m && other.weapon === w.weaponShrine!.weaponId);
+      if (heldByOther) {
+        m.coins = Math.min(m.maxCoins, m.coins + 1);
+        if (m === w.monarchs[0]) w.resources.gold = m.coins;
+        showBanner(w, 'ARMA EM USO', 'Outro Monarca já porta esta arma divina!', '#ff9b52');
+        return;
+      }
+      w.weaponShrine.coinsPaid += 1;
+      if (w.weaponShrine.coinsPaid >= wDef.coinCost) {
+        w.weaponShrine.coinsPaid = 0;
+        w.weaponShrine.claimedByPlayerUid = m.playerUid ?? 'host';
+        m.weapon = wDef.id;
+        m.weaponCooldown = 0;
+        markActionClassCompleted(w, 'weapon_shrine');
+        sound.playHorn(false);
+        sound.playBuildComplete();
+        spawnBurst(w, w.weaponShrine.x, GROUND_Y - 26, 26, wDef.color, 'spark', 74);
+        showBanner(
+          w,
+          `${wDef.name.toUpperCase()} EQUIPADO!`,
+          `${wDef.desc} · Use tecla [F] ou o botão no HUD!`,
+          wDef.color
+        );
+        saveCampaign(w);
+      }
+    }
+    return;
+  }
+
+  if (fc.targetType === 'precious_mine' && w.preciousMine && !w.preciousMine.marked) {
+    const metalDef = PRECIOUS_METALS[w.preciousMine.metalId];
+    w.preciousMine.coinsPaid += 1;
+    if (w.preciousMine.coinsPaid >= 2) {
+      w.preciousMine.coinsPaid = 0;
+      w.preciousMine.marked = true;
+      w.preciousMine.mineProgress = 0;
+      w.preciousMine.orderedAt = stampOrderSeq(w);
+      markActionClassCompleted(w, 'precious_mine');
+      sound.playHammer();
+      spawnBurst(w, w.preciousMine.x, GROUND_Y - 16, 12, metalDef.highlight, 'spark', 44);
+      showBanner(
+        w,
+        `MINA DE ${metalDef.name.toUpperCase()} MARCADA!`,
+        'Seus pedreiros irão coletar minério precioso para a Forja!',
+        metalDef.highlight
+      );
+    }
+    return;
+  }
+
   if (fc.targetType === 'god_shrine' && w.godShrine) {
     const godDef = GOD_DEFS[w.godShrine.godId];
     const lang = getLanguage();
@@ -1857,58 +2083,39 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
         showBanner(
           w,
           `ALTAR DE ${godDef.name.toUpperCase()} LIBERADO!`,
-          `Pague ${godDef.coinCost} moedas para invocar · ${godDef.buffDesc[lang]}`,
+          `Pague ${godDef.coinCost}🪙 + ${godDef.tributeCount} súditos de tributo · ${godDef.buffDesc[lang]}`,
           godDef.color
         );
         syncCurrentIslandProgress(w);
         saveCampaign(w);
       }
-    } else if (fc.currency === 'coin' && w.godShrine.unlocked && w.activeGod !== godDef.id) {
+    } else if (
+      fc.currency === 'coin' &&
+      w.godShrine.unlocked &&
+      w.activeGod !== godDef.id &&
+      !w.godShrine.ritualActive
+    ) {
       w.godShrine.coinsPaid += 1;
       if (w.godShrine.coinsPaid >= godDef.coinCost) {
-        w.godShrine.coinsPaid = 0;
-        w.godShrine.blessed = true;
-        w.activeGod = godDef.id;
-        markActionClassCompleted(w, 'god_invoke');
-        // Apply immediate retroactive boosts for Odin (walls & towers +40% HP) and Thor (warriors + Sword Tents!)
-        if (godDef.id === 'odin') {
-          for (const wall of w.walls) {
-            if (wall.level > 0 && !wall.destroyed) {
-              const newMax = getWallMaxHp(wall.level, true);
-              wall.hp += Math.max(0, newMax - wall.maxHp);
-              wall.maxHp = newMax;
-            }
+        const eligible = getEligibleTributeSubjects(w);
+        if (eligible.length < godDef.tributeCount) {
+          // Refund coin if not enough subjects available right now
+          w.godShrine.coinsPaid = Math.max(0, w.godShrine.coinsPaid - 1);
+          if (w.monarchs[0]) {
+            w.monarchs[0].coins = Math.min(w.monarchs[0].maxCoins, w.monarchs[0].coins + 1);
+            w.resources.gold = w.monarchs[0].coins;
           }
-          for (const tower of w.towers) {
-            if (tower.level > 0 && !tower.destroyed) {
-              const newMax = getTowerMaxHp(tower.level, true);
-              tower.hp += Math.max(0, newMax - tower.maxHp);
-              tower.maxHp = newMax;
-            }
-          }
-        } else if (godDef.id === 'thor') {
-          w.thorActivated = true;
-          for (const shop of w.shops) {
-            if (shop.kind === 'sword') shop.built = true;
-          }
-          for (const v of w.villagers) {
-            if (v.role === 'warrior') {
-              v.maxHp = 86;
-              v.hp = Math.min(86, v.hp + 22);
-            }
-          }
+          sound.playHit();
+          showBanner(
+            w,
+            'SÚDITOS INSUFICIENTES!',
+            `Precisa de ${godDef.tributeCount} súditos para o ritual de ${godDef.name} (você tem ${eligible.length}).`,
+            '#ff8a65'
+          );
+          return;
         }
-        sound.playHorn(false);
-        spawnBurst(w, w.godShrine.x, GROUND_Y - 30, 26, godDef.color, 'spark', 75);
-        const extraNote = godDef.id === 'thor' ? ' · Tenda de Espadas desbloqueada!' : '';
-        showBanner(
-          w,
-          `${godDef.name.toUpperCase()} INVOCADO!`,
-          `${godDef.title[lang]} — ${godDef.buffDesc[lang]}${extraNote}`,
-          godDef.color
-        );
-        syncCurrentIslandProgress(w);
-        saveCampaign(w);
+        w.godShrine.coinsPaid = 0;
+        startGodTributeRitual(w, w.godShrine, eligible.slice(0, godDef.tributeCount));
       }
     }
     return;
@@ -2375,6 +2582,9 @@ function findOrderedTaskX(w: WorldState, kind: BuilderTaskKind, id: number): num
     const item = w.trees.find((x) => x.id === id && x.marked && !x.chopped);
     return item ? item.x : null;
   }
+  if (kind === 'mine') {
+    return w.preciousMine && w.preciousMine.id === id && w.preciousMine.marked ? w.preciousMine.x : null;
+  }
   return null;
 }
 
@@ -2580,6 +2790,525 @@ export function triggerMountPower(w: WorldState): boolean {
   return false;
 }
 
+// =========================================================================
+// GOD INVOCATION TRIBUTE RITUAL (Queued Subjects Ascending One by One!)
+// =========================================================================
+
+function getEligibleTributeSubjects(w: WorldState): Villager[] {
+  // Prioritize toolless peasants first, then automatically fall back to any living recruited subject!
+  const rolePriority: Record<VillagerRole, number> = {
+    peasant: 0,
+    producer: 1,
+    builder: 2,
+    archer: 3,
+    warrior: 4,
+    wanderer: 99,
+  };
+  return w.villagers
+    .filter(
+      (v) =>
+        v.role !== 'wanderer' &&
+        !v.isSummoned &&
+        v.state !== 'embarked' &&
+        v.state !== 'boarding' &&
+        v.state !== 'tribute_march' &&
+        v.state !== 'tribute_ascending'
+    )
+    .sort((a, b) => rolePriority[a.role] - rolePriority[b.role]);
+}
+
+function startGodTributeRitual(w: WorldState, shrine: NonNullable<WorldState['godShrine']>, chosen: Villager[]): void {
+  const godDef = GOD_DEFS[shrine.godId];
+  shrine.ritualActive = true;
+  shrine.tributeNeeded = godDef.tributeCount;
+  shrine.tributeCompleted = 0;
+  shrine.tributeQueueIds = chosen.map((v) => v.id);
+  shrine.ascenderId = null;
+  shrine.ascendProgress = 0;
+
+  for (const v of chosen) {
+    v.state = 'tribute_march';
+    v.assignedFarmId = null;
+    v.assignedTowerId = null;
+    v.targetId = null;
+    v.ascendY = 0;
+    spawnBurst(w, v.x, GROUND_Y - 14, 8, godDef.color, 'spark', 36);
+  }
+  sound.playHorn(false);
+  spawnBurst(w, shrine.x, GROUND_Y - 26, 18, godDef.color, 'spark', 55);
+  showBanner(
+    w,
+    `RITUAL DE ${godDef.name.toUpperCase()} INICIADO!`,
+    `${godDef.tributeCount} súditos formam fila para o tributo divino na estátua!`,
+    godDef.color
+  );
+}
+
+function completeGodBlessing(w: WorldState, shrine: NonNullable<WorldState['godShrine']>): void {
+  const godDef = GOD_DEFS[shrine.godId];
+  const lang = getLanguage();
+  shrine.ritualActive = false;
+  shrine.tributeQueueIds = [];
+  shrine.ascenderId = null;
+  shrine.ascendProgress = 0;
+  shrine.blessed = true;
+  w.activeGod = godDef.id;
+  markActionClassCompleted(w, 'god_invoke');
+
+  if (godDef.id === 'odin') {
+    for (const wall of w.walls) {
+      if (wall.level > 0 && !wall.destroyed) {
+        const newMax = getWallMaxHp(wall.level, true);
+        wall.hp += Math.max(0, newMax - wall.maxHp);
+        wall.maxHp = newMax;
+      }
+    }
+    for (const tower of w.towers) {
+      if (tower.level > 0 && !tower.destroyed) {
+        const newMax = getTowerMaxHp(tower.level, true);
+        tower.hp += Math.max(0, newMax - tower.maxHp);
+        tower.maxHp = newMax;
+      }
+    }
+  } else if (godDef.id === 'thor') {
+    w.thorActivated = true;
+    for (const shop of w.shops) {
+      if (shop.kind === 'sword') shop.built = true;
+    }
+    for (const v of w.villagers) {
+      if (v.role === 'warrior') {
+        v.maxHp = 86;
+        v.hp = Math.min(86, v.hp + 22);
+      }
+    }
+  }
+
+  sound.playHorn(false);
+  sound.playBuildComplete();
+  w.screenShake = 0.25;
+  spawnBurst(w, shrine.x, GROUND_Y - 34, 30, godDef.color, 'spark', 82);
+  const extraNote = godDef.id === 'thor' ? ' · Tenda de Espadas desbloqueada!' : '';
+  showBanner(
+    w,
+    `${godDef.name.toUpperCase()} INVOCADO!`,
+    `${godDef.title[lang]} — ${godDef.buffDesc[lang]}${extraNote}`,
+    godDef.color
+  );
+  syncCurrentIslandProgress(w);
+  saveCampaign(w);
+}
+
+function updateGodTributeRitual(w: WorldState, dt: number): void {
+  const shrine = w.godShrine;
+  if (!shrine || !shrine.ritualActive) return;
+
+  const godDef = GOD_DEFS[shrine.godId];
+  const needed = shrine.tributeNeeded ?? godDef.tributeCount;
+  const completed = shrine.tributeCompleted ?? 0;
+
+  if (completed >= needed) {
+    completeGodBlessing(w, shrine);
+    return;
+  }
+
+  // Keep queue synced with living subjects (auto-draft replacement if one died en route)
+  const queueIds = (shrine.tributeQueueIds ?? []).filter((id) => w.villagers.some((v) => v.id === id));
+  const remainingNeeded = needed - completed;
+  if (queueIds.length < remainingNeeded) {
+    const replacements = getEligibleTributeSubjects(w).slice(0, remainingNeeded - queueIds.length);
+    for (const rep of replacements) {
+      rep.state = 'tribute_march';
+      rep.assignedFarmId = null;
+      rep.assignedTowerId = null;
+      rep.ascendY = 0;
+      queueIds.push(rep.id);
+    }
+  }
+  shrine.tributeQueueIds = queueIds;
+
+  // Ambient sacred sparks rising around the activated statue
+  if (Math.random() < dt * 10) {
+    spawnParticle(w, {
+      x: shrine.x + (Math.random() - 0.5) * 20,
+      y: GROUND_Y - 8,
+      vx: (Math.random() - 0.5) * 6,
+      vy: -24 - Math.random() * 24,
+      size: 1.5,
+      color: godDef.color,
+      alpha: 0.85,
+      life: 0.75,
+      maxLife: 0.75,
+      kind: 'spark',
+    });
+  }
+
+  // Handle active ascension beam for the subject currently being raptured skyward!
+  if (shrine.ascenderId !== null && shrine.ascenderId !== undefined) {
+    const ascIdx = w.villagers.findIndex((v) => v.id === shrine.ascenderId);
+    if (ascIdx < 0) {
+      shrine.ascenderId = null;
+      shrine.ascendProgress = 0;
+    } else {
+      const asc = w.villagers[ascIdx];
+      asc.state = 'tribute_ascending';
+      asc.vx = 0;
+      asc.x += (shrine.x - asc.x) * Math.min(1, dt * 8);
+      shrine.ascendProgress = Math.min(1, (shrine.ascendProgress ?? 0) + dt / 1.35);
+      const p = shrine.ascendProgress;
+      asc.ascendY = p * p * 82;
+
+      if (Math.random() < dt * 26) {
+        spawnParticle(w, {
+          x: asc.x + (Math.random() - 0.5) * 10,
+          y: GROUND_Y - 10 - (asc.ascendY ?? 0),
+          vx: (Math.random() - 0.5) * 14,
+          vy: -28 - Math.random() * 26,
+          size: 2,
+          color: Math.random() > 0.35 ? godDef.color : '#ffffff',
+          alpha: 0.95,
+          life: 0.55,
+          maxLife: 0.55,
+          kind: 'spark',
+        });
+      }
+
+      if (p >= 1) {
+        // Raptured into the heavens!
+        spawnBurst(w, shrine.x, GROUND_Y - 82, 20, godDef.color, 'spark', 65);
+        spawnBurst(w, shrine.x, GROUND_Y - 82, 10, '#ffffff', 'spark', 45);
+        sound.playBuildComplete();
+        w.villagers.splice(ascIdx, 1);
+        shrine.tributeQueueIds = queueIds.filter((id) => id !== asc.id);
+        shrine.ascenderId = null;
+        shrine.ascendProgress = 0;
+        shrine.tributeCompleted = completed + 1;
+        if (shrine.tributeCompleted >= needed) {
+          completeGodBlessing(w, shrine);
+          return;
+        }
+      }
+    }
+  }
+
+  // March all queued subjects into an orderly single-file line beside the activated statue!
+  const queueSide: 1 | -1 = shrine.x < getCenterX(w) ? 1 : -1;
+  let waitSlot = shrine.ascenderId ? 1 : 0;
+  for (const qId of shrine.tributeQueueIds ?? []) {
+    if (qId === shrine.ascenderId) continue;
+    const v = w.villagers.find((u) => u.id === qId);
+    if (!v) continue;
+    v.state = 'tribute_march';
+    const targetX = waitSlot === 0 ? shrine.x : shrine.x + queueSide * (18 * waitSlot);
+    const arrived = moveToward(v, targetX, 46, dt);
+    v.facing = shrine.x >= v.x ? 1 : -1;
+    if (waitSlot === 0 && arrived && (shrine.ascenderId === null || shrine.ascenderId === undefined)) {
+      shrine.ascenderId = v.id;
+      shrine.ascendProgress = 0;
+      v.state = 'tribute_ascending';
+      v.ascendY = 0;
+      sound.playCoinPickup();
+      spawnBurst(w, shrine.x, GROUND_Y - 14, 14, godDef.color, 'spark', 46);
+    }
+    waitSlot += 1;
+  }
+}
+
+// =========================================================================
+// DIVINE WEAPONS & MAGICS (1 Unique Relic per Island, 1 Equipped per Monarch)
+// =========================================================================
+
+export function triggerMonarchWeapon(w: WorldState, monarchIndex = 0): boolean {
+  const m = w.monarchs[monarchIndex];
+  if (!m || w.mode !== 'playing' || !m.weapon) return false;
+  if ((m.weaponCooldown ?? 0) > 0) return false;
+
+  const wDef = WEAPON_DEFS[m.weapon];
+  const armorBonuses = computeArmorBonuses(m.armor);
+  const lokiCd = w.activeGod === 'loki' ? 0.8 : 1.0;
+  const dmgMult = armorBonuses.damageMult;
+  m.weaponCooldown = wDef.cooldown * armorBonuses.cooldownMult * lokiCd;
+
+  // 1. MARTELO DE THOR (Mjölnir) — Chain lightning leaping across up to 5 enemies sequentially!
+  if (m.weapon === 'thor_hammer') {
+    const remaining = w.enemies.filter((e) => Math.abs(e.x - m.x) <= 270);
+    if (remaining.length === 0) {
+      // Dramatic thunder slam ahead even if no enemy in range
+      w.lightningBolts.push({
+        fromX: m.x + m.facing * 12,
+        fromY: GROUND_Y - 22 - m.flyY,
+        toX: m.x + m.facing * 95,
+        toY: GROUND_Y - 12,
+        life: 0.38,
+      });
+      sound.playHorn(false);
+      spawnBurst(w, m.x + m.facing * 95, GROUND_Y - 12, 16, '#9cf2ff', 'spark', 55);
+      return true;
+    }
+
+    const hitSet = new Set<number>();
+    let prevX = m.x + m.facing * 10;
+    let prevY = GROUND_Y - 22 - m.flyY;
+    const hitOrder: Enemy[] = [];
+    for (let step = 0; step < 5; step++) {
+      let bestE: Enemy | null = null;
+      let bestDist = step === 0 ? 270 : 170;
+      for (const e of w.enemies) {
+        if (hitSet.has(e.id) || e.hp <= 0) continue;
+        const d = Math.abs(e.x - prevX);
+        if (d < bestDist) {
+          bestDist = d;
+          bestE = e;
+        }
+      }
+      if (!bestE) break;
+      hitSet.add(bestE.id);
+      hitOrder.push(bestE);
+      w.lightningBolts.push({
+        fromX: prevX,
+        fromY: prevY,
+        toX: bestE.x,
+        toY: bestE.y - 8,
+        life: 0.42 + step * 0.06,
+      });
+      prevX = bestE.x;
+      prevY = bestE.y - 8;
+    }
+
+    w.screenShake = 0.24;
+    sound.playHorn(false);
+    for (const target of hitOrder) {
+      target.hp -= Math.round(28 * dmgMult);
+      target.hitFlash = 0.22;
+      target.stunTimer = Math.max(target.stunTimer, 0.55);
+      sound.playHit();
+      spawnBurst(w, target.x, target.y - 8, 12, '#9cf2ff', 'spark', 56);
+      if (target.hp <= 0) handleEnemyKilled(w, target);
+    }
+    return true;
+  }
+
+  // 2. ARCO DE FREYA — Fires up to 3 sequential golden arrows homing toward nearby enemies!
+  if (m.weapon === 'freya_bow') {
+    const targets = w.enemies
+      .filter((e) => Math.abs(e.x - m.x) <= 280)
+      .sort((a, b) => Math.abs(a.x - m.x) - Math.abs(b.x - m.x))
+      .slice(0, 3);
+
+    sound.playBowShot();
+    spawnBurst(w, m.x + m.facing * 10, GROUND_Y - 18 - m.flyY, 10, '#ffe07d', 'spark', 36);
+    for (let i = 0; i < 3; i++) {
+      const tgt = targets[i] ?? targets[0] ?? null;
+      const dir = tgt ? (tgt.x >= m.x ? 1 : -1) : m.facing;
+      const dist = tgt ? Math.max(24, Math.abs(tgt.x - m.x)) : 140 + i * 28;
+      const speed = 265 + i * 20;
+      const flightT = dist / speed;
+      const startY = GROUND_Y - 18 - m.flyY - i * 3;
+      const targetY = tgt ? tgt.y - 8 : GROUND_Y - 10;
+      const vy = (targetY - startY - 0.5 * 220 * flightT * flightT) / Math.max(0.15, flightT);
+      w.arrows.push({
+        id: uid(w),
+        x: m.x + dir * (10 + i * 6),
+        y: startY,
+        vx: dir * speed,
+        vy: Math.max(-180, Math.min(40, vy)),
+        damage: Math.round(14 * dmgMult),
+        alive: true,
+        stuckTimer: 0,
+      });
+    }
+    return true;
+  }
+
+  // 3. CAJADO DE LOKI — Summons 3 Spectral Archers + 3 Spectral Swordsmen!
+  if (m.weapon === 'loki_staff') {
+    // Limit simultaneous summoned allies to avoid flooding (replace oldest summons cleanly)
+    w.villagers = w.villagers.filter((v) => !v.isSummoned);
+    const roles: VillagerRole[] = ['archer', 'archer', 'archer', 'warrior', 'warrior', 'warrior'];
+    roles.forEach((role, idx) => {
+      const offset = (idx - 2.5) * 14;
+      const sx = Math.max(160, Math.min(getWorldWidth(w) - 170, m.x + offset));
+      w.villagers.push({
+        id: uid(w),
+        x: sx,
+        y: GROUND_Y,
+        vx: 0,
+        facing: m.facing,
+        role,
+        state: 'defending',
+        hp: role === 'warrior' ? 58 : 28,
+        maxHp: role === 'warrior' ? 58 : 28,
+        targetX: sx,
+        targetId: null,
+        homeCampId: null,
+        assignedFarmId: null,
+        assignedTowerId: null,
+        side: m.facing,
+        actionTimer: 0,
+        animTime: idx * 0.6,
+        carriedCoins: 0,
+        orderFlashTimer: 1.2,
+        orderDir: m.facing,
+        isSummoned: true,
+        summonLife: 40,
+      });
+      spawnBurst(w, sx, GROUND_Y - 14, 10, '#63f5b5', 'spark', 42);
+    });
+    sound.playHorn(false);
+    showBanner(w, 'ILUSÃO DE LOKI!', '3 Arqueiros e 3 Espadachins espectrais invocados!', '#63f5b5');
+    return true;
+  }
+
+  // 4. ESCUDO CIRCULAR DE TYR — Replaces a fallen wall (or empty wall plot) with a Rune Shield for 1 full night!
+  if (m.weapon === 'tyr_shield') {
+    const brokenWalls = w.walls
+      .filter((wall) => wall.destroyed || wall.level === 0)
+      .sort((a, b) => Math.abs(a.x - m.x) - Math.abs(b.x - m.x));
+    const chosenWall =
+      brokenWalls[0] ??
+      w.walls.slice().sort((a, b) => Math.abs(a.x - m.x) - Math.abs(b.x - m.x))[0];
+
+    if (chosenWall) {
+      chosenWall.destroyed = false;
+      chosenWall.spectralNightShield = true;
+      chosenWall.level = Math.max(2, chosenWall.level || chosenWall.previousLevel || 2);
+      const shieldHp = Math.round(280 * dmgMult);
+      chosenWall.maxHp = Math.max(chosenWall.maxHp, shieldHp);
+      chosenWall.hp = chosenWall.maxHp;
+      chosenWall.hitFlash = 0.25;
+      sound.playHorn(false);
+      sound.playBuildComplete();
+      spawnBurst(w, chosenWall.x, GROUND_Y - 22, 26, '#7ef5ff', 'spark', 72);
+      showBanner(
+        w,
+        'ESCUDO DE TYR ERGUIDO!',
+        'Barreira circular rúnica substitui a muralha caída por 1 noite inteira!',
+        '#7ef5ff'
+      );
+      return true;
+    }
+    return false;
+  }
+
+  // 5. LANÇA GUNGNIR DE ODIN — Piercing runic beam hitting & pushing all enemies ahead!
+  if (m.weapon === 'odin_gungnir') {
+    const beamEndX = Math.max(160, Math.min(getWorldWidth(w) - 160, m.x + m.facing * 240));
+    w.lightningBolts.push({
+      fromX: m.x + m.facing * 10,
+      fromY: GROUND_Y - 18 - m.flyY,
+      toX: beamEndX,
+      toY: GROUND_Y - 18,
+      life: 0.42,
+    });
+    sound.playHorn(false);
+    for (const e of w.enemies.slice()) {
+      const dx = (e.x - m.x) * m.facing;
+      if (dx >= -10 && dx <= 245) {
+        e.hp -= Math.round(34 * dmgMult);
+        e.x = Math.max(155, Math.min(getWorldWidth(w) - 165, e.x + m.facing * 36));
+        e.stunTimer = Math.max(e.stunTimer, 0.75);
+        e.hitFlash = 0.22;
+        spawnBurst(w, e.x, e.y - 10, 10, '#82bfff', 'spark', 50);
+        if (e.hp <= 0) handleEnemyKilled(w, e);
+      }
+    }
+    return true;
+  }
+
+  // 6. RUNA DE YMIR — AoE glacial magic freezing nearby enemies!
+  if (m.weapon === 'ymir_rune') {
+    m.roarTimer = 0.65;
+    sound.playBuildComplete();
+    spawnBurst(w, m.x, GROUND_Y - 18, 24, '#a8f0ff', 'spark', 76);
+    for (const e of w.enemies.slice()) {
+      if (Math.abs(e.x - m.x) <= 200) {
+        e.frozenTimer = Math.max(e.frozenTimer, 8);
+        e.hp -= Math.round(16 * dmgMult);
+        e.hitFlash = 0.2;
+        spawnBurst(w, e.x, e.y - 10, 8, '#cff7ff', 'spark', 40);
+        if (e.hp <= 0) handleEnemyKilled(w, e);
+      }
+    }
+    return true;
+  }
+
+  // 7. ESPADA DE SURTR — Solar fire wave igniting the ground ahead!
+  if (m.weapon === 'surtr_blade') {
+    for (let step = 1; step <= 6; step++) {
+      const fx = Math.max(160, Math.min(getWorldWidth(w) - 165, m.x + m.facing * step * 22));
+      w.fireTrails.push({ x: fx, life: 5.0, maxLife: 5.0 });
+      spawnBurst(w, fx, GROUND_Y - 8, 6, '#ff7d38', 'ember', 44);
+    }
+    sound.playHorn(true);
+    for (const e of w.enemies.slice()) {
+      const dx = (e.x - m.x) * m.facing;
+      if (dx >= -8 && dx <= 150) {
+        e.hp -= Math.round(24 * dmgMult);
+        e.hitFlash = 0.22;
+        if (e.hp <= 0) handleEnemyKilled(w, e);
+      }
+    }
+    return true;
+  }
+
+  // 8. TROMPA GJALLARHORN DE HEIMDALL — Sonic pushback + instant cooldown reset for nearby allies!
+  if (m.weapon === 'heimdall_horn') {
+    m.roarTimer = 0.7;
+    w.screenShake = 0.25;
+    sound.playHorn(false);
+    spawnBurst(w, m.x, GROUND_Y - 20, 26, '#ffd15c', 'spark', 80);
+    for (const e of w.enemies.slice()) {
+      const dx = e.x - m.x;
+      if (Math.abs(dx) <= 210) {
+        const pushDir = dx >= 0 ? 1 : -1;
+        e.x = Math.max(155, Math.min(getWorldWidth(w) - 165, e.x + pushDir * 58));
+        e.stunTimer = Math.max(e.stunTimer, 1.3);
+        e.hp -= Math.round(14 * dmgMult);
+        e.hitFlash = 0.2;
+        if (e.hp <= 0) handleEnemyKilled(w, e);
+      }
+    }
+    for (const v of w.villagers) {
+      if (Math.abs(v.x - m.x) <= 260 && (v.role === 'archer' || v.role === 'warrior')) {
+        v.actionTimer = 0;
+        v.orderFlashTimer = 1.4;
+      }
+    }
+    return true;
+  }
+
+  // 9. CETRO SOLAR DE BALDR — Celestial sunbeams striking up to 6 enemies + healing nearby walls!
+  if (m.weapon === 'baldr_scepter') {
+    const targets = w.enemies
+      .filter((e) => Math.abs(e.x - m.x) <= 320)
+      .sort((a, b) => Math.abs(a.x - m.x) - Math.abs(b.x - m.x))
+      .slice(0, 6);
+    sound.playHorn(false);
+    sound.playBuildComplete();
+    for (const target of targets) {
+      w.lightningBolts.push({
+        fromX: target.x,
+        fromY: GROUND_Y - 120,
+        toX: target.x,
+        toY: target.y - 8,
+        life: 0.45,
+      });
+      target.hp -= Math.round(38 * dmgMult);
+      target.hitFlash = 0.24;
+      spawnBurst(w, target.x, target.y - 8, 12, '#fff2a6', 'spark', 58);
+      if (target.hp <= 0) handleEnemyKilled(w, target);
+    }
+    for (const wall of w.walls) {
+      if (wall.level > 0 && !wall.destroyed && Math.abs(wall.x - m.x) <= 280) {
+        wall.hp = Math.min(wall.maxHp, wall.hp + 90);
+        spawnBurst(w, wall.x, GROUND_Y - 18, 10, '#fff2a6', 'spark', 36);
+      }
+    }
+    return true;
+  }
+
+  return false;
+}
+
 function updateMonarch(
   w: WorldState,
   m: Monarch,
@@ -2590,16 +3319,23 @@ function updateMonarch(
   m.dropCooldown = Math.max(0, m.dropCooldown - dt);
   m.hurtCooldown = Math.max(0, m.hurtCooldown - dt);
   m.mountPowerCooldown = Math.max(0, m.mountPowerCooldown - dt);
+  m.weaponCooldown = Math.max(0, (m.weaponCooldown ?? 0) - dt);
   m.roarTimer = Math.max(0, m.roarTimer - dt);
   m.wolfBiteCooldown = Math.max(0, m.wolfBiteCooldown - dt);
 
   const mountDef = MOUNT_DEFS[m.mount] ?? MOUNT_DEFS.starter;
+  const armorBonuses = computeArmorBonuses(m.armor);
   const lokiSpeedMult = w.activeGod === 'loki' ? 1.25 : 1.0;
   const lokiStaminaMult = w.activeGod === 'loki' ? 0.78 : 1.0;
 
   // Trigger mount active power via Shift / Attack button
   if (input.powerJustPressed && isHostPrimary) {
     triggerMountPower(w);
+  }
+  // Trigger equipped divine weapon / magic via F / Q or HUD button
+  if (input.weaponJustPressed) {
+    const idx = w.monarchs.indexOf(m);
+    triggerMonarchWeapon(w, idx >= 0 ? idx : 0);
   }
 
   // Harpy smooth aerial elevation while flyTimer > 0
@@ -2631,7 +3367,8 @@ function updateMonarch(
 
   const maxSpeed =
     (m.sprinting ? mountDef.sprintSpeed : m.exhausted ? mountDef.trotSpeed * 0.62 : mountDef.trotSpeed) *
-    lokiSpeedMult;
+    lokiSpeedMult *
+    armorBonuses.speedMult;
   const targetVx = dir * maxSpeed;
   const accel = dir !== 0 ? 440 : 380;
   if (m.vx < targetVx) m.vx = Math.min(targetVx, m.vx + accel * dt);
@@ -2947,6 +3684,22 @@ function updateDayNightAndWaves(w: WorldState, dt: number): void {
     w.stats.daysSurvived = w.day;
     w.waveTriggeredTonight = false;
     w.nightWaveStage = 0;
+
+    // Tyr's Circular Shield replaces a fallen wall for 1 full night — dissolve gently at dawn!
+    for (const wall of w.walls) {
+      if (wall.spectralNightShield) {
+        wall.spectralNightShield = false;
+        wall.destroyed = true;
+        wall.hp = 0;
+        spawnBurst(w, wall.x, GROUND_Y - 18, 12, '#7ef5ff', 'spark', 44);
+      }
+    }
+    // Recharge daily Crown Shield for Monarchs wearing forged Frost Helmet / Royal Uru Aegis
+    for (const mon of w.monarchs) {
+      if (computeArmorBonuses(mon.armor).hasCrownShield) {
+        mon.crownShieldReady = true;
+      }
+    }
 
     // Blood Moons occur strictly every 15 days and mark climate/season transitions!
     w.isBloodMoon = w.day % 15 === 0;
@@ -3648,6 +4401,15 @@ function buildBuilderTaskAssignments(
         });
       }
     }
+    if (w.preciousMine && w.preciousMine.marked) {
+      tasks.push({
+        kind: 'mine',
+        id: w.preciousMine.id,
+        x: w.preciousMine.x,
+        side: w.preciousMine.x < getCenterX(w) ? -1 : 1,
+        orderedAt: w.preciousMine.orderedAt ?? w.preciousMine.id,
+      });
+    }
   }
 
   // Clear stale priority if that task has already finished (or check if still active anywhere even at night)
@@ -3664,7 +4426,14 @@ function buildBuilderTaskAssignments(
   const rightTasks = tasks.filter((tk) => tk.side === 1).sort(byOrder);
 
   const activeBuilders = w.villagers
-    .filter((v) => v.role === 'builder' && v.state !== 'embarked' && v.state !== 'boarding')
+    .filter(
+      (v) =>
+        v.role === 'builder' &&
+        v.state !== 'embarked' &&
+        v.state !== 'boarding' &&
+        v.state !== 'tribute_march' &&
+        v.state !== 'tribute_ascending'
+    )
     .sort((a, b) => a.id - b.id);
 
   const leftBuilders = activeBuilders.filter((v) => v.side === -1);
@@ -3716,10 +4485,27 @@ function updateVillagers(w: WorldState, dt: number): void {
   const isEveningOrNight = w.timeOfDay >= 0.46 && w.timeOfDay < 0.98;
   const builderAssignments = buildBuilderTaskAssignments(w, isEveningOrNight);
 
+  // Expire summoned spectral troops from Loki's Staff when their timer ends
+  for (let i = w.villagers.length - 1; i >= 0; i--) {
+    const sv = w.villagers[i];
+    if (sv.isSummoned) {
+      sv.summonLife = (sv.summonLife ?? 0) - dt;
+      if (sv.summonLife <= 0) {
+        spawnBurst(w, sv.x, GROUND_Y - 12, 8, '#38ef7d', 'spark', 36);
+        w.villagers.splice(i, 1);
+      }
+    }
+  }
+
   for (const v of w.villagers) {
     v.animTime += dt * (Math.abs(v.vx) > 5 ? 9 : 2.5);
     v.actionTimer = Math.max(0, v.actionTimer - dt);
     v.orderFlashTimer = Math.max(0, v.orderFlashTimer - dt);
+
+    // Subjects marching to or ascending at a God Shrine are controlled by updateGodTributeRitual
+    if (v.state === 'tribute_march' || v.state === 'tribute_ascending') {
+      continue;
+    }
 
     // Already embarked inside Drakkar
     if (v.state === 'embarked') {
@@ -4150,6 +4936,44 @@ function updateVillagers(w: WorldState, dt: number): void {
                 const vx = ((c - (spec.coins - 1) / 2) * 18) + (Math.random() - 0.5) * 10;
                 spawnCoin(w, markedRock.x, GROUND_Y - 10, vx, -64 - Math.random() * 18, false, 0.25);
               }
+            }
+          }
+          continue;
+        }
+      }
+
+      if (assigned?.kind === 'mine') {
+        const mine = w.preciousMine;
+        if (mine && mine.marked) {
+          v.state = 'working';
+          v.targetId = mine.id;
+          const spreadOffset = ((v.id % 3) - 1) * 5;
+          const standX = mine.x + (mine.x < getCenterX(w) ? 15 : -15) + spreadOffset;
+          if (moveToward(v, standX, 48, dt)) {
+            v.facing = mine.x < v.x ? -1 : 1;
+            const metalDef = PRECIOUS_METALS[mine.metalId];
+            mine.mineProgress += (dt / 6.5) * workMult;
+            if (v.actionTimer <= 0) {
+              v.actionTimer = 0.48;
+              mine.hitShake = 0.16;
+              sound.playHammer();
+              spawnBurst(w, mine.x, GROUND_Y - 12, 5, metalDef.highlight, 'spark', 36);
+            }
+            if (mine.mineProgress >= 1) {
+              mine.mineProgress = 0;
+              mine.marked = false;
+              w.resources.preciousOres = w.resources.preciousOres ?? {};
+              w.resources.preciousOres[mine.metalId] = (w.resources.preciousOres[mine.metalId] ?? 0) + 3;
+              clearPriorityIfMatches(w, 'mine', mine.id);
+              sound.playBuildComplete();
+              spawnBurst(w, mine.x, GROUND_Y - 14, 18, metalDef.highlight, 'spark', 56);
+              showBanner(
+                w,
+                `+3 MINÉRIO DE ${metalDef.name.toUpperCase()}!`,
+                'Leve à Forja com madeira e pedra para forjar a armadura desta ilha!',
+                metalDef.highlight
+              );
+              saveCampaign(w);
             }
           }
           continue;
@@ -4742,14 +5566,22 @@ function updateEnemies(w: WorldState, dt: number): void {
           e.retreating = true;
           sound.playHit();
         } else if (monarch.hasCrown) {
-          monarch.hasCrown = false;
-          monarch.crownX = monarch.x;
-          monarch.crownY = GROUND_Y - 22;
-          monarch.crownVx = (Math.random() - 0.5) * 60;
-          monarch.crownVy = -100;
-          monarch.crownGrounded = false;
-          sound.playCrownKnock();
-          showBanner(w, 'SUA COROA CAIU!', 'Recolha a coroa antes que a levem!', '#ff5c6c');
+          if (monarch.crownShieldReady) {
+            monarch.crownShieldReady = false;
+            e.retreating = true;
+            sound.playBuildComplete();
+            spawnBurst(w, monarch.x, GROUND_Y - 22, 16, '#84e8ff', 'spark', 54);
+            showBanner(w, 'ESCUDO DA COROA ATIVADO!', 'Sua armadura forjada absorveu o golpe na coroa!', '#84e8ff');
+          } else {
+            monarch.hasCrown = false;
+            monarch.crownX = monarch.x;
+            monarch.crownY = GROUND_Y - 22;
+            monarch.crownVx = (Math.random() - 0.5) * 60;
+            monarch.crownVy = -100;
+            monarch.crownGrounded = false;
+            sound.playCrownKnock();
+            showBanner(w, 'SUA COROA CAIU!', 'Recolha a coroa antes que a levem!', '#ff5c6c');
+          }
         }
       }
       continue;
@@ -4786,7 +5618,11 @@ function updateEnemies(w: WorldState, dt: number): void {
       (w.isBloodMoon ? 0.25 : 0);
 
     const blockingWarrior = w.villagers.find(
-      (v) => v.role === 'warrior' && v.state !== 'embarked' && Math.abs(v.x - e.x) < 14
+      (v) =>
+        v.role === 'warrior' &&
+        v.state !== 'embarked' &&
+        v.state !== 'tribute_ascending' &&
+        Math.abs(v.x - e.x) < 14
     );
     if (blockingWarrior) {
       e.vx = 0;
@@ -4834,6 +5670,7 @@ function updateEnemies(w: WorldState, dt: number): void {
           blockingWall.previousLevel = Math.max(1, blockingWall.level);
           blockingWall.level = 0;
           blockingWall.destroyed = true;
+          blockingWall.spectralNightShield = false;
           blockingWall.maxHp = 0;
           w.screenShake = 0.25;
           spawnBurst(w, blockingWall.x, GROUND_Y - 16, 16, '#b57b42', 'wood', 58);
@@ -4892,21 +5729,35 @@ function updateEnemies(w: WorldState, dt: number): void {
         sound.playHit();
         spawnBurst(w, monarch.x, GROUND_Y - 16, 8, '#f7d265', 'spark', 46);
       } else if (monarch.hasCrown) {
-        monarch.hasCrown = false;
-        monarch.crownX = monarch.x;
-        monarch.crownY = GROUND_Y - 22;
-        monarch.crownVx = -dirToCenter * 52;
-        monarch.crownVy = -105;
-        monarch.crownGrounded = false;
-        sound.playCrownKnock();
-        spawnBurst(w, monarch.x, GROUND_Y - 22, 14, '#ffe169', 'spark', 58);
-        showBanner(w, 'SUA COROA CAIU!', 'Recolha a coroa antes que a levem!', '#ff5c6c');
+        if (monarch.crownShieldReady) {
+          monarch.crownShieldReady = false;
+          e.retreating = true;
+          sound.playBuildComplete();
+          spawnBurst(w, monarch.x, GROUND_Y - 22, 16, '#84e8ff', 'spark', 54);
+          showBanner(w, 'ESCUDO DA COROA ATIVADO!', 'Sua armadura forjada absorveu o golpe na coroa!', '#84e8ff');
+        } else {
+          monarch.hasCrown = false;
+          monarch.crownX = monarch.x;
+          monarch.crownY = GROUND_Y - 22;
+          monarch.crownVx = -dirToCenter * 52;
+          monarch.crownVy = -105;
+          monarch.crownGrounded = false;
+          sound.playCrownKnock();
+          spawnBurst(w, monarch.x, GROUND_Y - 22, 14, '#ffe169', 'spark', 58);
+          showBanner(w, 'SUA COROA CAIU!', 'Recolha a coroa antes que a levem!', '#ff5c6c');
+        }
       }
       continue;
     }
 
     for (const v of w.villagers) {
-      if (v.role === 'wanderer' || v.role === 'warrior' || v.state === 'embarked') continue;
+      if (
+        v.role === 'wanderer' ||
+        v.role === 'warrior' ||
+        v.state === 'embarked' ||
+        v.state === 'tribute_ascending'
+      )
+        continue;
       // Archers perched atop a standing tower are safe from ground melee!
       if (v.role === 'archer' && v.assignedTowerId) {
         const tw = w.towers.find((item) => item.id === v.assignedTowerId && item.level > 0 && !item.destroyed);
@@ -6213,6 +7064,7 @@ const IDLE_REMOTE_INPUT: InputState = {
   rightJustPressed: false,
   sprint: false,
   powerJustPressed: false,
+  weaponJustPressed: false,
   drop: false,
   dropJustPressed: false,
   cmdZ: false,
@@ -6269,6 +7121,10 @@ export function stepWorld(
 
   updateFlyingCoins(w, dt);
   updateForgeAndRegrowth(w, dt);
+  if (w.preciousMine) {
+    w.preciousMine.hitShake = Math.max(0, w.preciousMine.hitShake - dt);
+  }
+  updateGodTributeRitual(w, dt);
   updateFireTrailsAndLightning(w, dt);
   updateDayNightAndWaves(w, dt);
   updateBanker(w, dt);

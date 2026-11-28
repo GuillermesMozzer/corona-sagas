@@ -105,6 +105,7 @@ import {
   summonOrDismissSpiritAdvisor,
   togglePriorityTask,
   triggerCoinDrop,
+  triggerMonarchWeapon,
   triggerMountPower,
   withdrawFromBanker,
 } from './systems/simulation';
@@ -434,6 +435,7 @@ const input: InputState = {
   rightJustPressed: false,
   sprint: false,
   powerJustPressed: false,
+  weaponJustPressed: false,
   drop: false,
   dropJustPressed: false,
   cmdZ: false,
@@ -1778,6 +1780,14 @@ function handleCanvasHit(hitId: string): boolean {
       }
       return true;
     }
+    if (hitId === 'hud_weapon_power') {
+      if (coopState.active && coopState.role === 'guest') {
+        input.weaponJustPressed = true;
+      } else {
+        triggerMonarchWeapon(world, 0);
+      }
+      return true;
+    }
     if (hitId === 'villager_dir_left' && world.selectedVillagerId) {
       orderSpecificVillager(world, world.selectedVillagerId, -1);
       return true;
@@ -2849,6 +2859,9 @@ window.addEventListener('keydown', (e) => {
     if (!e.repeat) input.powerJustPressed = true;
     kbShift = true;
   }
+  if ((code === 'KeyF' || code === 'KeyQ') && !e.repeat) {
+    input.weaponJustPressed = true;
+  }
   if (code === 'KeyS' || code === 'ArrowDown' || code === 'Space') {
     if (!input.drop) input.dropJustPressed = true;
     input.drop = true;
@@ -2975,6 +2988,7 @@ function frame(now: number): void {
     input.leftJustPressed = false;
     input.rightJustPressed = false;
     input.powerJustPressed = false;
+    input.weaponJustPressed = false;
     accumulator -= FIXED_DT;
   }
 

@@ -74,6 +74,7 @@ export interface RemoteGuestInputSnapshot {
   sprint: boolean;
   dropSeq: number;
   powerSeq: number;
+  weaponSeq?: number;
   updatedAtMs: number;
 }
 
@@ -124,11 +125,13 @@ let signalsUnsub: Unsubscribe | null = null;
 const remoteRawInputs = new Map<string, RemoteGuestInputSnapshot>();
 const processedDropSeq = new Map<string, number>();
 const processedPowerSeq = new Map<string, number>();
+const processedWeaponSeq = new Map<string, number>();
 let lastHostBroadcastMs = 0;
 
 // Guest-side tracking of outgoing input & incoming world snapshot
 let guestDropSeq = 0;
 let guestPowerSeq = 0;
+let guestWeaponSeq = 0;
 let lastSentInputKey = '';
 let lastGuestInputMs = 0;
 let latestGuestWorldSnapshot: WorldState | null = null;
@@ -365,6 +368,7 @@ function cleanupSubscriptionsAndAudio(): void {
   remoteRawInputs.clear();
   processedDropSeq.clear();
   processedPowerSeq.clear();
+  processedWeaponSeq.clear();
   latestGuestWorldSnapshot = null;
   lastSentInputKey = '';
 
@@ -704,6 +708,7 @@ export async function hostOpenCoopRoom(
           sprint: d.sprint === true,
           dropSeq: typeof d.dropSeq === 'number' ? d.dropSeq : 0,
           powerSeq: typeof d.powerSeq === 'number' ? d.powerSeq : 0,
+          weaponSeq: typeof d.weaponSeq === 'number' ? d.weaponSeq : 0,
           updatedAtMs: typeof d.updatedAtMs === 'number' ? d.updatedAtMs : 0,
         });
       }
@@ -999,6 +1004,10 @@ export function hostSyncCoopWorld(world: WorldState): Map<string, InputState> {
         flyY: 0,
         roarTimer: 0,
         wolfBiteCooldown: 0,
+        weapon: null,
+        weaponCooldown: 0,
+        armor: {},
+        crownShieldReady: false,
         hasCrown: true,
         crownX: spawnX,
         crownY: GROUND_Y - 24,
@@ -1025,11 +1034,14 @@ export function hostSyncCoopWorld(world: WorldState): Map<string, InputState> {
     const raw = remoteRawInputs.get(guest.uid);
     const prevDrop = processedDropSeq.get(guest.uid) ?? 0;
     const prevPower = processedPowerSeq.get(guest.uid) ?? 0;
+    const prevWeapon = processedWeaponSeq.get(guest.uid) ?? 0;
     const dropTriggered = Boolean(raw && raw.dropSeq > prevDrop);
     const powerTriggered = Boolean(raw && raw.powerSeq > prevPower);
+    const weaponTriggered = Boolean(raw && (raw.weaponSeq ?? 0) > prevWeapon);
     if (raw) {
       processedDropSeq.set(guest.uid, raw.dropSeq);
       processedPowerSeq.set(guest.uid, raw.powerSeq);
+      processedWeaponSeq.set(guest.uid, raw.weaponSeq ?? 0);
     }
 
     remoteInputs.set(guest.uid, {
@@ -1039,6 +1051,7 @@ export function hostSyncCoopWorld(world: WorldState): Map<string, InputState> {
       rightJustPressed: false,
       sprint: Boolean(raw?.sprint),
       powerJustPressed: powerTriggered,
+      weaponJustPressed: weaponTriggered,
       drop: false,
       dropJustPressed: dropTriggered,
       cmdZ: false,
@@ -1100,11 +1113,12 @@ export function guestSyncCoopFrame(
     return currentWorld;
   }
 
-  // Send local inputs when changed or on action edge (drop / power)
+  // Send local inputs when changed or on action edge (drop / power / weapon)
   if (localInput.dropJustPressed) guestDropSeq += 1;
   if (localInput.powerJustPressed) guestPowerSeq += 1;
+  if (localInput.weaponJustPressed) guestWeaponSeq += 1;
 
-  const key = `${localInput.left ? 1 : 0}${localInput.right ? 1 : 0}${localInput.sprint ? 1 : 0}:${guestDropSeq}:${guestPowerSeq}`;
+  const key = `${localInput.left ? 1 : 0}${localInput.right ? 1 : 0}${localInput.sprint ? 1 : 0}:${guestDropSeq}:${guestPowerSeq}:${guestWeaponSeq}`;
   const now = performance.now();
   const rtdb = getRealtimeDb();
   const user = authCloudState.user;
@@ -1116,6 +1130,7 @@ export function guestSyncCoopFrame(
       sprint: localInput.sprint,
       dropSeq: guestDropSeq,
       powerSeq: guestPowerSeq,
+      weaponSeq: guestWeaponSeq,
       updatedAtMs: Date.now(),
     };
     const hostDc = coopState.hostUid ? peerDataChannels.get(coopState.hostUid) : undefined;
@@ -1898,6 +1913,7 @@ function setupPeerDataChannel(peerUid: string, dc: RTCDataChannel): void {
           sprint: d.sprint === true,
           dropSeq: typeof d.dropSeq === 'number' ? d.dropSeq : 0,
           powerSeq: typeof d.powerSeq === 'number' ? d.powerSeq : 0,
+          weaponSeq: typeof d.weaponSeq === 'number' ? d.weaponSeq : 0,
           updatedAtMs: typeof d.updatedAtMs === 'number' ? d.updatedAtMs : Date.now(),
         });
       } catch {

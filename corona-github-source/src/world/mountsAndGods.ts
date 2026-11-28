@@ -7,6 +7,7 @@ export interface GodDefinition {
   buffDesc: { pt: string; en: string; es: string };
   diamondCost: number; // Strictly 3 diamonds per God
   coinCost: number;    // Activation coins
+  tributeCount: number; // Subjects required to march in queue & ascend as divine tribute
   color: string;
 }
 
@@ -31,6 +32,7 @@ export const GOD_DEFS: Record<GodId, GodDefinition> = {
     buffDesc: { pt: 'Fazendas +50% ouro/dia', en: 'Farms +50% daily gold', es: 'Granjas +50% oro/día' },
     diamondCost: 3,
     coinCost: 6,
+    tributeCount: 2,
     color: '#7be088',
   },
   loki: {
@@ -40,6 +42,7 @@ export const GOD_DEFS: Record<GodId, GodDefinition> = {
     buffDesc: { pt: '+25% velocidade e recarga', en: '+25% speed & cooldown', es: '+25% velocidad y recarga' },
     diamondCost: 3,
     coinCost: 6,
+    tributeCount: 2,
     color: '#5be0c2',
   },
   odin: {
@@ -49,6 +52,7 @@ export const GOD_DEFS: Record<GodId, GodDefinition> = {
     buffDesc: { pt: 'Muros +40% HP · obras +50%', en: 'Walls +40% HP · build +50%', es: 'Muros +40% HP · obra +50%' },
     diamondCost: 3,
     coinCost: 8,
+    tributeCount: 3,
     color: '#82bfff',
   },
   thor: {
@@ -58,6 +62,7 @@ export const GOD_DEFS: Record<GodId, GodDefinition> = {
     buffDesc: { pt: 'Guerreiros +50% dano/HP', en: 'Warriors +50% dmg/HP', es: 'Guerreros +50% daño/HP' },
     diamondCost: 3,
     coinCost: 8,
+    tributeCount: 3,
     color: '#ffd15c',
   },
 };
