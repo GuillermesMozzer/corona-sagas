@@ -29,6 +29,7 @@ import {
   type ElderId,
   type Enemy,
   type Monarch,
+  type Season,
   type Villager,
   type WorldState,
 } from '../types';
@@ -45,6 +46,7 @@ import {
   getBankerDailyRatePct,
   getFarmMaxFarmers,
   getFarmStorageCap,
+  getSeasonForDay,
   getSpiritButtonScreenPos,
   getTowerArcherCap,
   getTowerHeight,
@@ -1130,13 +1132,18 @@ export class PixelRenderer {
         // Click main card to load & play this campaign!
         this.addHit(`slot_load_${i}`, x, y, cardW, cardH);
 
-        // Shield emblem + Island (I..IX) + Day
+        // Shield emblem + Island (I..IX) + Day + Season icon
         drawShieldEmblem(ctx, info.crest, x + 13, y + 24, 7);
 
         ctx.fillStyle = '#eef5fc';
         ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
         const islRoman = this.toRoman(info.island);
-        ctx.fillText(`ILHA ${islRoman} · ${t('day_short')} ${info.day}`, x + 24, y + 21, cardW - 28);
+        const dayHeaderTxt = `ILHA ${islRoman} · ${t('day_short')} ${info.day}`;
+        const maxHeaderW = cardW - 40;
+        ctx.fillText(dayHeaderTxt, x + 24, y + 21, maxHeaderW);
+        const headerW = Math.min(maxHeaderW, Math.ceil(ctx.measureText(dayHeaderTxt).width));
+        const slotSeason = getSeasonForDay(info.day);
+        this.drawSeasonPixelIcon(ctx, slotSeason, x + 26 + headerW, y + 13);
 
         // Currency strip with pixel-art Coin, Bank & Diamond icons
         let curX = x + 24;
@@ -2588,7 +2595,7 @@ export class PixelRenderer {
     nightFactor: number,
     theme: IslandTheme
   ): void {
-    const season = w.season ?? 'summer';
+    const season = w.season ?? 'spring';
     // Blend each island's distinct biome ground palette with the active season!
     const seasonGrass =
       season === 'winter'
@@ -2765,7 +2772,7 @@ export class PixelRenderer {
     nightFactor: number,
     theme: IslandTheme
   ): void {
-    const season = w.season ?? 'summer';
+    const season = w.season ?? 'spring';
     const vStyle = theme.vegetationStyle;
     const dayDark =
       season === 'autumn'
@@ -6302,7 +6309,7 @@ export class PixelRenderer {
   }
 
   private drawSnowParticles(ctx: CanvasRenderingContext2D, w: WorldState): void {
-    const season = w.season ?? 'summer';
+    const season = w.season ?? 'spring';
     for (let i = 0; i < w.particles.length; i++) {
       const p = w.particles[i];
       if (p.kind !== 'snow') continue;
@@ -6716,6 +6723,80 @@ export class PixelRenderer {
     ctx.fillRect(rx + 2, ry + 1, 1, 2);
   }
 
+  private drawSeasonPixelIcon(ctx: CanvasRenderingContext2D, season: Season, x: number, y: number): void {
+    const rx = Math.round(x);
+    const ry = Math.round(y);
+
+    // Subtle dark pixel contour behind icon so it reads clearly against bright skies & dark nights
+    ctx.fillStyle = 'rgba(8, 12, 18, 0.72)';
+    ctx.fillRect(rx + 1, ry, 7, 9);
+    ctx.fillRect(rx, ry + 1, 9, 7);
+
+    if (season === 'spring') {
+      // Primavera: 5-petal pink blossom + golden center + emerald leaf
+      ctx.fillStyle = '#ff7ec2';
+      ctx.fillRect(rx + 3, ry + 1, 3, 2); // top petal
+      ctx.fillRect(rx + 1, ry + 3, 2, 3); // left petal
+      ctx.fillRect(rx + 6, ry + 3, 2, 3); // right petal
+      ctx.fillRect(rx + 2, ry + 6, 3, 2); // bottom-left petal
+      ctx.fillStyle = '#ffcce6';
+      ctx.fillRect(rx + 4, ry + 1, 1, 1);
+      ctx.fillRect(rx + 2, ry + 3, 1, 1);
+      ctx.fillRect(rx + 6, ry + 3, 1, 1);
+      ctx.fillStyle = '#ffe866';
+      ctx.fillRect(rx + 3, ry + 3, 3, 3); // golden pollen center
+      ctx.fillStyle = '#6fe87b';
+      ctx.fillRect(rx + 6, ry + 6, 2, 2); // spring leaf
+      return;
+    }
+
+    if (season === 'summer') {
+      // Verão: radiant golden sun with 8-way rays
+      ctx.fillStyle = '#ff9f24';
+      ctx.fillRect(rx + 4, ry, 1, 2);     // N ray
+      ctx.fillRect(rx + 4, ry + 7, 1, 2); // S ray
+      ctx.fillRect(rx, ry + 4, 2, 1);     // W ray
+      ctx.fillRect(rx + 7, ry + 4, 2, 1); // E ray
+      ctx.fillRect(rx + 1, ry + 1, 1, 1); // NW
+      ctx.fillRect(rx + 7, ry + 1, 1, 1); // NE
+      ctx.fillRect(rx + 1, ry + 7, 1, 1); // SW
+      ctx.fillRect(rx + 7, ry + 7, 1, 1); // SE
+      ctx.fillStyle = '#ffd84d';
+      ctx.fillRect(rx + 2, ry + 2, 5, 5); // sun disk
+      ctx.fillStyle = '#fff8c2';
+      ctx.fillRect(rx + 3, ry + 3, 3, 3); // bright core
+      return;
+    }
+
+    if (season === 'autumn') {
+      // Outono: warm maple/oak autumn leaf in burnt-orange & amber + stem
+      ctx.fillStyle = '#c23e18';
+      ctx.fillRect(rx + 2, ry + 2, 5, 4);
+      ctx.fillRect(rx + 1, ry + 3, 7, 2);
+      ctx.fillStyle = '#f07b24';
+      ctx.fillRect(rx + 3, ry + 1, 3, 5);
+      ctx.fillRect(rx + 2, ry + 2, 5, 3);
+      ctx.fillStyle = '#ffbe47';
+      ctx.fillRect(rx + 4, ry + 2, 2, 2);
+      ctx.fillStyle = '#7a4218';
+      ctx.fillRect(rx + 4, ry + 6, 1, 2); // stem
+      ctx.fillRect(rx + 5, ry + 7, 1, 1);
+      return;
+    }
+
+    // Inverno: crystalline glacial snowflake (cyan + pure white)
+    ctx.fillStyle = '#7ef2ff';
+    ctx.fillRect(rx + 4, ry + 1, 1, 7); // vertical axis
+    ctx.fillRect(rx + 1, ry + 4, 7, 1); // horizontal axis
+    ctx.fillRect(rx + 2, ry + 2, 1, 1); // diagonals
+    ctx.fillRect(rx + 6, ry + 2, 1, 1);
+    ctx.fillRect(rx + 2, ry + 6, 1, 1);
+    ctx.fillRect(rx + 6, ry + 6, 1, 1);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(rx + 4, ry + 3, 1, 3);
+    ctx.fillRect(rx + 3, ry + 4, 3, 1);
+  }
+
   private drawHud(ctx: CanvasRenderingContext2D, w: WorldState): void {
     const monarch = this.getLocalMonarch(w);
     if (!monarch) return;
@@ -6754,17 +6835,21 @@ export class PixelRenderer {
     if (archers.total > 0) disc.bow = true;
     if (producers.total > 0) disc.seed = true;
 
-    // 1. TOP-RIGHT: Current Day as a clean Roman Numeral directly to the left of the Menu button (NO dark box!)
+    // 1. TOP-RIGHT: Pixel-art Season Icon + Current Day Roman Numeral directly to the left of the Menu button
     const dayRoman = this.toRoman(w.day);
     ctx.font = 'bold 10px "Pixelify Sans", monospace';
     const romanW = Math.ceil(ctx.measureText(dayRoman).width);
     const romanRightX = this.viewW - menuReserve - 4;
+    const activeSeason: Season = w.season ?? getSeasonForDay(w.day);
+    const seasonIconX = romanRightX - romanW - 12;
+    this.drawSeasonPixelIcon(ctx, activeSeason, seasonIconX, 8);
+
     ctx.textAlign = 'right';
     ctx.fillStyle = w.isBloodMoon ? '#ff6b78' : w.isNight ? '#a8d8ff' : '#ffe89c';
     ctx.fillText(dayRoman, romanRightX, 16);
     ctx.textAlign = 'left';
 
-    const rightLimit = romanRightX - romanW - 10;
+    const rightLimit = seasonIconX - 8;
     const row1Y = 15;
     const row2Y = 30;
     let cx = 8;

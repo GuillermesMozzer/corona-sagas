@@ -185,8 +185,8 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
   }
 
   const seasonIdx = Math.floor((Math.max(1, state.day ?? 1) - 1) / 15) % 4;
-  const seasonOrder = ['summer', 'autumn', 'winter', 'spring'] as const;
-  state.season = state.season ?? seasonOrder[seasonIdx];
+  const seasonOrder = ['spring', 'summer', 'autumn', 'winter'] as const;
+  state.season = seasonOrder[seasonIdx];
 
   if (!state.berryBushes || state.berryBushes.length === 0) {
     let bid = (state.nextId ?? 6000) + 1;

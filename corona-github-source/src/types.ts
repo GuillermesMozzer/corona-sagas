@@ -223,7 +223,7 @@ export interface Villager {
   ascendY?: number;
 }
 
-export type Season = 'summer' | 'autumn' | 'winter' | 'spring';
+export type Season = 'spring' | 'summer' | 'autumn' | 'winter';
 
 export type BuilderTaskKind = 'wall' | 'tower' | 'forge' | 'boat' | 'dock' | 'farm' | 'brewery' | 'rock' | 'tree' | 'mine' | 'yggdrasil';
 

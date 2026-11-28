@@ -860,7 +860,7 @@ export function createInitialWorld(
     thorActivated: false,
     unlockedMounts: ['starter'],
     day: 1,
-    season: 'summer',
+    season: 'spring',
     dayHalfMinutes: getSavedDayHalfMinutes(),
     timeOfDay: 0.03,
     threatLevel: 1,

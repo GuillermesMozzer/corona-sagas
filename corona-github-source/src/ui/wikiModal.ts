@@ -104,16 +104,19 @@ function buildWikiSections(): WikiSection[] {
           ],
         },
         {
-          title: 'Ciclo Dia / Noite & Lua de Sangue',
+          title: 'Ciclo Dia / Noite, 4 Estações & Lua de Sangue',
           accent: '#ff8a95',
           tags: [
-            { label: 'Duração ajustável no Menu', tone: 'neutral' },
-            { label: 'Lua de Sangue', tone: 'red' },
+            { label: '🌸 Primavera → ☀️ Verão → 🍂 Outono → ❄️ Inverno', tone: 'gold' },
+            { label: 'Lua de Sangue a cada 15 dias', tone: 'red' },
           ],
-          body: 'Durante o dia, súditos constroem, colhem, caçam e mineram. Ao cair da noite, portais liberam ondas de monstros cada vez maiores. Noites de Lua de Sangue trazem ataques mais intensos e exige defesa reforçada.',
+          body: 'O clima evolui em uma sequência realista de 4 estações (15 dias cada), identificada pelo ícone de estação exibido ao lado do contador de dias:',
           bullets: [
-            'Você pode ajustar a duração do Dia/Noite no menu ☰ (1 a 5 min por metade).',
-            'Destruir todos os portais de uma ilha encerra as invasões daquela ilha.',
+            '🌸 Primavera (Dias 1–15): florescimento, fazendas muito produtivas (+55%), caça farta e arbustos com frutinhas.',
+            '☀️ Verão (Dias 16–30): sol forte, excelente caça e corte de árvores rápido.',
+            '🍂 Outono (Dias 31–45): colheita desacelera — hora de acumular ouro e reforçar muralhas antes do inverno.',
+            '❄️ Inverno (Dias 46–60): neve intensa, fazendas congelam e poucos animais aparecem; sobreviva com frutinhas de inverno e reservas do Banqueiro.',
+            'Você pode ajustar a duração do Dia/Noite no menu ☰ (1 a 6 min por metade).',
           ],
         },
         {

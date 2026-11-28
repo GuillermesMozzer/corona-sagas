@@ -76,34 +76,35 @@ export interface SeasonModifiers {
 }
 
 export function getSeasonForDay(day: number): Season {
-  const seasons: Season[] = ['summer', 'autumn', 'winter', 'spring'];
+  // Realistic chronological seasonal cycle (15 days each): Spring -> Summer -> Autumn -> Winter
+  const seasons: Season[] = ['spring', 'summer', 'autumn', 'winter'];
   const idx = Math.floor((Math.max(1, day) - 1) / 15) % 4;
   return seasons[idx];
 }
 
-export function getSeasonLabel(season: Season = 'summer'): string {
+export function getSeasonLabel(season: Season = 'spring'): string {
   switch (season) {
+    case 'spring':
+      return 'PRIMAVERA';
     case 'summer':
       return 'VERÃO';
     case 'autumn':
       return 'OUTONO';
     case 'winter':
       return 'INVERNO';
-    case 'spring':
-      return 'PRIMAVERA';
   }
 }
 
-export function getSeasonModifiers(season: Season = 'summer'): SeasonModifiers {
+export function getSeasonModifiers(season: Season = 'spring'): SeasonModifiers {
   switch (season) {
-    case 'summer':
-      return { farm: 1.0, animal: 1.55, tree: 1.5, rock: 0.45, hasBerries: false };
-    case 'autumn':
-      return { farm: 0.45, animal: 1.45, tree: 1.5, rock: 1.0, hasBerries: false };
-    case 'winter':
-      return { farm: 0, animal: 0.25, tree: 0.4, rock: 0.45, hasBerries: true };
     case 'spring':
       return { farm: 1.55, animal: 1.5, tree: 1.5, rock: 1.0, hasBerries: true };
+    case 'summer':
+      return { farm: 1.1, animal: 1.55, tree: 1.5, rock: 0.75, hasBerries: false };
+    case 'autumn':
+      return { farm: 0.5, animal: 1.45, tree: 1.5, rock: 1.0, hasBerries: false };
+    case 'winter':
+      return { farm: 0, animal: 0.25, tree: 0.4, rock: 0.45, hasBerries: true };
   }
 }
 
