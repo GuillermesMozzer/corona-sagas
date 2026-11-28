@@ -1,19 +1,17 @@
 import {
-  addDoc,
-  arrayUnion,
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  limit,
-  onSnapshot,
-  orderBy,
+  get,
+  limitToLast,
+  onChildAdded,
+  onDisconnect,
+  onValue,
+  push,
   query,
-  serverTimestamp,
-  setDoc,
+  ref,
+  remove,
+  set,
+  update,
   type Unsubscribe,
-} from 'firebase/firestore';
+} from 'firebase/database';
 import {
   type CommunityReportReason,
   buildCommunityReportFormUrl,
@@ -28,7 +26,7 @@ import {
   type Monarch,
   type WorldState,
 } from '../types';
-import { authCloudState, getCurrentAuthIdToken, getFirestoreDb } from './googleAuthCloud';
+import { authCloudState, getCurrentAuthIdToken, getRealtimeDb } from './googleAuthCloud';
 
 export const MAX_COOP_PLAYERS = 4;
 
@@ -114,6 +112,8 @@ type CoopListener = (state: CoopState) => void;
 const listeners = new Set<CoopListener>();
 
 let roomUnsub: Unsubscribe | null = null;
+let kickedUnsub: Unsubscribe | null = null;
+let snapshotUnsub: Unsubscribe | null = null;
 let membersUnsub: Unsubscribe | null = null;
 let inputsUnsub: Unsubscribe | null = null;
 let messagesUnsub: Unsubscribe | null = null;
@@ -257,18 +257,18 @@ function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string)
  * Checks whether the currently signed-in Google account is banned from the Co-op community.
  */
 export async function checkMyCommunityBan(): Promise<{ banned: boolean; reason?: string }> {
-  const db = getFirestoreDb();
+  const rtdb = getRealtimeDb();
   const user = authCloudState.user;
-  if (!db || !user) return { banned: false };
+  if (!rtdb || !user) return { banned: false };
   try {
     const snap = await withTimeout(
-      getDoc(doc(db, 'community_bans', user.uid)),
-      2500,
+      get(ref(rtdb, `community_bans/${user.uid}`)),
+      3000,
       'timeout-ban-check'
     );
     if (!snap.exists()) return { banned: false };
-    const data = snap.data() as Record<string, unknown>;
-    if (data.banned === true) {
+    const data = snap.val() as Record<string, unknown>;
+    if (data && data.banned === true) {
       return {
         banned: true,
         reason: typeof data.reason === 'string' ? data.reason : 'Violação das regras da comunidade',
@@ -290,8 +290,8 @@ export async function validateCoopJoinCode(rawCode: string): Promise<{
   error?: string;
 }> {
   const user = authCloudState.user;
-  const db = getFirestoreDb();
-  if (!user || !db) {
+  const rtdb = getRealtimeDb();
+  if (!user || !rtdb) {
     return { ok: false, error: 'Conecte sua conta Google para entrar no Co-op online.' };
   }
 
@@ -309,27 +309,35 @@ export async function validateCoopJoinCode(rawCode: string): Promise<{
   }
 
   try {
-    const roomSnap = await getDoc(doc(db, 'coop_rooms', code));
-    if (!roomSnap.exists()) {
+    const [metaSnap, kickedSnap, membersSnap] = await withTimeout(
+      Promise.all([
+        get(ref(rtdb, `coop_rooms/${code}/meta`)),
+        get(ref(rtdb, `coop_rooms/${code}/kicked/${user.uid}`)),
+        get(ref(rtdb, `coop_rooms/${code}/members`)),
+      ]),
+      7000,
+      'timeout-validate-room'
+    );
+    if (!metaSnap.exists()) {
       return { ok: false, error: 'Sala não encontrada. Confira o código com o Host.' };
     }
-    const room = roomSnap.data() as Record<string, unknown>;
-    if (room.active !== true) {
+    const meta = metaSnap.val() as Record<string, unknown>;
+    if (meta.active !== true) {
       return { ok: false, error: 'O Host já encerrou esta sessão Co-op.' };
     }
-    const kicked = Array.isArray(room.kickedUids) ? (room.kickedUids as string[]) : [];
-    if (kicked.includes(user.uid)) {
+    if (kickedSnap.exists() && kickedSnap.val() === true) {
       return { ok: false, error: 'Você foi removido desta campanha pelo Host.' };
     }
-    const membersSnap = await getDocs(collection(db, 'coop_rooms', code, 'members'));
-    const alreadyIn = membersSnap.docs.some((d) => d.id === user.uid);
-    if (!alreadyIn && membersSnap.size >= MAX_COOP_PLAYERS) {
+    const membersObj = (membersSnap.val() as Record<string, unknown> | null) ?? {};
+    const memberIds = Object.keys(membersObj);
+    const alreadyIn = memberIds.includes(user.uid);
+    if (!alreadyIn && memberIds.length >= MAX_COOP_PLAYERS) {
       return { ok: false, error: `Sala lotada (máximo ${MAX_COOP_PLAYERS} jogadores por campanha).` };
     }
     return {
       ok: true,
       code,
-      hostName: typeof room.hostName === 'string' ? room.hostName : 'Host',
+      hostName: typeof meta.hostName === 'string' ? meta.hostName : 'Host',
     };
   } catch (err) {
     console.warn('[Corona Co-op] Validate room error:', err);
@@ -339,11 +347,15 @@ export async function validateCoopJoinCode(rawCode: string): Promise<{
 
 function cleanupSubscriptionsAndAudio(): void {
   roomUnsub?.();
+  kickedUnsub?.();
+  snapshotUnsub?.();
   membersUnsub?.();
   inputsUnsub?.();
   messagesUnsub?.();
   signalsUnsub?.();
   roomUnsub = null;
+  kickedUnsub = null;
+  snapshotUnsub = null;
   membersUnsub = null;
   inputsUnsub = null;
   messagesUnsub = null;
@@ -420,7 +432,7 @@ function sanitizeAppearance(app?: Partial<CharacterAppearance> | null): Characte
 }
 
 function makeSlimSnapshot(w: WorldState): string {
-  // Keep snapshot compact & fast for Firestore (< 100 KB) by stripping nested other-island snapshots & snow particles
+  // Keep snapshot compact & fast (< 100 KB) by stripping nested other-island snapshots & snow particles
   const slim: WorldState = {
     ...w,
     mode: 'playing',
@@ -432,41 +444,35 @@ function makeSlimSnapshot(w: WorldState): string {
 }
 
 function subscribeCommonRoomChannels(code: string, myUid: string): void {
-  const db = getFirestoreDb();
-  if (!db) return;
+  const rtdb = getRealtimeDb();
+  if (!rtdb) return;
 
   roomConnectedAtMs = Date.now();
 
-  // 1. Live Members list
-  membersUnsub = onSnapshot(collection(db, 'coop_rooms', code, 'members'), (snap) => {
+  // 1. Live Members list (Realtime Database WebSocket)
+  membersUnsub = onValue(ref(rtdb, `coop_rooms/${code}/members`), (snap) => {
+    const rawMap = (snap.val() as Record<string, Record<string, unknown>> | null) ?? {};
     const list: CoopMember[] = [];
-    snap.forEach((docSnap) => {
-      const d = docSnap.data() as Record<string, unknown>;
+    for (const [uidKey, d] of Object.entries(rawMap)) {
+      if (!d || typeof d !== 'object') continue;
       list.push({
-        uid: String(d.uid ?? docSnap.id),
+        uid: String(d.uid ?? uidKey),
         email: String(d.email ?? ''),
         displayName: String(d.displayName ?? 'Monarca'),
         photoURL: typeof d.photoURL === 'string' ? d.photoURL : null,
         role: d.role === 'host' ? 'host' : 'guest',
-        appearance: (d.appearance as CharacterAppearance) ?? {
-          gender: 'king',
-          name: String(d.displayName ?? 'Monarca'),
-          outfitIndex: 0,
-          hairIndex: 0,
-          horseIndex: 0,
-          crownIndex: 0,
-        },
+        appearance: sanitizeAppearance(d.appearance as Partial<CharacterAppearance> | undefined),
         micOn: d.micOn === true,
         joinedAtMs: typeof d.joinedAtMs === 'number' ? d.joinedAtMs : 0,
       });
-    });
+    }
     list.sort((a, b) => {
       if (a.role !== b.role) return a.role === 'host' ? -1 : 1;
       return a.joinedAtMs - b.joinedAtMs;
     });
     coopState.members = list;
 
-    // Clean up disconnected WebRTC peers & offer connections to newly joined peers if mic is active
+    // Clean up disconnected WebRTC peers & offer connections to newly joined peers
     const activeUids = new Set(list.map((m) => m.uid));
     for (const [peerUid, pc] of peerConnections.entries()) {
       if (!activeUids.has(peerUid)) {
@@ -495,7 +501,7 @@ function subscribeCommonRoomChannels(code: string, myUid: string): void {
         }
       }
     }
-    // Host proactively opens P2P (DataChannel + audio) to newly joined guests to avoid Firestore write quota burn!
+    // Host proactively opens P2P (DataChannel + audio) to newly joined guests
     const shouldOfferToPeers = (localAudioStream && coopState.micOn) || coopState.role === 'host';
     if (shouldOfferToPeers) {
       for (const m of list) {
@@ -510,21 +516,18 @@ function subscribeCommonRoomChannels(code: string, myUid: string): void {
     notify();
   });
 
-  // 2. Live Text Chat messages
-  const msgQ = query(
-    collection(db, 'coop_rooms', code, 'messages'),
-    orderBy('createdAtMs', 'asc'),
-    limit(60)
-  );
-  messagesUnsub = onSnapshot(
+  // 2. Live Text Chat messages (last 60 messages)
+  const msgQ = query(ref(rtdb, `coop_rooms/${code}/messages`), limitToLast(60));
+  messagesUnsub = onValue(
     msgQ,
     (snap) => {
       const prevCount = coopState.messages.length;
       const msgs: CoopChatMessage[] = [];
-      snap.forEach((docSnap) => {
-        const d = docSnap.data() as Record<string, unknown>;
+      snap.forEach((childSnap) => {
+        const d = childSnap.val() as Record<string, unknown> | null;
+        if (!d || typeof d !== 'object') return;
         msgs.push({
-          id: docSnap.id,
+          id: childSnap.key ?? `${Date.now()}`,
           uid: String(d.uid ?? ''),
           email: String(d.email ?? ''),
           displayName: String(d.displayName ?? 'Monarca'),
@@ -532,6 +535,7 @@ function subscribeCommonRoomChannels(code: string, myUid: string): void {
           createdAtMs: typeof d.createdAtMs === 'number' ? d.createdAtMs : 0,
         });
       });
+      msgs.sort((a, b) => a.createdAtMs - b.createdAtMs);
       coopState.messages = msgs;
       if (!coopState.chatOpen && msgs.length > prevCount) {
         const latest = msgs[msgs.length - 1];
@@ -542,77 +546,72 @@ function subscribeCommonRoomChannels(code: string, myUid: string): void {
       notify();
     },
     (err) => {
-      console.warn('[Corona Co-op] Chat snapshot error:', err);
+      console.warn('[Corona Co-op] Chat listener error:', err);
     }
   );
 
-  // 3. Ordered Live Voice Signaling & Relay channel (WebRTC offer/answer/ICE + CGNAT-proof Opus voice_chunk!)
-  const sigQ = query(
-    collection(db, 'coop_rooms', code, 'signals'),
-    orderBy('createdAtMs', 'asc')
-  );
-  signalsUnsub = onSnapshot(
-    sigQ,
-    (snap) => {
-      snap.docChanges().forEach((chg) => {
-        if (chg.type !== 'added') return;
-        const sigId = chg.doc.id;
-        if (processedSignalIds.has(sigId)) return;
-        const d = chg.doc.data() as Record<string, unknown>;
-        const createdAtMs = typeof d.createdAtMs === 'number' ? d.createdAtMs : 0;
-        const toUid = String(d.to ?? '');
-        const fromUid = String(d.from ?? '');
-        const sigType = String(d.type ?? '');
+  // 3. Ordered Live Voice Signaling & Opus Relay channel (WebSocket onChildAdded — ~30ms!)
+  signalsUnsub = onChildAdded(
+    ref(rtdb, `coop_rooms/${code}/signals`),
+    (childSnap) => {
+      const sigId = childSnap.key ?? '';
+      if (!sigId || processedSignalIds.has(sigId)) return;
+      const d = childSnap.val() as Record<string, unknown> | null;
+      if (!d || typeof d !== 'object') return;
+      const createdAtMs = typeof d.createdAtMs === 'number' ? d.createdAtMs : 0;
+      const toUid = String(d.to ?? '');
+      const fromUid = String(d.from ?? '');
+      const sigType = String(d.type ?? '');
 
-        // Ignore & prune stale signals from earlier sessions
-        if (createdAtMs > 0 && createdAtMs < roomConnectedAtMs - 10000) {
-          processedSignalIds.add(sigId);
-          if (Date.now() - createdAtMs > 25000) {
-            void deleteDoc(chg.doc.ref).catch(() => {});
-          }
-          return;
-        }
-
-        if (fromUid === myUid) return;
-        if (toUid !== myUid && toUid !== 'all') return;
+      // Ignore & prune stale signals from earlier sessions
+      if (createdAtMs > 0 && createdAtMs < roomConnectedAtMs - 10000) {
         processedSignalIds.add(sigId);
-
-        if (sigType === 'voice_chunk') {
-          if (typeof d.b64 === 'string' && !isPeerWebRtcConnected(fromUid)) {
-            void playIncomingRelayChunk(fromUid, String(d.mime ?? 'audio/webm'), d.b64);
-          }
-          return;
+        if (Date.now() - createdAtMs > 25000) {
+          void remove(childSnap.ref).catch(() => {});
         }
+        return;
+      }
 
-        // Serialize WebRTC offer/answer/ICE strictly in chronological order per peer!
-        enqueuePeerSignal(fromUid, async () => {
-          await handleIncomingVoiceSignal(code, myUid, fromUid, d);
-          if (toUid === myUid) {
-            void deleteDoc(chg.doc.ref).catch(() => {});
-          }
-        });
+      if (fromUid === myUid) return;
+      if (toUid !== myUid && toUid !== 'all') return;
+      processedSignalIds.add(sigId);
+
+      if (sigType === 'voice_chunk') {
+        if (typeof d.b64 === 'string' && !isPeerWebRtcConnected(fromUid)) {
+          void playIncomingRelayChunk(fromUid, String(d.mime ?? 'audio/webm'), d.b64);
+        }
+        return;
+      }
+
+      // Serialize WebRTC offer/answer/ICE strictly in chronological order per peer
+      enqueuePeerSignal(fromUid, async () => {
+        await handleIncomingVoiceSignal(code, myUid, fromUid, d);
+        if (toUid === myUid) {
+          void remove(childSnap.ref).catch(() => {});
+        }
       });
     },
     (err) => {
-      console.warn('[Corona Co-op] Voice signal snapshot error:', err);
+      console.warn('[Corona Co-op] Voice signal listener error:', err);
     }
   );
 }
 
 /**
  * HOST ONLY: Opens the player's current campaign to online Co-op (up to 4 players) and generates a room code.
+ * Backed by Firebase Realtime Database (zero Firestore write quota usage!).
  */
 export async function hostOpenCoopRoom(
   world: WorldState,
   onProgress?: (msg: string) => void
 ): Promise<{ ok: boolean; code?: string; error?: string }> {
   const user = authCloudState.user;
-  const db = getFirestoreDb();
+  const rtdb = getRealtimeDb();
   if (!user) {
     return { ok: false, error: 'Conecte sua conta Google para abrir o Co-op online.' };
   }
-  if (!db) {
-    return { ok: false, error: 'Banco Firestore não inicializado. Recarregue a página.' };
+  if (!rtdb) {
+    return { ok: false, error: 'Realtime Database não inicializado. Recarregue a página.' };
   }
   onProgress?.('Verificando conta...');
   const ban = await checkMyCommunityBan();
@@ -651,38 +650,38 @@ export async function hostOpenCoopRoom(
     snapshotJson = '{}';
   }
 
+  const nowMs = Date.now();
   try {
+    // Single atomic write creates room metadata, initial world snapshot, and Host member entry!
     await withTimeout(
-      setDoc(doc(db, 'coop_rooms', code), {
-        code,
-        hostUid: user.uid,
-        hostEmail: safeEmail,
-        hostName: safeName,
-        hostPhoto: safePhoto,
-        active: true,
-        maxPlayers: MAX_COOP_PLAYERS,
-        kickedUids: [],
-        worldSnapshotJson: snapshotJson,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      set(ref(rtdb, `coop_rooms/${code}`), {
+        meta: {
+          code,
+          hostUid: user.uid,
+          hostEmail: safeEmail,
+          hostName: safeName,
+          hostPhoto: safePhoto,
+          active: true,
+          maxPlayers: MAX_COOP_PLAYERS,
+          createdAtMs: nowMs,
+          updatedAtMs: nowMs,
+        },
+        snapshot: snapshotJson,
+        members: {
+          [user.uid]: {
+            uid: user.uid,
+            email: safeEmail,
+            displayName: safeName,
+            photoURL: safePhoto,
+            role: 'host',
+            appearance: safeAppearance,
+            micOn: Boolean(coopState.micOn),
+            joinedAtMs: nowMs,
+          },
+        },
       }),
-      9000,
+      8000,
       'timeout-create-room'
-    );
-
-    await withTimeout(
-      setDoc(doc(db, 'coop_rooms', code, 'members', user.uid), {
-        uid: user.uid,
-        email: safeEmail,
-        displayName: safeName,
-        photoURL: safePhoto,
-        role: 'host',
-        appearance: safeAppearance,
-        micOn: Boolean(coopState.micOn),
-        joinedAtMs: Date.now(),
-      }),
-      9000,
-      'timeout-create-member'
     );
 
     coopState.active = true;
@@ -693,12 +692,11 @@ export async function hostOpenCoopRoom(
 
     subscribeCommonRoomChannels(code, user.uid);
 
-    // Host listens to guest inputs in real time
-    inputsUnsub = onSnapshot(collection(db, 'coop_rooms', code, 'inputs'), (snap) => {
-      snap.forEach((docSnap) => {
-        const uid = docSnap.id;
-        if (uid === user.uid) return;
-        const d = docSnap.data() as Record<string, unknown>;
+    // Host listens to guest fallback inputs in real time
+    inputsUnsub = onValue(ref(rtdb, `coop_rooms/${code}/inputs`), (snap) => {
+      const rawInputs = (snap.val() as Record<string, Record<string, unknown>> | null) ?? {};
+      for (const [uid, d] of Object.entries(rawInputs)) {
+        if (uid === user.uid || !d || typeof d !== 'object') continue;
         remoteRawInputs.set(uid, {
           left: d.left === true,
           right: d.right === true,
@@ -707,7 +705,7 @@ export async function hostOpenCoopRoom(
           powerSeq: typeof d.powerSeq === 'number' ? d.powerSeq : 0,
           updatedAtMs: typeof d.updatedAtMs === 'number' ? d.updatedAtMs : 0,
         });
-      });
+      }
     });
 
     notify();
@@ -715,24 +713,17 @@ export async function hostOpenCoopRoom(
   } catch (err) {
     console.warn('[Corona Co-op] Failed to open room:', err);
     resetCoopState(true);
-    const errCode = (err as { code?: string })?.code ?? '';
-    const errMsg = (err as { message?: string })?.message ?? '';
-    if (errCode === 'resource-exhausted') {
+    const errCode = String((err as { code?: string })?.code ?? '');
+    const errMsg = String((err as { message?: string })?.message ?? '');
+    if (errCode.toLowerCase().includes('permission') || errMsg.toLowerCase().includes('permission_denied')) {
       return {
         ok: false,
-        error:
-          'Cota diária gratuita do Firestore atingida (20.000 gravações/dia)! Reinicia às 04h (Brasília) ou ative o plano Blaze no Firebase.',
-      };
-    }
-    if (errCode === 'permission-denied') {
-      return {
-        ok: false,
-        error: 'Permissão negada no Firestore (publique as Regras do Firestore para coop_rooms).',
+        error: 'Permissão negada no Realtime Database. Publique as Regras JSON do Realtime Database no Firebase.',
       };
     }
     if (errMsg.startsWith('timeout-')) {
-      onProgress?.('Diagnosticando resposta do Firestore...');
-      const diag = await diagnoseFirestoreTimeout(code);
+      onProgress?.('Diagnosticando Realtime Database...');
+      const diag = await diagnoseRealtimeDbTimeout(code);
       return { ok: false, error: diag };
     }
     const detail = errCode
@@ -742,40 +733,33 @@ export async function hostOpenCoopRoom(
   }
 }
 
-async function diagnoseFirestoreTimeout(code: string): Promise<string> {
+async function diagnoseRealtimeDbTimeout(code: string): Promise<string> {
   try {
     const token = await getCurrentAuthIdToken();
-    const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(FIREBASE_CONFIG.projectId)}/databases/(default)/documents/coop_rooms/${encodeURIComponent(code)}?updateMask.fieldPaths=active`;
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers.Authorization = `Bearer ${token}`;
+    const base = FIREBASE_CONFIG.databaseURL.replace(/\/+$/, '');
+    const url = `${base}/coop_rooms/${encodeURIComponent(code)}/meta.json${token ? `?auth=${encodeURIComponent(token)}` : ''}`;
     const res = await withTimeout(
       fetch(url, {
         method: 'PATCH',
-        headers,
-        body: JSON.stringify({ fields: { active: { booleanValue: false } } }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: false }),
       }),
       5000,
       'rest-timeout'
     );
-    if (res.status === 429) {
-      return 'Cota diária gratuita do Firestore atingida (20.000 gravações/dia)! Reinicia às 04h (Brasília) ou ative o plano Blaze no Firebase.';
-    }
-    if (res.status === 403) {
-      return 'Permissão negada no Firestore (HTTP 403). Publique as Regras do Firestore incluindo coop_rooms.';
-    }
-    if (res.status === 401) {
-      return 'Sessão Google expirada (HTTP 401). Saia da conta Google no menu e faça login novamente.';
+    if (res.status === 401 || res.status === 403) {
+      return 'Permissão negada no Realtime Database (HTTP 401/403). Confira se publicou as Regras JSON no Realtime Database.';
     }
     if (res.status === 404) {
-      return 'Banco Firestore não encontrado (HTTP 404). Verifique se o Cloud Firestore está criado no Firebase.';
+      return 'Realtime Database não encontrado (HTTP 404). Verifique a URL no Firebase Console.';
     }
     if (res.ok) {
-      return 'Firestore respondeu via HTTPS, mas o canal em tempo real demorou. Recarregue a página e tente novamente.';
+      return 'Realtime Database respondeu via HTTPS, mas o WebSocket demorou. Recarregue a página e tente novamente.';
     }
-    const bodyText = (await res.text().catch(() => '')).slice(0, 120);
-    return `Firestore respondeu HTTP ${res.status}: ${bodyText || res.statusText}`;
+    const bodyText = (await res.text().catch(() => '')).slice(0, 100);
+    return `Realtime Database respondeu HTTP ${res.status}: ${bodyText || res.statusText}`;
   } catch {
-    return 'Sem resposta do servidor Firestore. Verifique sua conexão com a internet ou bloqueadores de rede/VPN.';
+    return 'Sem resposta do Realtime Database. Verifique sua conexão com a internet.';
   }
 }
 
@@ -784,19 +768,19 @@ async function diagnoseFirestoreTimeout(code: string): Promise<string> {
  */
 export async function hostCloseCoopRoom(world?: WorldState): Promise<void> {
   if (!coopState.active || coopState.role !== 'host' || !coopState.roomCode) return;
-  const db = getFirestoreDb();
+  const rtdb = getRealtimeDb();
   const code = coopState.roomCode;
   if (world && world.monarchs.length > 1) {
     world.monarchs = [world.monarchs[0]];
   }
   resetCoopState();
-  if (db) {
+  if (rtdb) {
     try {
-      await setDoc(
-        doc(db, 'coop_rooms', code),
-        { active: false, closedAt: serverTimestamp(), updatedAt: serverTimestamp() },
-        { merge: true }
-      );
+      await update(ref(rtdb, `coop_rooms/${code}/meta`), {
+        active: false,
+        closedAtMs: Date.now(),
+        updatedAtMs: Date.now(),
+      });
     } catch {
       // Ignore network close errors
     }
@@ -809,17 +793,15 @@ export async function hostCloseCoopRoom(world?: WorldState): Promise<void> {
 export async function hostKickCoopPlayer(targetUid: string, world?: WorldState): Promise<boolean> {
   if (!coopState.active || coopState.role !== 'host' || !coopState.roomCode) return false;
   if (targetUid === coopState.hostUid) return false;
-  const db = getFirestoreDb();
-  if (!db) return false;
+  const rtdb = getRealtimeDb();
+  if (!rtdb) return false;
   const code = coopState.roomCode;
   try {
-    await setDoc(
-      doc(db, 'coop_rooms', code),
-      { kickedUids: arrayUnion(targetUid), updatedAt: serverTimestamp() },
-      { merge: true }
-    );
-    await deleteDoc(doc(db, 'coop_rooms', code, 'members', targetUid));
-    await deleteDoc(doc(db, 'coop_rooms', code, 'inputs', targetUid));
+    await Promise.all([
+      set(ref(rtdb, `coop_rooms/${code}/kicked/${targetUid}`), true),
+      remove(ref(rtdb, `coop_rooms/${code}/members/${targetUid}`)),
+      remove(ref(rtdb, `coop_rooms/${code}/inputs/${targetUid}`)),
+    ]);
     if (world) {
       world.monarchs = world.monarchs.filter((m, idx) => idx === 0 || m.playerUid !== targetUid);
     }
@@ -842,17 +824,24 @@ export async function joinCoopRoomAsGuest(
     return { ok: false, error: validation.error ?? 'Código inválido.' };
   }
   const user = authCloudState.user;
-  const db = getFirestoreDb();
-  if (!user || !db) return { ok: false, error: 'Conta Google necessária.' };
+  const rtdb = getRealtimeDb();
+  if (!user || !rtdb) return { ok: false, error: 'Conta Google necessária.' };
 
   const code = validation.code;
   resetCoopState(true);
 
   try {
-    const roomSnap = await getDoc(doc(db, 'coop_rooms', code));
-    if (!roomSnap.exists()) return { ok: false, error: 'Sala não encontrada.' };
-    const roomData = roomSnap.data() as Record<string, unknown>;
-    if (roomData.active !== true) return { ok: false, error: 'Sala encerrada pelo Host.' };
+    const [metaSnap, snapSnap] = await withTimeout(
+      Promise.all([
+        get(ref(rtdb, `coop_rooms/${code}/meta`)),
+        get(ref(rtdb, `coop_rooms/${code}/snapshot`)),
+      ]),
+      7000,
+      'timeout-join-room'
+    );
+    if (!metaSnap.exists()) return { ok: false, error: 'Sala não encontrada.' };
+    const meta = metaSnap.val() as Record<string, unknown>;
+    if (meta.active !== true) return { ok: false, error: 'Sala encerrada pelo Host.' };
 
     const safeApp = sanitizeAppearance(appearance);
     const safeName = user.displayName || safeApp.name || 'Monarca';
@@ -861,7 +850,9 @@ export async function joinCoopRoomAsGuest(
       name: safeApp.name.trim() || safeName,
     };
 
-    await setDoc(doc(db, 'coop_rooms', code, 'members', user.uid), {
+    const memberRef = ref(rtdb, `coop_rooms/${code}/members/${user.uid}`);
+    const inputRef = ref(rtdb, `coop_rooms/${code}/inputs/${user.uid}`);
+    await set(memberRef, {
       uid: user.uid,
       email: user.email || '',
       displayName: safeName,
@@ -871,17 +862,21 @@ export async function joinCoopRoomAsGuest(
       micOn: Boolean(coopState.micOn),
       joinedAtMs: Date.now(),
     });
+    // Auto-cleanup if guest closes browser tab or drops offline
+    void onDisconnect(memberRef).remove().catch(() => {});
+    void onDisconnect(inputRef).remove().catch(() => {});
 
     coopState.active = true;
     coopState.role = 'guest';
     coopState.roomCode = code;
-    coopState.hostUid = String(roomData.hostUid ?? '');
-    coopState.hostName = String(roomData.hostName ?? 'Host');
+    coopState.hostUid = String(meta.hostUid ?? '');
+    coopState.hostName = String(meta.hostName ?? 'Host');
 
     let initialWorld: WorldState | undefined;
-    if (typeof roomData.worldSnapshotJson === 'string') {
+    const rawSnapJson = snapSnap.val();
+    if (typeof rawSnapJson === 'string') {
       try {
-        initialWorld = JSON.parse(roomData.worldSnapshotJson) as WorldState;
+        initialWorld = JSON.parse(rawSnapJson) as WorldState;
         initialWorld.mode = 'playing';
         initialWorld.localPlayerUid = user.uid;
       } catch {
@@ -891,28 +886,34 @@ export async function joinCoopRoomAsGuest(
 
     subscribeCommonRoomChannels(code, user.uid);
 
-    // Guest subscribes to room document for live world snapshots & kick/close events
-    roomUnsub = onSnapshot(doc(db, 'coop_rooms', code), (docSnap) => {
+    // 1. Watch room meta for Host closing room
+    roomUnsub = onValue(ref(rtdb, `coop_rooms/${code}/meta`), (docSnap) => {
       if (!docSnap.exists()) {
         resetCoopState();
         onGuestForceExit?.('A sala Co-op foi encerrada.');
         return;
       }
-      const d = docSnap.data() as Record<string, unknown>;
+      const d = docSnap.val() as Record<string, unknown>;
       if (d.active !== true) {
         resetCoopState();
         onGuestForceExit?.('O Host encerrou o modo Co-op.');
-        return;
       }
-      const kicked = Array.isArray(d.kickedUids) ? (d.kickedUids as string[]) : [];
-      if (kicked.includes(user.uid)) {
+    });
+
+    // 2. Watch instant kick flag for this guest
+    kickedUnsub = onValue(ref(rtdb, `coop_rooms/${code}/kicked/${user.uid}`), (kSnap) => {
+      if (kSnap.exists() && kSnap.val() === true) {
         resetCoopState();
         onGuestForceExit?.('Você foi removido da campanha pelo Host.');
-        return;
       }
-      if (typeof d.worldSnapshotJson === 'string') {
+    });
+
+    // 3. Watch live world snapshot fallback (used whenever WebRTC DataChannel is not yet open)
+    snapshotUnsub = onValue(ref(rtdb, `coop_rooms/${code}/snapshot`), (sSnap) => {
+      const jsonStr = sSnap.val();
+      if (typeof jsonStr === 'string') {
         try {
-          const parsed = JSON.parse(d.worldSnapshotJson) as WorldState;
+          const parsed = JSON.parse(jsonStr) as WorldState;
           parsed.mode = 'playing';
           parsed.localPlayerUid = user.uid;
           latestGuestWorldSnapshot = parsed;
@@ -936,14 +937,16 @@ export async function joinCoopRoomAsGuest(
  */
 export async function leaveCoopAsGuest(): Promise<void> {
   if (!coopState.active || coopState.role !== 'guest' || !coopState.roomCode) return;
-  const db = getFirestoreDb();
+  const rtdb = getRealtimeDb();
   const user = authCloudState.user;
   const code = coopState.roomCode;
   resetCoopState();
-  if (db && user) {
+  if (rtdb && user) {
     try {
-      await deleteDoc(doc(db, 'coop_rooms', code, 'members', user.uid));
-      await deleteDoc(doc(db, 'coop_rooms', code, 'inputs', user.uid));
+      await Promise.all([
+        remove(ref(rtdb, `coop_rooms/${code}/members/${user.uid}`)),
+        remove(ref(rtdb, `coop_rooms/${code}/inputs/${user.uid}`)),
+      ]);
     } catch {
       // Ignore network errors on exit
     }
@@ -1069,18 +1072,11 @@ export function hostSyncCoopWorld(world: WorldState): Map<string, InputState> {
       }
     }
 
-    const db = getFirestoreDb();
-    if (db && anyGuestNeedsFirestore && now - lastHostBroadcastMs >= 650) {
+    const rtdb = getRealtimeDb();
+    if (rtdb && anyGuestNeedsFirestore && now - lastHostBroadcastMs >= 200) {
       lastHostBroadcastMs = now;
       const code = coopState.roomCode;
-      void setDoc(
-        doc(db, 'coop_rooms', code),
-        {
-          worldSnapshotJson: cachedSnap ?? makeSlimSnapshot(world),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      ).catch(() => {
+      void set(ref(rtdb, `coop_rooms/${code}/snapshot`), cachedSnap ?? makeSlimSnapshot(world)).catch(() => {
         // Transient write error ignored
       });
     }
@@ -1106,7 +1102,7 @@ export function guestSyncCoopFrame(
 
   const key = `${localInput.left ? 1 : 0}${localInput.right ? 1 : 0}${localInput.sprint ? 1 : 0}:${guestDropSeq}:${guestPowerSeq}`;
   const now = performance.now();
-  const db = getFirestoreDb();
+  const rtdb = getRealtimeDb();
   const user = authCloudState.user;
 
   if (user && key !== lastSentInputKey) {
@@ -1127,10 +1123,10 @@ export function guestSyncCoopFrame(
       } catch {
         // Ignore transient DataChannel error
       }
-    } else if (db && now - lastGuestInputMs >= 140) {
+    } else if (rtdb && now - lastGuestInputMs >= 100) {
       lastSentInputKey = key;
       lastGuestInputMs = now;
-      void setDoc(doc(db, 'coop_rooms', coopState.roomCode, 'inputs', user.uid), payload).catch(() => {
+      void set(ref(rtdb, `coop_rooms/${coopState.roomCode}/inputs/${user.uid}`), payload).catch(() => {
         // Ignore transient write failures
       });
     }
@@ -1149,9 +1145,7 @@ export function guestSyncCoopFrame(
 }
 
 /**
- * Sends a text chat message:
- * - In an active Co-op room: syncs in real time via Firestore to all players in the room.
- * - Solo (before opening Co-op): appends locally so the chat drawer works immediately and invites opening Co-op.
+ * Sends a text chat message in real time via Firebase Realtime Database to all players in the Co-op room.
  */
 export async function sendCoopChatMessage(
   rawText: string
@@ -1162,7 +1156,7 @@ export async function sendCoopChatMessage(
   const user = authCloudState.user;
   const senderName = user?.displayName || 'Você';
 
-  // Solo / before Co-op room is opened: show message locally immediately so chat works right away
+  // Solo / before Co-op room is opened: show message locally immediately
   if (!coopState.active || !coopState.roomCode) {
     coopState.messages = [
       ...coopState.messages.slice(-59),
@@ -1179,30 +1173,29 @@ export async function sendCoopChatMessage(
     return { ok: true, localOnly: true };
   }
 
-  const db = getFirestoreDb();
-  if (!db || !user) {
+  const rtdb = getRealtimeDb();
+  if (!rtdb || !user) {
     return { ok: false, error: 'Conecte sua conta Google para enviar mensagens no Co-op.' };
   }
 
   try {
-    await addDoc(collection(db, 'coop_rooms', coopState.roomCode, 'messages'), {
+    await push(ref(rtdb, `coop_rooms/${coopState.roomCode}/messages`), {
       uid: user.uid,
       email: user.email,
       displayName: user.displayName,
       text,
       createdAtMs: Date.now(),
-      createdAt: serverTimestamp(),
     });
     return { ok: true };
   } catch (err) {
     console.warn('[Corona Co-op] Failed to send chat message:', err);
-    return { ok: false, error: 'Sem permissão no Firestore para enviar chat. Publique as Regras do Firestore.' };
+    return { ok: false, error: 'Sem permissão no Realtime Database para enviar chat.' };
   }
 }
 
 /**
  * Reports & IMMEDIATELY BANS a player from the Co-op community, kicks them from the room,
- * records the complaint in Firestore for Admin review, and opens the Google Form!
+ * records the complaint in Realtime Database for Admin review, and opens the Google Form!
  */
 export async function reportAndBanCoopPlayer(
   target: CoopMember,
@@ -1210,7 +1203,7 @@ export async function reportAndBanCoopPlayer(
   details: string,
   world?: WorldState
 ): Promise<{ ok: boolean; formUrl: string; customFormConfigured: boolean; error?: string }> {
-  const db = getFirestoreDb();
+  const rtdb = getRealtimeDb();
   const me = authCloudState.user;
   const formUrl = buildCommunityReportFormUrl({
     reporterEmail: me?.email ?? '',
@@ -1219,7 +1212,7 @@ export async function reportAndBanCoopPlayer(
     details,
   });
 
-  if (!db || !me) {
+  if (!rtdb || !me) {
     return {
       ok: false,
       formUrl,
@@ -1230,42 +1223,35 @@ export async function reportAndBanCoopPlayer(
 
   try {
     const nowMs = Date.now();
-    const record: CommunityBanRecord = {
+    const record = {
       uid: target.uid,
-      email: target.email,
-      displayName: target.displayName,
-      photoURL: target.photoURL,
+      email: target.email || '',
+      displayName: target.displayName || 'Jogador',
+      photoURL: target.photoURL ?? null,
       banned: true,
       reason,
       details: details.trim().slice(0, 400),
       reporterUid: me.uid,
-      reporterEmail: me.email,
-      reporterName: me.displayName,
+      reporterEmail: me.email || '',
+      reporterName: me.displayName || 'Monarca',
       roomCode: coopState.roomCode ?? 'COOP',
       createdAtMs: nowMs,
     };
 
     // 1. Immediately ban the reported player in community_bans/{uid}
-    await setDoc(doc(db, 'community_bans', target.uid), {
-      ...record,
-      createdAt: serverTimestamp(),
-    });
+    await set(ref(rtdb, `community_bans/${target.uid}`), record);
 
     // 2. Append immutable report log in community_reports
-    await addDoc(collection(db, 'community_reports'), {
-      ...record,
-      createdAt: serverTimestamp(),
-    });
+    await push(ref(rtdb, 'community_reports'), record);
 
     // 3. Immediately remove them from the active room
     if (coopState.active && coopState.roomCode) {
-      await setDoc(
-        doc(db, 'coop_rooms', coopState.roomCode),
-        { kickedUids: arrayUnion(target.uid), updatedAt: serverTimestamp() },
-        { merge: true }
-      );
-      await deleteDoc(doc(db, 'coop_rooms', coopState.roomCode, 'members', target.uid));
-      await deleteDoc(doc(db, 'coop_rooms', coopState.roomCode, 'inputs', target.uid));
+      const code = coopState.roomCode;
+      await Promise.all([
+        set(ref(rtdb, `coop_rooms/${code}/kicked/${target.uid}`), true),
+        remove(ref(rtdb, `coop_rooms/${code}/members/${target.uid}`)),
+        remove(ref(rtdb, `coop_rooms/${code}/inputs/${target.uid}`)),
+      ]);
       if (world) {
         world.monarchs = world.monarchs.filter((m, idx) => idx === 0 || m.playerUid !== target.uid);
       }
@@ -1302,17 +1288,16 @@ export async function reportAndBanCoopPlayer(
  * ADMIN ONLY (guillermes.mozzer@gmail.com): Loads all community bans/reports.
  */
 export async function fetchCommunityBans(): Promise<CommunityBanRecord[]> {
-  const db = getFirestoreDb();
-  if (!db || !authCloudState.user?.isAdmin) return [];
+  const rtdb = getRealtimeDb();
+  if (!rtdb || !authCloudState.user?.isAdmin) return [];
   try {
-    const snap = await getDocs(
-      query(collection(db, 'community_bans'), orderBy('createdAtMs', 'desc'), limit(100))
-    );
+    const snap = await get(ref(rtdb, 'community_bans'));
+    const rawMap = (snap.val() as Record<string, Record<string, unknown>> | null) ?? {};
     const rows: CommunityBanRecord[] = [];
-    snap.forEach((docSnap) => {
-      const d = docSnap.data() as Record<string, unknown>;
+    for (const [uidKey, d] of Object.entries(rawMap)) {
+      if (!d || typeof d !== 'object') continue;
       rows.push({
-        uid: String(d.uid ?? docSnap.id),
+        uid: String(d.uid ?? uidKey),
         email: String(d.email ?? ''),
         displayName: String(d.displayName ?? 'Jogador'),
         photoURL: typeof d.photoURL === 'string' ? d.photoURL : null,
@@ -1327,8 +1312,9 @@ export async function fetchCommunityBans(): Promise<CommunityBanRecord[]> {
         unbannedAtMs: typeof d.unbannedAtMs === 'number' ? d.unbannedAtMs : undefined,
         unbannedBy: typeof d.unbannedBy === 'string' ? d.unbannedBy : undefined,
       });
-    });
-    return rows;
+    }
+    rows.sort((a, b) => b.createdAtMs - a.createdAtMs);
+    return rows.slice(0, 100);
   } catch {
     return [];
   }
@@ -1338,20 +1324,15 @@ export async function fetchCommunityBans(): Promise<CommunityBanRecord[]> {
  * ADMIN ONLY (guillermes.mozzer@gmail.com): Re-authorizes a banned player to enter the Co-op community again.
  */
 export async function adminUnbanCommunityPlayer(targetUid: string): Promise<boolean> {
-  const db = getFirestoreDb();
+  const rtdb = getRealtimeDb();
   const me = authCloudState.user;
-  if (!db || !me?.isAdmin) return false;
+  if (!rtdb || !me?.isAdmin) return false;
   try {
-    await setDoc(
-      doc(db, 'community_bans', targetUid),
-      {
-        banned: false,
-        unbannedBy: me.email,
-        unbannedAtMs: Date.now(),
-        unbannedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
+    await update(ref(rtdb, `community_bans/${targetUid}`), {
+      banned: false,
+      unbannedBy: me.email,
+      unbannedAtMs: Date.now(),
+    });
     return true;
   } catch {
     return false;
@@ -1680,9 +1661,9 @@ function startVoiceRelayLoopIfNeeded(): void {
 
   const runSingleRelaySegment = () => {
     const user = authCloudState.user;
-    const db = getFirestoreDb();
+    const rtdb = getRealtimeDb();
     const code = coopState.roomCode;
-    if (!coopState.active || !code || !coopState.micOn || !localAudioStream || !user || !db) {
+    if (!coopState.active || !code || !coopState.micOn || !localAudioStream || !user || !rtdb) {
       stopVoiceRelayLoop();
       return;
     }
@@ -1720,7 +1701,7 @@ function startVoiceRelayLoopIfNeeded(): void {
             void blobToBase64(blob)
               .then(async (b64) => {
                 if (!coopState.active || coopState.roomCode !== code || !coopState.micOn) return;
-                const docRef = await addDoc(collection(db, 'coop_rooms', code, 'signals'), {
+                const sigRef = await push(ref(rtdb, `coop_rooms/${code}/signals`), {
                   from: user.uid,
                   to: 'all',
                   type: 'voice_chunk',
@@ -1728,10 +1709,10 @@ function startVoiceRelayLoopIfNeeded(): void {
                   b64,
                   createdAtMs: Date.now(),
                 });
-                // Auto-expire relay chunk after 10s so Firestore stays clean & tiny
+                // Auto-expire relay chunk after 8s so Realtime Database stays clean & tiny
                 window.setTimeout(() => {
-                  void deleteDoc(docRef).catch(() => {});
-                }, 10000);
+                  void remove(sigRef).catch(() => {});
+                }, 8000);
               })
               .catch(() => {});
           }
@@ -1953,9 +1934,9 @@ function getOrCreatePeerConnection(code: string, myUid: string, peerUid: string)
 
   pc.onicecandidate = (ev) => {
     if (!ev.candidate) return;
-    const db = getFirestoreDb();
-    if (!db) return;
-    void addDoc(collection(db, 'coop_rooms', code, 'signals'), {
+    const rtdb = getRealtimeDb();
+    if (!rtdb) return;
+    void push(ref(rtdb, `coop_rooms/${code}/signals`), {
       from: myUid,
       to: peerUid,
       type: 'ice',
@@ -2000,8 +1981,8 @@ async function attachLocalAudioAndOffer(
   peerUid: string,
   iceRestart = false
 ): Promise<void> {
-  const db = getFirestoreDb();
-  if (!db) return;
+  const rtdb = getRealtimeDb();
+  if (!rtdb) return;
   try {
     const pc = getOrCreatePeerConnection(code, myUid, peerUid);
     if (coopState.role === 'host' && !peerDataChannels.has(peerUid)) {
@@ -2015,7 +1996,7 @@ async function attachLocalAudioAndOffer(
     await ensureSendRecvAudioTrack(pc);
     const offer = await pc.createOffer({ offerToReceiveAudio: true, iceRestart });
     await pc.setLocalDescription(offer);
-    await addDoc(collection(db, 'coop_rooms', code, 'signals'), {
+    await push(ref(rtdb, `coop_rooms/${code}/signals`), {
       from: myUid,
       to: peerUid,
       type: 'offer',
@@ -2034,8 +2015,8 @@ async function handleIncomingVoiceSignal(
   data: Record<string, unknown>
 ): Promise<void> {
   if (!fromUid || fromUid === myUid) return;
-  const db = getFirestoreDb();
-  if (!db) return;
+  const rtdb = getRealtimeDb();
+  if (!rtdb) return;
   const sigType = String(data.type ?? '');
 
   try {
@@ -2053,7 +2034,7 @@ async function handleIncomingVoiceSignal(
 
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      await addDoc(collection(db, 'coop_rooms', code, 'signals'), {
+      await push(ref(rtdb, `coop_rooms/${code}/signals`), {
         from: myUid,
         to: fromUid,
         type: 'answer',
@@ -2082,7 +2063,7 @@ async function handleIncomingVoiceSignal(
 
 /**
  * Toggles the player's microphone ON / OFF immediately during gameplay.
- * Uses direct WebRTC P2P when possible + automatic Firestore Opus relay fallback across CGNAT/4G/5G/firewalls!
+ * Uses direct WebRTC P2P when possible + automatic Realtime Database Opus relay fallback across CGNAT/4G/5G/firewalls!
  */
 export async function toggleCoopMicrophone(): Promise<{
   ok: boolean;
@@ -2091,8 +2072,8 @@ export async function toggleCoopMicrophone(): Promise<{
   error?: string;
 }> {
   const user = authCloudState.user;
-  const db = getFirestoreDb();
-  const inRoom = Boolean(coopState.active && coopState.roomCode && user && db);
+  const rtdb = getRealtimeDb();
+  const inRoom = Boolean(coopState.active && coopState.roomCode && user && rtdb);
 
   coopState.micError = null;
   resumeRemoteCoopAudio();
@@ -2101,12 +2082,10 @@ export async function toggleCoopMicrophone(): Promise<{
     stopLocalMicrophoneInternal();
     coopState.micOn = false;
     coopState.speaking = false;
-    if (inRoom && coopState.roomCode && user && db) {
-      void setDoc(
-        doc(db, 'coop_rooms', coopState.roomCode, 'members', user.uid),
-        { micOn: false },
-        { merge: true }
-      ).catch(() => {});
+    if (inRoom && coopState.roomCode && user && rtdb) {
+      void update(ref(rtdb, `coop_rooms/${coopState.roomCode}/members/${user.uid}`), {
+        micOn: false,
+      }).catch(() => {});
     }
     notify();
     return { ok: true, micOn: false, inRoom };
@@ -2153,13 +2132,11 @@ export async function toggleCoopMicrophone(): Promise<{
     lastVoiceDetectedMs = Date.now();
     startMicLevelMonitor(localAudioStream);
 
-    if (inRoom && coopState.roomCode && user && db) {
+    if (inRoom && coopState.roomCode && user && rtdb) {
       const code = coopState.roomCode;
-      void setDoc(
-        doc(db, 'coop_rooms', code, 'members', user.uid),
-        { micOn: true },
-        { merge: true }
-      ).catch(() => {});
+      void update(ref(rtdb, `coop_rooms/${code}/members/${user.uid}`), {
+        micOn: true,
+      }).catch(() => {});
 
       for (const m of coopState.members) {
         if (m.uid === user.uid) continue;

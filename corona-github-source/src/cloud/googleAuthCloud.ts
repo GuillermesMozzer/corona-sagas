@@ -11,6 +11,7 @@ import {
   type Auth,
   type User,
 } from 'firebase/auth';
+import { getDatabase, type Database } from 'firebase/database';
 import {
   collection,
   deleteDoc,
@@ -101,6 +102,7 @@ const listeners = new Set<AuthListener>();
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let db: Firestore | null = null;
+let rtdb: Database | null = null;
 
 let sessionLoginRecordedUid: string | null = null;
 let cachedTotalPlaySeconds = 0;
@@ -122,6 +124,10 @@ function notify(): void {
 
 export function getFirestoreDb(): Firestore | null {
   return db;
+}
+
+export function getRealtimeDb(): Database | null {
+  return rtdb;
 }
 
 export async function getCurrentAuthIdToken(): Promise<string | null> {
@@ -403,6 +409,11 @@ export function initGoogleAuthCloud(): void {
       db = initializeFirestore(app, { experimentalForceLongPolling: true });
     } catch {
       db = getFirestore(app);
+    }
+    try {
+      rtdb = getDatabase(app, FIREBASE_CONFIG.databaseURL);
+    } catch (rtdbErr) {
+      console.warn('[Corona Cloud] Realtime Database init warning:', rtdbErr);
     }
     if (FIREBASE_CONFIG.measurementId) {
       void isAnalyticsSupported()

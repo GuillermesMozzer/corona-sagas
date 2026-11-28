@@ -11,6 +11,7 @@ const env: EnvMap = (import.meta as unknown as { env?: EnvMap }).env ?? {};
 export interface FirebaseWebConfig {
   apiKey: string;
   authDomain: string;
+  databaseURL: string;
   projectId: string;
   storageBucket: string;
   messagingSenderId: string;
@@ -22,6 +23,7 @@ export interface FirebaseWebConfig {
 const FALLBACK_FIREBASE_CONFIG: FirebaseWebConfig = {
   apiKey: 'AIzaSyCng2Gk3Z96sN-CjNO8XyqpjARUnRS-BXk',
   authDomain: 'corona-sagas.firebaseapp.com',
+  databaseURL: 'https://corona-sagas-default-rtdb.firebaseio.com',
   projectId: 'corona-sagas',
   storageBucket: 'corona-sagas.firebasestorage.app',
   messagingSenderId: '59900391966',
@@ -32,6 +34,7 @@ const FALLBACK_FIREBASE_CONFIG: FirebaseWebConfig = {
 export const FIREBASE_CONFIG: FirebaseWebConfig = {
   apiKey: (env.VITE_FIREBASE_API_KEY ?? FALLBACK_FIREBASE_CONFIG.apiKey).trim(),
   authDomain: (env.VITE_FIREBASE_AUTH_DOMAIN ?? FALLBACK_FIREBASE_CONFIG.authDomain).trim(),
+  databaseURL: (env.VITE_FIREBASE_DATABASE_URL ?? FALLBACK_FIREBASE_CONFIG.databaseURL).trim(),
   projectId: (env.VITE_FIREBASE_PROJECT_ID ?? FALLBACK_FIREBASE_CONFIG.projectId).trim(),
   storageBucket: (env.VITE_FIREBASE_STORAGE_BUCKET ?? FALLBACK_FIREBASE_CONFIG.storageBucket).trim(),
   messagingSenderId: (env.VITE_FIREBASE_MESSAGING_SENDER_ID ?? FALLBACK_FIREBASE_CONFIG.messagingSenderId).trim(),
