@@ -76,6 +76,21 @@ import {
   type CommunityBanRecord,
   type CoopMember,
 } from './cloud/coopSystem';
+import {
+  FRIENDS_PER_TIER,
+  WHATSAPP_COMMUNITY_URL,
+  buildInviteShareMessage,
+  claimWhatsappCommunityReward,
+  deliverPendingReferralDiamonds,
+  getTierDiamondReward,
+  getTotalEarnedReferralDiamonds,
+  initPendingFriendCodeFromUrl,
+  isWhatsappRewardClaimed,
+  referralState,
+  setPendingFriendCodeInput,
+  subscribeReferrals,
+  syncReferralProfileForUser,
+} from './cloud/referralSystem';
 import { type CommunityReportReason } from './config/reportForm';
 import {
   computeActivePrompt,
@@ -228,18 +243,48 @@ const btnSignout = document.getElementById('menu-signout') as HTMLButtonElement 
 const importFileInput = document.getElementById('import-file-input') as HTMLInputElement | null;
 const charNameInput = document.getElementById('char-name-input') as HTMLInputElement | null;
 
-// WhatsApp Community + Co-op Menu, Quick Rail (Chat + Mic), Chat Drawer, Join & Report Modal DOM elements
-const WHATSAPP_COMMUNITY_URL = 'https://chat.whatsapp.com/CgscPhZwV0rKAXZGdkzRUJ';
+// WhatsApp Community (+3 Diamonds) + Invite Friends (+3/+5 Diamonds) + Co-op Menu DOM elements
 function openWhatsappCommunity(): void {
   sound.unlock();
-  sound.playCoinPickup();
+  const reward = claimWhatsappCommunityReward(world);
+  if (reward.newlyClaimed) {
+    sound.playBuildComplete();
+    sound.playCoinPickup();
+    if (reward.grantedNow) {
+      saveCampaign(world);
+      showBanner(world, t('wa_reward_title'), t('wa_reward_sub_now'), '#5ce1e6');
+    } else {
+      showBanner(world, t('wa_reward_title'), t('wa_reward_sub_queue'), '#5ce1e6');
+    }
+    updateMenuUI();
+  } else {
+    sound.playCoinPickup();
+  }
   const opened = window.open(WHATSAPP_COMMUNITY_URL, '_blank', 'noopener,noreferrer');
   if (!opened) {
     window.location.href = WHATSAPP_COMMUNITY_URL;
   }
 }
+const loginReferralWrap = document.getElementById('login-referral-wrap') as HTMLDivElement | null;
+const referralCodeInput = document.getElementById('referral-code-input') as HTMLInputElement | null;
+const referralCodeHint = document.getElementById('referral-code-hint') as HTMLDivElement | null;
+
 const btnWhatsapp = document.getElementById('menu-whatsapp') as HTMLButtonElement | null;
 const lblWhatsapp = document.getElementById('lbl-whatsapp');
+const valWhatsapp = document.getElementById('val-whatsapp');
+const btnReferral = document.getElementById('menu-referral') as HTMLButtonElement | null;
+const lblReferral = document.getElementById('lbl-referral');
+const valReferral = document.getElementById('val-referral');
+
+const referralModal = document.getElementById('referral-modal') as HTMLDivElement | null;
+const btnRefClose = document.getElementById('btn-ref-close') as HTMLButtonElement | null;
+const refMyCodeVal = document.getElementById('ref-my-code-val');
+const btnRefCopyInvite = document.getElementById('btn-ref-copy-invite') as HTMLButtonElement | null;
+const refCopyFeedback = document.getElementById('ref-copy-feedback');
+const refTotalFriends = document.getElementById('ref-total-friends');
+const refTotalDiamonds = document.getElementById('ref-total-diamonds');
+const refTiersList = document.getElementById('ref-tiers-list') as HTMLDivElement | null;
+
 const menuCoopSectionLbl = document.getElementById('menu-coop-section-lbl');
 const btnCoopHostToggle = document.getElementById('menu-coop-host-toggle') as HTMLButtonElement | null;
 const lblCoopHost = document.getElementById('lbl-coop-host');
@@ -711,6 +756,136 @@ function closeJoinCoopModal(): void {
   coopJoinModal?.classList.remove('open');
 }
 
+let referralModalOpen = false;
+
+const PIXEL_DIAMOND_SVG = `
+  <svg width="14" height="14" viewBox="0 0 12 12" shape-rendering="crispEdges" aria-hidden="true">
+    <rect x="4" y="1" width="4" height="1" fill="#c7fbff"/>
+    <rect x="2" y="2" width="8" height="2" fill="#5ce1e6"/>
+    <rect x="1" y="4" width="10" height="2" fill="#32b8d4"/>
+    <rect x="2" y="6" width="8" height="2" fill="#1d8eb0"/>
+    <rect x="4" y="8" width="4" height="2" fill="#146c8c"/>
+    <rect x="5" y="10" width="2" height="1" fill="#0d4e69"/>
+    <rect x="4" y="2" width="2" height="2" fill="#ffffff"/>
+  </svg>
+`;
+
+function renderReferralModal(): void {
+  if (refMyCodeVal) {
+    refMyCodeVal.textContent = referralState.inviteCode || '------';
+  }
+  const refs = referralState.referrals;
+  if (refTotalFriends) {
+    refTotalFriends.textContent = String(refs.length);
+  }
+  if (refTotalDiamonds) {
+    refTotalDiamonds.textContent = `${getTotalEarnedReferralDiamonds()} 💎`;
+  }
+  if (!refTiersList) return;
+
+  // Always show all completed 3-friend rows PLUS the current active row (with empty slots ready to fill!)
+  const totalRows = Math.floor(refs.length / FRIENDS_PER_TIER) + 1;
+  refTiersList.innerHTML = '';
+
+  for (let rowIdx = 0; rowIdx < totalRows; rowIdx++) {
+    const start = rowIdx * FRIENDS_PER_TIER;
+    const rowFriends = refs.slice(start, start + FRIENDS_PER_TIER);
+    const isCompleted = rowFriends.length >= FRIENDS_PER_TIER;
+    const rewardAmount = getTierDiamondReward(rowIdx);
+
+    const rowEl = document.createElement('div');
+    rowEl.className = `ref-tier-row${isCompleted ? ' completed' : ''}`;
+
+    const slotsGrid = document.createElement('div');
+    slotsGrid.className = 'ref-slots-grid';
+
+    for (let slotIdx = 0; slotIdx < FRIENDS_PER_TIER; slotIdx++) {
+      const friend = rowFriends[slotIdx];
+      const slotEl = document.createElement('div');
+      slotEl.className = `ref-friend-slot ${friend ? 'filled' : 'empty'}`;
+
+      if (friend) {
+        if (friend.photoURL) {
+          const img = document.createElement('img');
+          img.className = 'ref-friend-avatar';
+          img.referrerPolicy = 'no-referrer';
+          img.alt = friend.displayName;
+          img.src = friend.photoURL;
+          img.onerror = () => {
+            const fb = document.createElement('div');
+            fb.className = 'ref-friend-fallback';
+            fb.textContent = (friend.displayName || 'M').trim().charAt(0).toUpperCase() || 'M';
+            img.replaceWith(fb);
+          };
+          slotEl.appendChild(img);
+        } else {
+          const fb = document.createElement('div');
+          fb.className = 'ref-friend-fallback';
+          fb.textContent = (friend.displayName || 'M').trim().charAt(0).toUpperCase() || 'M';
+          slotEl.appendChild(fb);
+        }
+        const nameEl = document.createElement('div');
+        nameEl.className = 'ref-friend-name';
+        nameEl.title = friend.displayName;
+        nameEl.textContent = friend.displayName;
+        slotEl.appendChild(nameEl);
+      } else {
+        const plusEl = document.createElement('div');
+        plusEl.className = 'ref-empty-plus';
+        plusEl.textContent = '+';
+        slotEl.appendChild(plusEl);
+        const nameEl = document.createElement('div');
+        nameEl.className = 'ref-friend-name';
+        nameEl.textContent = 'Vazio';
+        slotEl.appendChild(nameEl);
+      }
+      slotsGrid.appendChild(slotEl);
+    }
+
+    const rewardBox = document.createElement('div');
+    rewardBox.className = 'ref-tier-reward';
+    rewardBox.innerHTML = `
+      <div class="ref-diamond-pill">${PIXEL_DIAMOND_SVG}<span>${rewardAmount}</span></div>
+      <div class="ref-check-badge${isCompleted ? ' done' : ''}" title="${isCompleted ? 'Recompensa conquistada!' : 'Convide amigos para completar'}">${
+        isCompleted ? '✓' : `${rowFriends.length}/${FRIENDS_PER_TIER}`
+      }</div>
+    `;
+
+    rowEl.appendChild(slotsGrid);
+    rowEl.appendChild(rewardBox);
+    refTiersList.appendChild(rowEl);
+  }
+}
+
+function updatePreLoginReferralUI(): void {
+  const code = referralState.pendingFriendCode;
+  if (referralCodeInput && document.activeElement !== referralCodeInput) {
+    referralCodeInput.value = code;
+  }
+  loginReferralWrap?.classList.toggle('has-code', code.length >= 4);
+  referralCodeHint?.classList.toggle('visible', code.length >= 4);
+}
+
+function openReferralModal(): void {
+  sound.unlock();
+  if (!authCloudState.user) {
+    sound.playHit();
+    return;
+  }
+  if (menuOpen) setMenuOpen(false);
+  referralModalOpen = true;
+  if (refCopyFeedback) refCopyFeedback.textContent = '';
+  renderReferralModal();
+  referralModal?.classList.add('open');
+  sound.playCoinPickup();
+}
+
+function closeReferralModal(): void {
+  referralModalOpen = false;
+  referralModal?.classList.remove('open');
+  sound.playCoinDrop();
+}
+
 function updateCoopUI(): void {
   const inCampaign = world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map';
   const isPlaying = world.mode === 'playing';
@@ -998,6 +1173,18 @@ function updateMenuUI(): void {
   if (lblExport) lblExport.textContent = t('menu_export');
   if (lblImport) lblImport.textContent = t('menu_import');
   if (lblWhatsapp) lblWhatsapp.textContent = t('menu_whatsapp');
+  if (valWhatsapp) {
+    valWhatsapp.textContent = isWhatsappRewardClaimed() ? '✓ GRUPO' : '+3 💎';
+  }
+  if (btnReferral) {
+    btnReferral.style.display = authCloudState.user ? 'flex' : 'none';
+  }
+  if (lblReferral) lblReferral.textContent = t('menu_invite');
+  if (valReferral) {
+    const inCurRow = referralState.referrals.length % FRIENDS_PER_TIER;
+    const nextReward = getTierDiamondReward(Math.floor(referralState.referrals.length / FRIENDS_PER_TIER));
+    valReferral.textContent = `${inCurRow}/${FRIENDS_PER_TIER} · +${nextReward}💎`;
+  }
   if (lblEscHint) lblEscHint.textContent = t('menu_esc_hint');
 
   const inCampaign = world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map';
@@ -1273,6 +1460,13 @@ function deliverPendingFeedbackIfPlaying(): void {
     showBanner(world, t('fb_reward_banner_title'), t('fb_reward_banner_sub'), '#5ce1e6');
     saveCampaign(world);
   }
+  const refGranted = deliverPendingReferralDiamonds(world);
+  if (refGranted > 0) {
+    sound.playBuildComplete();
+    sound.playCoinPickup();
+    showBanner(world, `${t('ref_reward_title')} +${refGranted} 💎`, t('ref_reward_sub'), '#5ce1e6');
+    saveCampaign(world);
+  }
 }
 
 function handleCanvasHit(hitId: string): boolean {
@@ -1297,6 +1491,11 @@ function handleCanvasHit(hitId: string): boolean {
 
   if (hitId === 'login_whatsapp') {
     openWhatsappCommunity();
+    return true;
+  }
+
+  if (hitId === 'login_invite') {
+    openReferralModal();
     return true;
   }
 
@@ -1780,6 +1979,72 @@ btnWhatsapp?.addEventListener('click', () => {
   openWhatsappCommunity();
 });
 
+btnReferral?.addEventListener('click', () => {
+  openReferralModal();
+});
+
+btnRefClose?.addEventListener('click', () => {
+  closeReferralModal();
+});
+
+referralModal?.addEventListener('click', (e) => {
+  if (e.target === referralModal) closeReferralModal();
+});
+
+referralCodeInput?.addEventListener('input', () => {
+  const clean = setPendingFriendCodeInput(referralCodeInput.value);
+  if (referralCodeInput.value !== clean) {
+    referralCodeInput.value = clean;
+  }
+  updatePreLoginReferralUI();
+});
+
+btnRefCopyInvite?.addEventListener('click', async () => {
+  const code = referralState.inviteCode;
+  if (!code) return;
+  const fullMsg = buildInviteShareMessage(code);
+  let copied = false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(fullMsg);
+      copied = true;
+    }
+  } catch {
+    // Fallback below
+  }
+  if (!copied) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = fullMsg;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      copied = document.execCommand('copy');
+      ta.remove();
+    } catch {
+      copied = false;
+    }
+  }
+  if (copied) {
+    sound.playCoinPickup();
+    if (btnRefCopyInvite) {
+      btnRefCopyInvite.textContent = 'COPIADO!';
+      setTimeout(() => {
+        if (btnRefCopyInvite) btnRefCopyInvite.textContent = 'COPIAR';
+      }, 1800);
+    }
+    if (refCopyFeedback) {
+      refCopyFeedback.textContent = '✓ Mensagem completa + link com código copiados! Cole no WhatsApp, Discord, SMS ou onde quiser.';
+    }
+  } else {
+    sound.playHit();
+    if (refCopyFeedback) {
+      refCopyFeedback.textContent = `Copie manualmente seu código: ${code}`;
+    }
+  }
+});
+
 btnCoopHostToggle?.addEventListener('click', async () => {
   sound.unlock();
   resumeRemoteCoopAudio();
@@ -2116,6 +2381,9 @@ importFileInput?.addEventListener('change', () => {
 btnGoogleSignin?.addEventListener('click', () => {
   sound.unlock();
   sound.playCoinPickup();
+  if (referralCodeInput) {
+    setPendingFriendCodeInput(referralCodeInput.value);
+  }
   void signInWithGoogleAccount();
 });
 
@@ -2265,6 +2533,10 @@ window.addEventListener('keydown', (e) => {
       closeAdminDashboard();
       return;
     }
+    if (referralModalOpen) {
+      closeReferralModal();
+      return;
+    }
     if (coopState.chatOpen) {
       setCoopChatOpen(false);
       return;
@@ -2304,7 +2576,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
-  if (menuOpen || feedbackUi.open || adminOpen || joinModalOpen || reportModalOpen) return;
+  if (menuOpen || feedbackUi.open || adminOpen || joinModalOpen || reportModalOpen || referralModalOpen) return;
 
   if (world.mode === 'login') {
     if (!isPlayerAuthorizedToPlay()) return;
@@ -2411,7 +2683,22 @@ window.addEventListener('blur', clearMovementInputs);
 window.addEventListener('resize', fitCanvas);
 window.addEventListener('orientationchange', () => setTimeout(fitCanvas, 120));
 
-subscribeAuthCloud(() => {
+initPendingFriendCodeFromUrl();
+updatePreLoginReferralUI();
+
+let lastShownRedeemNotice: string | null = null;
+subscribeReferrals(() => {
+  updatePreLoginReferralUI();
+  if (referralModalOpen) renderReferralModal();
+  if (referralState.redeemNotice && referralState.redeemNotice !== lastShownRedeemNotice) {
+    lastShownRedeemNotice = referralState.redeemNotice;
+    showBanner(world, 'CÓDIGO DE AMIGO', referralState.redeemNotice, '#6fe87b');
+  }
+  updateMenuUI();
+});
+
+subscribeAuthCloud((state) => {
+  void syncReferralProfileForUser(state.user);
   updateMenuUI();
 });
 subscribeCoop(() => {

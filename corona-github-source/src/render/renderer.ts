@@ -10,6 +10,7 @@ import {
   drawShieldEmblem,
 } from '../customization/presets';
 import { isPlayerAuthorizedToPlay } from '../cloud/googleAuthCloud';
+import { isWhatsappRewardClaimed } from '../cloud/referralSystem';
 import { getLanguage, t } from '../i18n/translations';
 import { feedbackUi, isFeedbackAnswered } from '../storage/feedbackSystem';
 import {
@@ -442,41 +443,71 @@ export class PixelRenderer {
       ctx.fillText('⚔ CO-OP ONLINE (CÓDIGO)', cx, byCoop + 13);
       this.addHit('login_coop', bx, byCoop, btnW, coopH);
 
-      // Pixel-Art Google Forms Rating Button (+3 Diamonds)
-      const by3 = byCoop + 23;
-      const fbBtnH = 19;
+      // Row 4: Side-by-side Rating (+3 Diamonds) & WhatsApp Community (+3 Diamonds)
+      const byRow4 = byCoop + 23;
+      const row4H = 19;
+      const halfGap = 4;
+      const halfW = Math.floor((btnW - halfGap) / 2);
+      const rightX = bx + halfW + halfGap;
+      const rightW = btnW - halfW - halfGap;
+
+      // Left half: Google Forms Rating (+3 Diamonds)
       const alreadyAnswered = isFeedbackAnswered();
       ctx.fillStyle = alreadyAnswered ? 'rgba(16, 26, 38, 0.88)' : 'rgba(15, 36, 48, 0.94)';
-      ctx.fillRect(bx, by3, btnW, fbBtnH);
+      ctx.fillRect(bx, byRow4, halfW, row4H);
       ctx.strokeStyle = alreadyAnswered ? 'rgba(130, 175, 205, 0.55)' : '#5ce1e6';
       ctx.lineWidth = 1;
-      ctx.strokeRect(bx + 0.5, by3 + 0.5, btnW - 1, fbBtnH - 1);
-
-      // Pixel-art star on left and diamond on right
-      this.drawPixelStar(ctx, bx + 12, by3 + 9.5, 1, true);
+      ctx.strokeRect(bx + 0.5, byRow4 + 0.5, halfW - 1, row4H - 1);
+      this.drawPixelStar(ctx, bx + 9, byRow4 + 9.5, 1, true);
       if (!alreadyAnswered) {
-        this.drawPixelDiamondIcon(ctx, bx + btnW - 13, by3 + 9.5, 1, w.elapsed);
+        this.drawPixelDiamondIcon(ctx, bx + halfW - 9, byRow4 + 9.5, 1, w.elapsed);
       }
       ctx.textAlign = 'center';
       ctx.fillStyle = alreadyAnswered ? '#b7d4e8' : '#b8f7ff';
-      ctx.font = 'bold 7px "Pixelify Sans", monospace';
-      ctx.fillText(alreadyAnswered ? t('rate_game_done_btn') : t('rate_game_btn'), cx, by3 + 12.5);
-      this.addHit('login_feedback', bx, by3, btnW, fbBtnH);
+      ctx.font = 'bold 6.4px "Pixelify Sans", monospace';
+      ctx.fillText(
+        alreadyAnswered ? `${t('rate_short_btn')} ✓` : `${t('rate_short_btn')} +3`,
+        bx + halfW / 2,
+        byRow4 + 12.5
+      );
+      this.addHit('login_feedback', bx, byRow4, halfW, row4H);
 
-      // Pixel-Art WhatsApp Community Button
-      const byWa = by3 + 22;
-      const waBtnH = 19;
+      // Right half: WhatsApp Community (+3 Diamonds)
+      const waClaimed = isWhatsappRewardClaimed();
       ctx.fillStyle = 'rgba(11, 44, 27, 0.95)';
-      ctx.fillRect(bx, byWa, btnW, waBtnH);
+      ctx.fillRect(rightX, byRow4, rightW, row4H);
       ctx.strokeStyle = '#25d366';
       ctx.lineWidth = 1;
-      ctx.strokeRect(bx + 0.5, byWa + 0.5, btnW - 1, waBtnH - 1);
-      this.drawPixelWhatsAppIcon(ctx, bx + 9, byWa + 4);
+      ctx.strokeRect(rightX + 0.5, byRow4 + 0.5, rightW - 1, row4H - 1);
+      this.drawPixelWhatsAppIcon(ctx, rightX + 4, byRow4 + 4);
+      if (!waClaimed) {
+        this.drawPixelDiamondIcon(ctx, rightX + rightW - 8, byRow4 + 9.5, 1, w.elapsed);
+      }
       ctx.textAlign = 'center';
       ctx.fillStyle = '#b8ffd2';
+      ctx.font = 'bold 6.2px "Pixelify Sans", monospace';
+      ctx.fillText(
+        waClaimed ? `${t('whatsapp_btn')} ✓` : `${t('whatsapp_btn')} +3`,
+        rightX + rightW / 2 + (waClaimed ? 4 : 1),
+        byRow4 + 12.5
+      );
+      this.addHit('login_whatsapp', rightX, byRow4, rightW, row4H);
+
+      // Row 5: Full-Width Invite Friends Button (+3 on first 3 friends, +5 every 3 next friends!)
+      const byInvite = byRow4 + 22;
+      const inviteH = 19;
+      ctx.fillStyle = 'rgba(17, 36, 58, 0.95)';
+      ctx.fillRect(bx, byInvite, btnW, inviteH);
+      ctx.strokeStyle = '#efc462';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx + 0.5, byInvite + 0.5, btnW - 1, inviteH - 1);
+      this.drawPixelDiamondIcon(ctx, bx + 11, byInvite + 9.5, 1, w.elapsed);
+      this.drawPixelDiamondIcon(ctx, bx + btnW - 11, byInvite + 9.5, 1, w.elapsed + 1.2);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffe999';
       ctx.font = 'bold 7.2px "Pixelify Sans", monospace';
-      ctx.fillText(t('whatsapp_btn'), cx + 5, byWa + 12.5);
-      this.addHit('login_whatsapp', bx, byWa, btnW, waBtnH);
+      ctx.fillText(t('invite_btn'), cx, byInvite + 12.5);
+      this.addHit('login_invite', bx, byInvite, btnW, inviteH);
     }
 
     // Google Technology Disclaimer Badge with Pixel-Art Google "G" Logo
