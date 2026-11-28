@@ -1,10 +1,12 @@
 import { CENTER_X, type CrestConfig, type ResourceSize, type WorldState } from '../types';
-import { computeArmorBonuses } from '../world/arsenal';
+import { computeArmorBonuses, getIslandElementalPortalStone } from '../world/arsenal';
 import { createDefaultElders } from '../world/elders';
 import {
   createDefaultForge,
   createDefaultPreciousMine,
+  createDefaultStaffAltars,
   createDefaultWeaponShrine,
+  createDefaultYggdrasilTree,
 } from '../world/initWorld';
 import { ISLAND_DEFINITIONS } from '../world/islands';
 
@@ -216,6 +218,39 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
   }
   if (!state.elders || state.elders.length === 0) {
     state.elders = createDefaultElders(cx, []);
+  }
+  state.resources.elementalStones = state.resources.elementalStones ?? {};
+  state.resources.yggdrasilWood = state.resources.yggdrasilWood ?? 0;
+  state.forgedStaves = state.forgedStaves ?? [];
+  state.magicProjectiles = state.magicProjectiles ?? [];
+  if (!state.staffAltars || state.staffAltars.length === 0) {
+    state.staffAltars = createDefaultStaffAltars(cx, state.forgedStaves);
+  }
+  if (state.currentIsland === 6 && !state.yggdrasilTree) {
+    state.yggdrasilTree = createDefaultYggdrasilTree(
+      6,
+      () => {
+        state.nextId = (state.nextId ?? 7600) + 1;
+        return state.nextId;
+      },
+      cx
+    );
+  }
+  // Backfill floating elemental stone on Islands 1/3/5 if stone hasn't been obtained yet and a portal still stands
+  const islandStone = getIslandElementalPortalStone(state.currentIsland);
+  if (
+    islandStone &&
+    !(state.resources.elementalStones[islandStone] ?? 0) &&
+    !state.forgedStaves.includes(islandStone === 'fire' ? 'staff_fire' : islandStone === 'ice' ? 'staff_ice' : 'staff_thunder') &&
+    state.portals &&
+    !state.portals.some((p) => p.elementalStone === islandStone)
+  ) {
+    const standing = state.portals
+      .filter((p) => !p.destroyed)
+      .sort((a, b) => Math.abs(a.x - cx) - Math.abs(b.x - cx));
+    const chosen =
+      standing.find((p) => (islandStone === 'ice' ? p.side === -1 : p.side === 1)) ?? standing[0];
+    if (chosen) chosen.elementalStone = islandStone;
   }
   if (state.shops && !state.shops.some((s) => s.kind === 'spear')) {
     state.nextId = (state.nextId ?? 7500) + 1;

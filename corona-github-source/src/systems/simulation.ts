@@ -18,6 +18,7 @@ import {
   type Coin,
   type CommandMode,
   type ElderId,
+  type ElementalStaffId,
   type Enemy,
   type EnemyKind,
   type FloatingPrompt,
@@ -41,6 +42,9 @@ import {
 import {
   ARMOR_DEFS,
   computeArmorBonuses,
+  ELEMENTAL_STAFF_ORDER,
+  ELEMENTAL_STAFF_RECIPES,
+  ELEMENTAL_STONE_DEFS,
   getIslandArmorSlot,
   getIslandMetalId,
   PRECIOUS_METALS,
@@ -49,7 +53,9 @@ import {
 import { canElderLeaveWalls, createDefaultElders, ELDER_DEFS, ELDER_ORDER } from '../world/elders';
 import {
   createDefaultPreciousMine,
+  createDefaultStaffAltars,
   createDefaultWeaponShrine,
+  createDefaultYggdrasilTree,
   generateIslandSnapshot,
   heightForTreeSize,
   sizeFromVariant,
@@ -548,6 +554,8 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
       godShrine: w.godShrine ? { ...w.godShrine } : null,
       weaponShrine: w.weaponShrine ? { ...w.weaponShrine } : null,
       preciousMine: w.preciousMine ? { ...w.preciousMine } : null,
+      yggdrasilTree: w.yggdrasilTree ? { ...w.yggdrasilTree } : null,
+      staffAltars: (w.staffAltars ?? []).map((a) => ({ ...a })),
       mountShrine: w.mountShrine ? { ...w.mountShrine } : null,
       puzzle: w.puzzle ? { ...w.puzzle } : null,
       elders: (w.elders ?? []).map((e) => ({ ...e, ridingMonarchId: null, state: e.rescued ? 'walking' : 'cottage' })),
@@ -569,6 +577,13 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
   w.currentIsland = targetIslandId;
   targetProgress.visited = true;
   targetProgress.colonized = true;
+  const forgedList: ElementalStaffId[] = Array.from(
+    new Set([
+      ...(w.forgedStaves ?? []),
+      ...(w.staffAltars ?? []).filter((a) => a.forged).map((a) => a.staffId),
+    ])
+  );
+  w.forgedStaves = forgedList;
 
   let nextSnap = targetProgress.snapshot;
   if (nextSnap) {
@@ -604,6 +619,22 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     w.preciousMine = nextSnap.preciousMine
       ? { ...nextSnap.preciousMine }
       : createDefaultPreciousMine(targetIslandId, () => uid(w), w.centerX);
+    w.yggdrasilTree =
+      nextSnap.yggdrasilTree !== undefined
+        ? nextSnap.yggdrasilTree
+          ? { ...nextSnap.yggdrasilTree }
+          : null
+        : createDefaultYggdrasilTree(targetIslandId, () => uid(w), w.centerX);
+    w.staffAltars = createDefaultStaffAltars(w.centerX, forgedList).map((defAltar) => {
+      const prev = nextSnap?.staffAltars?.find((a) => a.staffId === defAltar.staffId);
+      if (!prev) return defAltar;
+      return {
+        ...defAltar,
+        diamondsPaid: defAltar.forged ? defAltar.diamondsPaid : prev.diamondsPaid,
+        coinsPaid: defAltar.forged ? defAltar.coinsPaid : prev.coinsPaid,
+        forged: defAltar.forged || prev.forged,
+      };
+    });
     w.mountShrine = nextSnap.mountShrine ? { ...nextSnap.mountShrine } : null;
     w.puzzle = nextSnap.puzzle ? { ...nextSnap.puzzle } : null;
     const destCx = w.centerX ?? getCenterX(w);
@@ -639,7 +670,13 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     });
   } else {
     // Fresh unexplored island! Boat arrives floating by shore; Dock must be built!
-    const fresh = generateIslandSnapshot(targetIslandId, () => uid(w), embarkedCrew, rescuedElderIds);
+    const fresh = generateIslandSnapshot(
+      targetIslandId,
+      () => uid(w),
+      embarkedCrew,
+      rescuedElderIds,
+      forgedList
+    );
     w.worldWidth = fresh.worldWidth;
     w.centerX = fresh.centerX;
     w.hall = fresh.hall;
@@ -654,6 +691,8 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     w.godShrine = fresh.godShrine;
     w.weaponShrine = fresh.weaponShrine ?? null;
     w.preciousMine = fresh.preciousMine ?? null;
+    w.yggdrasilTree = fresh.yggdrasilTree ?? null;
+    w.staffAltars = fresh.staffAltars ?? createDefaultStaffAltars(fresh.centerX ?? getCenterX(w), forgedList);
     w.mountShrine = fresh.mountShrine;
     w.puzzle = fresh.puzzle;
     w.elders = fresh.elders ?? createDefaultElders(fresh.centerX ?? getCenterX(w), rescuedElderIds);
@@ -695,6 +734,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
   // Clear transient entities and spawn Monarch beside the arrived Drakkar!
   w.enemies = [];
   w.arrows = [];
+  w.magicProjectiles = [];
   w.coins = [];
   w.flyingCoins = [];
   w.fireTrails = [];
@@ -1436,6 +1476,110 @@ export function computeActivePrompt(w: WorldState, m: Monarch): FloatingPrompt |
           currency: 'coin',
           targetType: 'precious_mine',
           targetId: w.preciousMine.id,
+        };
+      }
+    }
+  }
+
+  // 7b3b. Yggdrasil — Giant World Tree on Island 6 (Pay 3 coins for Builders to harvest +3 Sacred Yggdrasil Wood!)
+  if (w.yggdrasilTree && !w.yggdrasilTree.marked) {
+    const d = Math.abs(m.x - w.yggdrasilTree.x);
+    if (d < 42 && d < bestDist) {
+      const pending = countPendingFlyingCoins(w, 'yggdrasil', w.yggdrasilTree.id);
+      if (w.yggdrasilTree.coinsPaid < 3) {
+        bestDist = d;
+        best = {
+          x: w.yggdrasilTree.x,
+          y: GROUND_Y - 68,
+          label: 'Colher Madeira de Yggdrasil (+3)',
+          actionClass: 'yggdrasil',
+          cost: 3,
+          paid: w.yggdrasilTree.coinsPaid,
+          pending,
+          currency: 'coin',
+          targetType: 'yggdrasil',
+          targetId: w.yggdrasilTree.id,
+        };
+      }
+    }
+  }
+
+  // 7b3c. 3 Elemental Staff Forging Altars (Fire, Ice, Thunder — Diamonds + Coins + Wood + Stone + Elemental Stone + Yggdrasil Wood!)
+  if (w.hall.level >= 1) {
+    for (const altar of w.staffAltars ?? []) {
+      const d = Math.abs(m.x - altar.x);
+      if (d >= 18 || d >= bestDist) continue;
+      if (m.weapon === altar.staffId) continue;
+      const rec = ELEMENTAL_STAFF_RECIPES[altar.staffId];
+      const wDef = WEAPON_DEFS[altar.staffId];
+      const stoneDef = ELEMENTAL_STONE_DEFS[rec.stoneKind];
+      const altarIdx = ELEMENTAL_STAFF_ORDER.indexOf(altar.staffId);
+      const heldByOther = w.monarchs.some((other) => other !== m && other.weapon === altar.staffId);
+      const pending = countPendingFlyingCoins(w, 'staff_altar', altarIdx);
+
+      if (altar.forged) {
+        if (pending === 0) {
+          bestDist = d;
+          best = {
+            x: altar.x,
+            y: GROUND_Y - 40,
+            label: `Equipar ${wDef.name}`,
+            actionClass: 'staff_equip',
+            cost: 1,
+            paid: 0,
+            pending,
+            currency: 'coin',
+            blockedReason: heldByOther ? 'Em uso por outro Monarca' : undefined,
+            targetType: 'staff_altar',
+            targetId: altarIdx,
+          };
+        }
+        continue;
+      }
+
+      const stoneHave = w.resources.elementalStones?.[rec.stoneKind] ?? 0;
+      const yggHave = w.resources.yggdrasilWood ?? 0;
+      let blockedReason: string | undefined;
+      if (heldByOther) {
+        blockedReason = 'Em uso por outro Monarca';
+      } else if (stoneHave < 1) {
+        blockedReason = `Falta ${stoneDef.name} (Portal Ilha ${stoneDef.islandId})`;
+      } else if (yggHave < rec.yggdrasilWoodCost) {
+        blockedReason = `Falta ${rec.yggdrasilWoodCost - yggHave} Mad. Yggdrasil (Ilha VI)`;
+      }
+
+      if (altar.diamondsPaid < rec.diamondCost) {
+        bestDist = d;
+        best = {
+          x: altar.x,
+          y: GROUND_Y - 42,
+          label: `Forjar ${wDef.name} (${rec.diamondCost}◆ · ${stoneDef.shortName} · ${rec.yggdrasilWoodCost} Ygg)`,
+          actionClass: 'staff_forge',
+          cost: rec.diamondCost,
+          paid: altar.diamondsPaid,
+          pending,
+          currency: 'diamond',
+          blockedReason,
+          targetType: 'staff_altar',
+          targetId: altarIdx,
+        };
+      } else if (altar.coinsPaid < rec.coinCost) {
+        bestDist = d;
+        best = {
+          x: altar.x,
+          y: GROUND_Y - 42,
+          label: `Forjar ${wDef.name} (${stoneDef.shortName} + ${rec.yggdrasilWoodCost} Ygg)`,
+          actionClass: 'staff_forge',
+          cost: rec.coinCost,
+          paid: altar.coinsPaid,
+          pending,
+          currency: 'coin',
+          woodCost: rec.woodCost,
+          stoneCost: rec.stoneCost,
+          ironCost: 0,
+          blockedReason,
+          targetType: 'staff_altar',
+          targetId: altarIdx,
         };
       }
     }
@@ -2221,6 +2365,126 @@ function applyFlyingCoinArrival(w: WorldState, fc: FlyingCoin): void {
     return;
   }
 
+  if (fc.targetType === 'yggdrasil' && w.yggdrasilTree && !w.yggdrasilTree.marked) {
+    w.yggdrasilTree.coinsPaid += 1;
+    if (w.yggdrasilTree.coinsPaid >= 3) {
+      w.yggdrasilTree.coinsPaid = 0;
+      w.yggdrasilTree.marked = true;
+      w.yggdrasilTree.harvestProgress = 0;
+      w.yggdrasilTree.orderedAt = stampOrderSeq(w);
+      markActionClassCompleted(w, 'yggdrasil');
+      sound.playHammer();
+      spawnBurst(w, w.yggdrasilTree.x, GROUND_Y - 34, 18, '#7eff9e', 'leaf', 52);
+      showBanner(
+        w,
+        'YGGDRASIL MARCADA PARA COLHEITA!',
+        'Seus pedreiros irão colher +3 Madeiras Sagradas de Yggdrasil!',
+        '#7eff9e'
+      );
+    }
+    return;
+  }
+
+  if (fc.targetType === 'staff_altar') {
+    const staffId = ELEMENTAL_STAFF_ORDER[fc.targetId];
+    const altar = (w.staffAltars ?? []).find((a) => a.staffId === staffId);
+    const m =
+      w.monarchs.length > 1
+        ? w.monarchs.reduce((best, cur) =>
+            Math.abs(cur.x - fc.targetX) < Math.abs(best.x - fc.targetX) ? cur : best
+          )
+        : w.monarchs[0];
+    if (altar && m) {
+      const rec = ELEMENTAL_STAFF_RECIPES[altar.staffId];
+      const wDef = WEAPON_DEFS[altar.staffId];
+      const stoneDef = ELEMENTAL_STONE_DEFS[rec.stoneKind];
+      const heldByOther = w.monarchs.some((other) => other !== m && other.weapon === altar.staffId);
+      if (heldByOther) {
+        if (fc.currency === 'diamond') {
+          m.diamonds += 1;
+          if (m === w.monarchs[0]) w.resources.diamonds = m.diamonds;
+        } else {
+          m.coins = Math.min(m.maxCoins, m.coins + 1);
+          if (m === w.monarchs[0]) w.resources.gold = m.coins;
+        }
+        showBanner(w, 'CAJADO EM USO', 'Outro Monarca já porta este cajado elemental!', '#ff9b52');
+        return;
+      }
+
+      if (altar.forged) {
+        m.weapon = altar.staffId;
+        m.weaponCooldown = 0;
+        sound.playHorn(false);
+        spawnBurst(w, altar.x, GROUND_Y - 24, 22, wDef.color, 'spark', 64);
+        showBanner(w, `${wDef.name.toUpperCase()} EQUIPADO!`, `${wDef.desc} · Use [F] ou o botão no HUD!`, wDef.color);
+        saveCampaign(w);
+        return;
+      }
+
+      if (fc.currency === 'diamond') {
+        altar.diamondsPaid = Math.min(rec.diamondCost, altar.diamondsPaid + 1);
+        sound.playCoinPickup();
+        spawnBurst(w, altar.x, GROUND_Y - 24, 14, wDef.color, 'spark', 46);
+        if (altar.diamondsPaid >= rec.diamondCost) {
+          showBanner(
+            w,
+            `DIAMANTES OFERECIDOS AO ${wDef.name.toUpperCase()}!`,
+            `Agora pague ${rec.coinCost}🪙 + ${rec.woodCost} Mad + ${rec.stoneCost} Ped + ${stoneDef.shortName} + ${rec.yggdrasilWoodCost} Yggdrasil!`,
+            wDef.color
+          );
+        }
+        return;
+      }
+
+      // Coin phase: complete forging when all coins + materials + elemental stone + Yggdrasil wood are present!
+      altar.coinsPaid += 1;
+      if (altar.coinsPaid >= rec.coinCost) {
+        const matCost: ResourceCost = {
+          coins: rec.coinCost,
+          wood: rec.woodCost,
+          stone: rec.stoneCost,
+          iron: 0,
+        };
+        const stoneHave = w.resources.elementalStones?.[rec.stoneKind] ?? 0;
+        const yggHave = w.resources.yggdrasilWood ?? 0;
+        if (stoneHave < 1 || yggHave < rec.yggdrasilWoodCost || !hasRequiredMaterials(w, matCost)) {
+          altar.coinsPaid = Math.max(0, altar.coinsPaid - 1);
+          m.coins = Math.min(m.maxCoins, m.coins + 1);
+          if (m === w.monarchs[0]) w.resources.gold = m.coins;
+          showBanner(
+            w,
+            'MATERIAIS ARCANOS INSUFICIENTES',
+            `Exige ${stoneDef.shortName}, ${rec.yggdrasilWoodCost} Yggdrasil, ${rec.woodCost} Mad e ${rec.stoneCost} Ped!`,
+            '#ff9b52'
+          );
+          return;
+        }
+        w.resources.elementalStones = w.resources.elementalStones ?? {};
+        w.resources.elementalStones[rec.stoneKind] = Math.max(0, stoneHave - 1);
+        w.resources.yggdrasilWood = Math.max(0, yggHave - rec.yggdrasilWoodCost);
+        consumeMaterials(w, matCost);
+        altar.forged = true;
+        altar.coinsPaid = rec.coinCost;
+        w.forgedStaves = Array.from(new Set([...(w.forgedStaves ?? []), altar.staffId]));
+        m.weapon = altar.staffId;
+        m.weaponCooldown = 0;
+        markActionClassCompleted(w, 'staff_forge');
+        sound.playHorn(true);
+        sound.playBuildComplete();
+        w.screenShake = 0.28;
+        spawnBurst(w, altar.x, GROUND_Y - 28, 34, wDef.color, 'spark', 86);
+        showBanner(
+          w,
+          `${wDef.name.toUpperCase()} FORJADO!`,
+          `${wDef.desc} · Pressione [F] ou toque no botão no HUD!`,
+          wDef.color
+        );
+        saveCampaign(w);
+      }
+    }
+    return;
+  }
+
   if (fc.targetType === 'elder_rescue') {
     const elderId = ELDER_ORDER[fc.targetId];
     const elder = (w.elders ?? []).find((e) => e.id === elderId);
@@ -2813,6 +3077,9 @@ function findOrderedTaskX(w: WorldState, kind: BuilderTaskKind, id: number): num
   }
   if (kind === 'mine') {
     return w.preciousMine && w.preciousMine.id === id && w.preciousMine.marked ? w.preciousMine.x : null;
+  }
+  if (kind === 'yggdrasil') {
+    return w.yggdrasilTree && w.yggdrasilTree.id === id && w.yggdrasilTree.marked ? w.yggdrasilTree.x : null;
   }
   return null;
 }
@@ -3537,7 +3804,243 @@ export function triggerMonarchWeapon(w: WorldState, monarchIndex = 0): boolean {
     return true;
   }
 
+  // 10. CAJADO DO FOGO — Dispara bola de fogo que explode no 1º inimigo e esparrama fogo no chão!
+  if (m.weapon === 'staff_fire') {
+    w.magicProjectiles = w.magicProjectiles ?? [];
+    sound.playHorn(false);
+    spawnBurst(w, m.x + m.facing * 12, GROUND_Y - 18 - m.flyY, 10, '#ff7838', 'ember', 44);
+    w.magicProjectiles.push({
+      id: uid(w),
+      kind: 'fireball',
+      x: m.x + m.facing * 12,
+      y: GROUND_Y - 16 - m.flyY,
+      vx: m.facing * 220,
+      vy: 0,
+      damage: Math.round(52 * dmgMult),
+      life: 1.45,
+      targetEnemyId: null,
+    });
+    return true;
+  }
+
+  // 11. CAJADO DO GELO — Bola de gelo explode no 1º inimigo congelando-o e deflagra 3 flocos letais!
+  if (m.weapon === 'staff_ice') {
+    w.magicProjectiles = w.magicProjectiles ?? [];
+    sound.playHorn(false);
+    spawnBurst(w, m.x + m.facing * 12, GROUND_Y - 18 - m.flyY, 10, '#7ef2ff', 'spark', 44);
+    w.magicProjectiles.push({
+      id: uid(w),
+      kind: 'ice_orb',
+      x: m.x + m.facing * 12,
+      y: GROUND_Y - 16 - m.flyY,
+      vx: m.facing * 210,
+      vy: 0,
+      damage: Math.round(42 * dmgMult),
+      life: 1.5,
+      targetEnemyId: null,
+    });
+    return true;
+  }
+
+  // 12. CAJADO DO TROVÃO — Dispara trovão arcano que destrói até 5 inimigos instantaneamente!
+  if (m.weapon === 'staff_thunder') {
+    const targets = w.enemies
+      .filter((e) => Math.abs(e.x - m.x) <= 360)
+      .sort((a, b) => Math.abs(a.x - m.x) - Math.abs(b.x - m.x))
+      .slice(0, 5);
+
+    sound.playHorn(true);
+    sound.playHit();
+    w.screenShake = 0.28;
+    if (targets.length === 0) {
+      w.lightningBolts.push({
+        fromX: m.x + m.facing * 8,
+        fromY: GROUND_Y - 22,
+        toX: m.x + m.facing * 110,
+        toY: GROUND_Y - 10,
+        life: 0.4,
+      });
+      spawnBurst(w, m.x + m.facing * 110, GROUND_Y - 10, 14, '#ffe033', 'spark', 65);
+      return true;
+    }
+
+    let prevX = m.x + m.facing * 8;
+    let prevY = GROUND_Y - 22 - m.flyY;
+    for (const target of targets) {
+      w.lightningBolts.push({
+        fromX: prevX,
+        fromY: prevY,
+        toX: target.x,
+        toY: target.y - 10,
+        life: 0.48,
+      });
+      w.lightningBolts.push({
+        fromX: target.x,
+        fromY: GROUND_Y - 135,
+        toX: target.x,
+        toY: target.y - 10,
+        life: 0.42,
+      });
+      prevX = target.x;
+      prevY = target.y - 10;
+      target.hp = 0;
+      target.hitFlash = 0.3;
+      spawnBurst(w, target.x, target.y - 10, 18, '#ffe033', 'spark', 76);
+      handleEnemyKilled(w, target);
+    }
+    return true;
+  }
+
   return false;
+}
+
+function detonateFireball(w: WorldState, x: number, y: number, primaryEnemy: Enemy | null, damage: number): void {
+  w.screenShake = Math.max(w.screenShake, 0.24);
+  sound.playHit();
+  spawnBurst(w, x, y, 28, '#ff6a2b', 'ember', 84);
+  spawnBurst(w, x, y, 14, '#ffe066', 'spark', 60);
+
+  if (primaryEnemy && primaryEnemy.hp > 0) {
+    primaryEnemy.hp -= damage;
+    primaryEnemy.hitFlash = 0.24;
+    if (primaryEnemy.hp <= 0) handleEnemyKilled(w, primaryEnemy);
+  }
+  for (const e of [...w.enemies]) {
+    if (e === primaryEnemy) continue;
+    if (Math.abs(e.x - x) <= 38) {
+      e.hp -= Math.round(damage * 0.55);
+      e.hitFlash = 0.2;
+      if (e.hp <= 0) handleEnemyKilled(w, e);
+    }
+  }
+  // Spread burning fire patches across the ground!
+  for (const offset of [-32, -16, 0, 16, 32]) {
+    w.fireTrails.push({
+      x: x + offset,
+      life: 6.5,
+      maxLife: 6.5,
+    });
+  }
+}
+
+function detonateIceOrb(w: WorldState, x: number, y: number, primaryEnemy: Enemy | null, damage: number): void {
+  w.screenShake = Math.max(w.screenShake, 0.18);
+  sound.playHit();
+  spawnBurst(w, x, y, 24, '#7ef2ff', 'spark', 76);
+
+  if (primaryEnemy && primaryEnemy.hp > 0) {
+    primaryEnemy.frozenTimer = Math.max(primaryEnemy.frozenTimer, 4.8);
+    primaryEnemy.hp -= damage;
+    primaryEnemy.hitFlash = 0.24;
+    if (primaryEnemy.hp <= 0) handleEnemyKilled(w, primaryEnemy);
+  }
+
+  // Deflagrate into 3 smaller homing Ice Flakes/Shards that eliminate other nearby enemies!
+  w.magicProjectiles = w.magicProjectiles ?? [];
+  const otherEnemies = w.enemies
+    .filter((e) => e !== primaryEnemy && e.hp > 0 && Math.abs(e.x - x) <= 280)
+    .sort((a, b) => Math.abs(a.x - x) - Math.abs(b.x - x))
+    .slice(0, 3);
+
+  for (let i = 0; i < 3; i++) {
+    const tgt = otherEnemies[i] ?? null;
+    const angle = tgt ? Math.atan2((tgt.y - 10) - y, tgt.x - x) : -0.4 + i * 0.4;
+    w.magicProjectiles.push({
+      id: uid(w),
+      kind: 'ice_shard',
+      x,
+      y: y - 4,
+      vx: Math.cos(angle) * 255,
+      vy: Math.sin(angle) * 255,
+      damage: 999,
+      life: 1.35,
+      targetEnemyId: tgt ? tgt.id : null,
+    });
+  }
+}
+
+function updateMagicProjectiles(w: WorldState, dt: number): void {
+  const projs = w.magicProjectiles;
+  if (!projs || projs.length === 0) return;
+
+  for (let i = projs.length - 1; i >= 0; i--) {
+    const p = projs[i];
+    p.life -= dt;
+
+    // Homing steering for the 3 smaller Ice Shards
+    if (p.kind === 'ice_shard') {
+      let tgt = p.targetEnemyId ? w.enemies.find((e) => e.id === p.targetEnemyId && e.hp > 0) : null;
+      if (!tgt) {
+        tgt = w.enemies
+          .filter((e) => e.hp > 0 && Math.abs(e.x - p.x) <= 220)
+          .sort((a, b) => Math.abs(a.x - p.x) - Math.abs(b.x - p.x))[0] ?? null;
+        p.targetEnemyId = tgt ? tgt.id : null;
+      }
+      if (tgt) {
+        const dx = tgt.x - p.x;
+        const dy = (tgt.y - 10) - p.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        p.vx = (dx / dist) * 270;
+        p.vy = (dy / dist) * 270;
+      }
+    }
+
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+
+    // Trail particles
+    if (Math.random() < dt * 28) {
+      spawnParticle(w, {
+        x: p.x,
+        y: p.y,
+        vx: (Math.random() - 0.5) * 18,
+        vy: -8 - Math.random() * 14,
+        size: p.kind === 'ice_shard' ? 1 : 2,
+        color: p.kind === 'fireball' ? '#ff8b38' : '#a8f4ff',
+        alpha: 0.9,
+        life: 0.25,
+        maxLife: 0.25,
+        kind: p.kind === 'fireball' ? 'ember' : 'spark',
+      });
+    }
+
+    // Check enemy impact
+    let hitEnemy: Enemy | null = null;
+    for (const e of w.enemies) {
+      if (e.hp <= 0) continue;
+      if (Math.abs(e.x - p.x) < 16 && Math.abs((e.y - 10) - p.y) < 22) {
+        hitEnemy = e;
+        break;
+      }
+    }
+
+    if (hitEnemy) {
+      if (p.kind === 'fireball') {
+        detonateFireball(w, hitEnemy.x, hitEnemy.y - 10, hitEnemy, p.damage);
+      } else if (p.kind === 'ice_orb') {
+        detonateIceOrb(w, hitEnemy.x, hitEnemy.y - 10, hitEnemy, p.damage);
+      } else {
+        // Ice shard eliminates hit enemy cleanly!
+        hitEnemy.frozenTimer = 2.0;
+        hitEnemy.hp = 0;
+        hitEnemy.hitFlash = 0.24;
+        sound.playHit();
+        spawnBurst(w, hitEnemy.x, hitEnemy.y - 10, 14, '#c4f7ff', 'spark', 64);
+        handleEnemyKilled(w, hitEnemy);
+      }
+      projs.splice(i, 1);
+      continue;
+    }
+
+    if (p.life <= 0) {
+      if (p.kind === 'fireball') {
+        detonateFireball(w, p.x, GROUND_Y - 6, null, p.damage);
+      } else if (p.kind === 'ice_orb') {
+        detonateIceOrb(w, p.x, GROUND_Y - 10, null, p.damage);
+      }
+      projs.splice(i, 1);
+    }
+  }
 }
 
 // =========================================================================
@@ -3667,12 +4170,27 @@ function damagePortal(w: WorldState, portal: WorldState['portals'][number], dmg:
         v.state = 'idle';
       }
     }
-    showBanner(
-      w,
-      'PORTAL SOMBRIO DESTRUÍDO!',
-      'Sua companhia derrubou o portal! Recompensa: +10 Moedas e +1 Diamante!',
-      '#ffe58a'
-    );
+    if (portal.elementalStone) {
+      const stoneKind = portal.elementalStone;
+      const stoneDef = ELEMENTAL_STONE_DEFS[stoneKind];
+      portal.elementalStone = null;
+      w.resources.elementalStones = w.resources.elementalStones ?? {};
+      w.resources.elementalStones[stoneKind] = (w.resources.elementalStones[stoneKind] ?? 0) + 1;
+      spawnBurst(w, portal.x, GROUND_Y - 38, 34, stoneDef.color, 'spark', 96);
+      showBanner(
+        w,
+        `${stoneDef.name.toUpperCase()} OBTIDA!`,
+        'Portal destruído (+10🪙 +1◆)! Leve com Madeira de Yggdrasil (Ilha VI) ao Altar dos Cajados!',
+        stoneDef.highlight
+      );
+    } else {
+      showBanner(
+        w,
+        'PORTAL SOMBRIO DESTRUÍDO!',
+        'Sua companhia derrubou o portal! Recompensa: +10 Moedas e +1 Diamante!',
+        '#ffe58a'
+      );
+    }
     saveCampaign(w);
   }
 }
@@ -5084,6 +5602,15 @@ function buildBuilderTaskAssignments(
         orderedAt: w.preciousMine.orderedAt ?? w.preciousMine.id,
       });
     }
+    if (w.yggdrasilTree && w.yggdrasilTree.marked) {
+      tasks.push({
+        kind: 'yggdrasil',
+        id: w.yggdrasilTree.id,
+        x: w.yggdrasilTree.x,
+        side: w.yggdrasilTree.x < getCenterX(w) ? -1 : 1,
+        orderedAt: w.yggdrasilTree.orderedAt ?? w.yggdrasilTree.id,
+      });
+    }
   }
 
   // Clear stale priority if that task has already finished (or check if still active anywhere even at night)
@@ -5653,6 +6180,43 @@ function updateVillagers(w: WorldState, dt: number): void {
                 `+3 MINÉRIO DE ${metalDef.name.toUpperCase()}!`,
                 'Leve à Forja com madeira e pedra para forjar a armadura desta ilha!',
                 metalDef.highlight
+              );
+              saveCampaign(w);
+            }
+          }
+          continue;
+        }
+      }
+
+      if (assigned?.kind === 'yggdrasil') {
+        const ygg = w.yggdrasilTree;
+        if (ygg && ygg.marked) {
+          v.state = 'working';
+          v.targetId = ygg.id;
+          const spreadOffset = ((v.id % 3) - 1) * 6;
+          const standX = ygg.x + (ygg.x < getCenterX(w) ? 24 : -24) + spreadOffset;
+          if (moveToward(v, standX, 48, dt)) {
+            v.facing = ygg.x < v.x ? -1 : 1;
+            ygg.harvestProgress += (dt / 7.5) * workMult;
+            if (v.actionTimer <= 0) {
+              v.actionTimer = 0.5;
+              ygg.hitShake = 0.16;
+              sound.playHammer();
+              spawnBurst(w, ygg.x, GROUND_Y - 26, 6, '#7eff9e', 'leaf', 38);
+            }
+            if (ygg.harvestProgress >= 1) {
+              ygg.harvestProgress = 0;
+              ygg.marked = false;
+              w.resources.yggdrasilWood = (w.resources.yggdrasilWood ?? 0) + 3;
+              clearPriorityIfMatches(w, 'yggdrasil', ygg.id);
+              sound.playBuildComplete();
+              spawnBurst(w, ygg.x, GROUND_Y - 36, 24, '#ffe58a', 'spark', 64);
+              spawnBurst(w, ygg.x, GROUND_Y - 30, 16, '#7eff9e', 'leaf', 52);
+              showBanner(
+                w,
+                '+3 MADEIRA SAGRADA DE YGGDRASIL!',
+                'Use com as Pedras dos Portais nos Altares dos Cajados para forjar os Cajados Elementais!',
+                '#7eff9e'
               );
               saveCampaign(w);
             }
@@ -7975,9 +8539,13 @@ export function stepWorld(
   if (w.preciousMine) {
     w.preciousMine.hitShake = Math.max(0, w.preciousMine.hitShake - dt);
   }
+  if (w.yggdrasilTree) {
+    w.yggdrasilTree.hitShake = Math.max(0, w.yggdrasilTree.hitShake - dt);
+  }
   updateElders(w, dt);
   updateGodTributeRitual(w, dt);
   updateFireTrailsAndLightning(w, dt);
+  updateMagicProjectiles(w, dt);
   updateDayNightAndWaves(w, dt);
   updateBanker(w, dt);
   updateBoatAndBreweries(w, dt);

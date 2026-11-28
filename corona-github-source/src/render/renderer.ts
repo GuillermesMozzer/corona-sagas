@@ -32,7 +32,13 @@ import {
   type Villager,
   type WorldState,
 } from '../types';
-import { PRECIOUS_METALS, WEAPON_DEFS, getIslandMetalId } from '../world/arsenal';
+import {
+  ELEMENTAL_STAFF_RECIPES,
+  ELEMENTAL_STONE_DEFS,
+  PRECIOUS_METALS,
+  WEAPON_DEFS,
+  getIslandMetalId,
+} from '../world/arsenal';
 import { ELDER_DEFS } from '../world/elders';
 import {
   countArchersAssignedToTower,
@@ -280,6 +286,7 @@ export class PixelRenderer {
     this.drawWorldEdges(ctx, w, camX, nightFactor, theme);
 
     this.drawTrees(ctx, w, camX, nightFactor, theme);
+    this.drawYggdrasil(ctx, w, camX);
     this.drawRocks(ctx, w, camX, nightFactor);
     this.drawBerryBushes(ctx, w, camX);
     this.drawCamps(ctx, w, camX);
@@ -290,6 +297,7 @@ export class PixelRenderer {
     this.drawForge(ctx, w, camX);
     this.drawShops(ctx, w, camX);
     this.drawFarms(ctx, w, camX);
+    this.drawStaffAltars(ctx, w, camX);
     this.drawBoatAndDock(ctx, w, camX);
     this.drawShrinesAndPuzzle(ctx, w, camX);
     this.drawElderCottages(ctx, w, camX);
@@ -308,6 +316,7 @@ export class PixelRenderer {
     }
     if (monarch) this.drawMonarch(ctx, w, monarch, camX, 1, Math.round(monarch.x - camX), GROUND_Y);
     this.drawFireTrailsAndLightning(ctx, w, camX);
+    this.drawMagicProjectiles(ctx, w, camX);
     this.drawCoins(ctx, w, camX);
     this.drawArrows(ctx, w, camX);
     this.drawWorldParticles(ctx, w, camX);
@@ -2818,6 +2827,189 @@ export class PixelRenderer {
     }
   }
 
+  private drawYggdrasil(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    const ygg = w.yggdrasilTree;
+    if (!ygg) return;
+    const shakeX = ygg.hitShake > 0 ? Math.round(Math.sin(w.elapsed * 55) * 2) : 0;
+    const sx = Math.round(ygg.x - camX) + shakeX;
+    if (sx < -120 || sx > this.viewW + 120) return;
+
+    const pulse = 0.65 + 0.35 * Math.sin(w.elapsed * 2.6);
+
+    ctx.save();
+    // Ethereal golden-emerald sacred aura behind the World Tree
+    const aura = ctx.createRadialGradient(sx, GROUND_Y - 70, 12, sx, GROUND_Y - 70, 74);
+    aura.addColorStop(0, `rgba(126, 255, 168, ${(0.24 * pulse).toFixed(2)})`);
+    aura.addColorStop(0.55, `rgba(255, 224, 110, ${(0.12 * pulse).toFixed(2)})`);
+    aura.addColorStop(1, 'rgba(20, 60, 40, 0)');
+    ctx.fillStyle = aura;
+    ctx.fillRect(sx - 76, GROUND_Y - 146, 152, 146);
+
+    // Massive spreading gnarled ancient roots
+    ctx.fillStyle = '#3b2517';
+    ctx.fillRect(sx - 34, GROUND_Y - 8, 68, 8);
+    ctx.fillRect(sx - 26, GROUND_Y - 16, 52, 10);
+    ctx.fillStyle = '#523420';
+    ctx.fillRect(sx - 20, GROUND_Y - 22, 40, 10);
+
+    // Colossal ancient trunk rising toward the heavens
+    ctx.fillStyle = '#472d1c';
+    ctx.fillRect(sx - 16, GROUND_Y - 82, 32, 66);
+    ctx.fillStyle = '#5e3c25';
+    ctx.fillRect(sx - 12, GROUND_Y - 86, 24, 68);
+    ctx.fillStyle = '#754c30';
+    ctx.fillRect(sx - 5, GROUND_Y - 82, 7, 62);
+
+    // Glowing Golden-Emerald Runes carved along Yggdrasil's trunk!
+    ctx.fillStyle = '#7eff9e';
+    ctx.fillRect(sx - 2, GROUND_Y - 66, 4, 2);
+    ctx.fillRect(sx - 1, GROUND_Y - 64, 2, 14);
+    ctx.fillRect(sx - 4, GROUND_Y - 58, 8, 2);
+    ctx.fillStyle = '#ffe58a';
+    ctx.fillRect(sx - 1, GROUND_Y - 46, 2, 12);
+    ctx.fillRect(sx - 4, GROUND_Y - 40, 8, 2);
+
+    // Thick outstretched upper boughs
+    ctx.fillStyle = '#472d1c';
+    ctx.fillRect(sx - 38, GROUND_Y - 88, 76, 8);
+    ctx.fillRect(sx - 28, GROUND_Y - 102, 56, 8);
+
+    // Monumental layered sacred emerald-teal & golden foliage canopy
+    const canopyLayers = [
+      { ox: -48, oy: -96, w: 96, h: 24, col: '#184a36' },
+      { ox: -42, oy: -112, w: 84, h: 24, col: '#1f6144' },
+      { ox: -32, oy: -124, w: 64, h: 20, col: '#2d7d56' },
+      { ox: -20, oy: -132, w: 40, h: 14, col: '#47a872' },
+    ];
+    for (const c of canopyLayers) {
+      ctx.fillStyle = c.col;
+      ctx.fillRect(sx + c.ox, GROUND_Y + c.oy, c.w, c.h);
+    }
+
+    // Luminescent hanging golden leaves & rising spirit motes
+    for (let i = 0; i < 9; i++) {
+      const lx = sx - 36 + i * 9;
+      const sway = Math.round(Math.sin(w.elapsed * 2.2 + i) * 1.5);
+      ctx.fillStyle = i % 2 === 0 ? '#7eff9e' : '#ffe58a';
+      ctx.fillRect(lx + sway, GROUND_Y - 76 + (i % 3) * 5, 2, 6);
+    }
+
+    // Yggdrasil Sacred Name Plate
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.86)';
+    ctx.fillRect(sx - 34, GROUND_Y - 144, 68, 9);
+    ctx.fillStyle = '#7eff9e';
+    ctx.font = 'bold 6px "Pixelify Sans", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('YGGDRASIL', sx, GROUND_Y - 137);
+    ctx.textAlign = 'left';
+
+    // Harvest progress bar when Builders are gathering Sacred Wood
+    if (ygg.marked) {
+      const barW = 42;
+      ctx.fillStyle = 'rgba(8, 14, 24, 0.88)';
+      ctx.fillRect(sx - 21, GROUND_Y - 152, barW, 4);
+      ctx.fillStyle = '#ffe58a';
+      ctx.fillRect(sx - 20, GROUND_Y - 151, Math.round((barW - 2) * Math.min(1, ygg.harvestProgress)), 2);
+    }
+    ctx.restore();
+  }
+
+  private drawStaffAltars(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    if (w.hall.level < 1) return;
+    for (const altar of w.staffAltars ?? []) {
+      const sx = Math.round(altar.x - camX);
+      if (sx < -36 || sx > this.viewW + 36) continue;
+      const rec = ELEMENTAL_STAFF_RECIPES[altar.staffId];
+      const wDef = WEAPON_DEFS[altar.staffId];
+      const stoneDef = ELEMENTAL_STONE_DEFS[rec.stoneKind];
+      const floatY = Math.round(Math.sin(w.elapsed * 3.6 + altar.x) * 1.5);
+      const isEquipped = w.monarchs.some((m) => m.weapon === altar.staffId);
+
+      // Compact Carved Elemental Forge Pedestal
+      ctx.fillStyle = '#2d3744';
+      ctx.fillRect(sx - 9, GROUND_Y - 4, 18, 4);
+      ctx.fillStyle = '#3f4d5e';
+      ctx.fillRect(sx - 7, GROUND_Y - 11, 14, 7);
+      ctx.fillStyle = altar.forged ? stoneDef.color : '#607185';
+      ctx.fillRect(sx - 4, GROUND_Y - 9, 8, 2);
+
+      // Subtle elemental aura & floating Elemental Staff above pedestal
+      if (!isEquipped) {
+        ctx.fillStyle = altar.forged ? `${stoneDef.color}3c` : `${stoneDef.color}1c`;
+        ctx.beginPath();
+        ctx.arc(sx, GROUND_Y - 22 + floatY, altar.forged ? 10 : 7, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Sacred Yggdrasil wood staff shaft + glowing Red/Blue/Yellow crystal orb!
+        ctx.fillStyle = altar.forged ? '#7a5229' : '#4f3a26';
+        ctx.fillRect(sx - 1, GROUND_Y - 24 + floatY, 2, 12);
+        ctx.fillStyle = altar.forged ? stoneDef.color : `${stoneDef.color}88`;
+        ctx.fillRect(sx - 3, GROUND_Y - 29 + floatY, 6, 5);
+        ctx.fillStyle = altar.forged ? '#ffffff' : stoneDef.highlight;
+        ctx.fillRect(sx - 1, GROUND_Y - 28 + floatY, 2, 2);
+      }
+
+      // Compact Staff Label
+      ctx.fillStyle = 'rgba(8, 14, 24, 0.78)';
+      ctx.fillRect(sx - 17, GROUND_Y - 38, 34, 7);
+      ctx.fillStyle = altar.forged ? stoneDef.highlight : wDef.color;
+      ctx.font = 'bold 5px "Pixelify Sans", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(wDef.shortTag, sx, GROUND_Y - 32.5);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  private drawMagicProjectiles(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
+    for (const p of w.magicProjectiles ?? []) {
+      const sx = Math.round(p.x - camX);
+      const sy = Math.round(p.y);
+      if (sx < -24 || sx > this.viewW + 24) continue;
+
+      if (p.kind === 'fireball') {
+        // Blazing Fireball with glowing halo & core
+        ctx.fillStyle = 'rgba(255, 100, 30, 0.42)';
+        ctx.beginPath();
+        ctx.arc(sx, sy, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ff5824';
+        ctx.beginPath();
+        ctx.arc(sx, sy, 5.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffe066';
+        ctx.beginPath();
+        ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(sx - 1, sy - 1, 2, 2);
+      } else if (p.kind === 'ice_orb') {
+        // Crystalline Frost Orb with icicle halo
+        ctx.fillStyle = 'rgba(92, 232, 255, 0.4)';
+        ctx.beginPath();
+        ctx.arc(sx, sy, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#36d8ff';
+        ctx.beginPath();
+        ctx.arc(sx, sy, 5.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#e0fbff';
+        ctx.fillRect(sx - 5, sy - 1, 10, 2);
+        ctx.fillRect(sx - 1, sy - 5, 2, 10);
+      } else {
+        // Spinning lethal smaller Ice Crystal Flake/Shard!
+        ctx.fillStyle = 'rgba(130, 240, 255, 0.35)';
+        ctx.beginPath();
+        ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#7ef2ff';
+        ctx.fillRect(sx - 3, sy - 1, 6, 2);
+        ctx.fillRect(sx - 1, sy - 3, 2, 6);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(sx - 1, sy - 1, 2, 2);
+      }
+    }
+  }
+
   private drawPortals(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     for (const p of w.portals) {
       const sx = Math.round(p.x - camX);
@@ -2829,11 +3021,12 @@ export class PixelRenderer {
       }
 
       const pulse = 0.65 + 0.35 * Math.sin(p.pulseTime * 3.5);
+      const stoneDef = p.elementalStone ? ELEMENTAL_STONE_DEFS[p.elementalStone] : null;
       ctx.fillStyle = `rgba(92, 42, 138, ${(0.55 * pulse).toFixed(2)})`;
       ctx.fillRect(sx - 11, GROUND_Y - 38, 22, 36);
-      ctx.fillStyle = `rgba(82, 226, 255, ${(0.45 * pulse).toFixed(2)})`;
+      ctx.fillStyle = stoneDef ? `${stoneDef.color}77` : `rgba(82, 226, 255, ${(0.45 * pulse).toFixed(2)})`;
       ctx.fillRect(sx - 7, GROUND_Y - 32, 14, 28);
-      ctx.fillStyle = '#d8fbff';
+      ctx.fillStyle = stoneDef ? stoneDef.highlight : '#d8fbff';
       ctx.fillRect(sx - 2, GROUND_Y - 26 + Math.round(Math.sin(p.pulseTime * 5) * 3), 4, 14);
 
       ctx.fillStyle = p.hitFlash > 0 ? '#ffffff' : '#2c3442';
@@ -2842,11 +3035,69 @@ export class PixelRenderer {
       ctx.fillRect(sx - 16, GROUND_Y - 46, 32, 8);
       ctx.fillRect(sx - 10, GROUND_Y - 50, 20, 4);
 
-      ctx.fillStyle = w.isBloodMoon ? '#ff5e6c' : '#6cf4ff';
+      ctx.fillStyle = stoneDef ? stoneDef.color : w.isBloodMoon ? '#ff5e6c' : '#6cf4ff';
       ctx.fillRect(sx - 15, GROUND_Y - 30, 2, 5);
       ctx.fillRect(sx - 15, GROUND_Y - 18, 2, 5);
       ctx.fillRect(sx + 13, GROUND_Y - 30, 2, 5);
       ctx.fillRect(sx + 13, GROUND_Y - 18, 2, 5);
+
+      // FLOATING ELEMENTAL STONE hovering above the 3 special Portals (Red Fire, Blue Ice, Yellow Thunder!)
+      if (stoneDef) {
+        const bob = Math.round(Math.sin(w.elapsed * 3.6 + p.id) * 3);
+        const stoneY = GROUND_Y - 68 + bob;
+
+        // Radiant colored halo
+        ctx.fillStyle = `${stoneDef.color}48`;
+        ctx.beginPath();
+        ctx.arc(sx, stoneY, Math.round(12 + pulse * 4), 0, Math.PI * 2);
+        ctx.fill();
+
+        // Faceted Diamond Elemental Stone sprite
+        ctx.fillStyle = stoneDef.color;
+        ctx.beginPath();
+        ctx.moveTo(sx, stoneY - 9);
+        ctx.lineTo(sx + 7, stoneY);
+        ctx.lineTo(sx, stoneY + 9);
+        ctx.lineTo(sx - 7, stoneY);
+        ctx.closePath();
+        ctx.fill();
+
+        // Bright inner highlight facet
+        ctx.fillStyle = stoneDef.highlight;
+        ctx.beginPath();
+        ctx.moveTo(sx, stoneY - 6);
+        ctx.lineTo(sx + 3, stoneY - 1);
+        ctx.lineTo(sx, stoneY + 3);
+        ctx.lineTo(sx - 3, stoneY - 1);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(sx - 1, stoneY - 4, 2, 2);
+
+        // Orbiting elemental sparkles
+        const orbX = sx + Math.round(Math.cos(w.elapsed * 4.5) * 11);
+        const orbY = stoneY + Math.round(Math.sin(w.elapsed * 4.5) * 5);
+        ctx.fillStyle = stoneDef.highlight;
+        ctx.fillRect(orbX, orbY, 2, 2);
+
+        // Label plate above the floating stone
+        ctx.fillStyle = 'rgba(8, 14, 24, 0.84)';
+        ctx.fillRect(sx - 26, stoneY - 20, 52, 8);
+        ctx.fillStyle = stoneDef.highlight;
+        ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(stoneDef.shortName.toUpperCase(), sx, stoneY - 14);
+        ctx.textAlign = 'left';
+      }
+
+      // Live HP bar when portal is taking damage from an Assault Company!
+      if (p.hp < p.maxHp) {
+        const pct = Math.max(0, p.hp / Math.max(1, p.maxHp));
+        ctx.fillStyle = 'rgba(8, 14, 24, 0.88)';
+        ctx.fillRect(sx - 16, GROUND_Y - 56, 32, 4);
+        ctx.fillStyle = stoneDef ? stoneDef.color : '#ff5e6c';
+        ctx.fillRect(sx - 15, GROUND_Y - 55, Math.round(30 * pct), 2);
+      }
     }
   }
 
@@ -5336,6 +5587,16 @@ export class PixelRenderer {
         ctx.fillRect(wx, wy - 3, 1, 9);
         ctx.fillStyle = wDef.color;
         ctx.fillRect(wx - 1, wy - 6, 3, 3);
+      } else if (m.weapon === 'staff_fire' || m.weapon === 'staff_ice' || m.weapon === 'staff_thunder') {
+        // Sacred Yggdrasil Elemental Staff with pulsing crystal orb
+        ctx.fillStyle = '#785028';
+        ctx.fillRect(wx, wy - 4, 1, 11);
+        ctx.fillStyle = '#d4a650';
+        ctx.fillRect(wx - 1, wy - 5, 3, 1);
+        ctx.fillStyle = wDef.color;
+        ctx.fillRect(wx - 1, wy - 8, 3, 3);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(wx, wy - 7, 1, 1);
       } else if (m.weapon === 'ymir_rune') {
         ctx.fillStyle = wDef.color;
         ctx.fillRect(wx - 1, wy - 3, 3, 5);
@@ -6132,6 +6393,45 @@ export class PixelRenderer {
         ctx.fillStyle = '#ffe58a';
         ctx.fillText(txt, cx + 8, cy);
         cx += wItem + 6;
+      }
+    }
+
+    // Sacred Yggdrasil Wood & Elemental Stones compact indicators (progressive: shown once obtained)
+    const yggQty = w.resources.yggdrasilWood ?? 0;
+    const ownedStones = (['fire', 'ice', 'thunder'] as const).filter(
+      (k) => (w.resources.elementalStones?.[k] ?? 0) > 0
+    );
+    if (yggQty > 0 || ownedStones.length > 0) {
+      if (cx > 8) cx += 5;
+      ctx.font = 'bold 7px "Pixelify Sans", monospace';
+      if (yggQty > 0) {
+        const txt = `${yggQty}`;
+        const wItem = 8 + Math.ceil(ctx.measureText(txt).width);
+        ensureRoom(wItem);
+        // Tiny golden-emerald Yggdrasil sacred timber & leaf icon
+        ctx.fillStyle = '#805226';
+        ctx.fillRect(cx + 2, cy - 4, 3, 4);
+        ctx.fillStyle = '#62e088';
+        ctx.fillRect(cx + 1, cy - 6, 5, 3);
+        ctx.fillStyle = '#ffe27a';
+        ctx.fillRect(cx + 2, cy - 6, 2, 1);
+        ctx.fillStyle = '#9cf5b8';
+        ctx.fillText(txt, cx + 8, cy);
+        cx += wItem + 5;
+      }
+      if (ownedStones.length > 0) {
+        const wGems = ownedStones.length * 7 + 2;
+        ensureRoom(wGems);
+        for (const st of ownedStones) {
+          const stDef = ELEMENTAL_STONE_DEFS[st];
+          ctx.fillStyle = stDef.color;
+          ctx.fillRect(cx + 1, cy - 6, 4, 5);
+          ctx.fillRect(cx + 2, cy - 7, 2, 7);
+          ctx.fillStyle = stDef.highlight;
+          ctx.fillRect(cx + 2, cy - 5, 1, 2);
+          cx += 7;
+        }
+        cx += 3;
       }
     }
 

@@ -78,6 +78,9 @@ export interface Elder {
   activeCooldown: number;
 }
 
+export type ElementalStoneKind = 'fire' | 'ice' | 'thunder';
+export type ElementalStaffId = 'staff_fire' | 'staff_ice' | 'staff_thunder';
+
 export type WeaponId =
   | 'freya_bow'
   | 'tyr_shield'
@@ -87,7 +90,8 @@ export type WeaponId =
   | 'ymir_rune'
   | 'surtr_blade'
   | 'heimdall_horn'
-  | 'baldr_scepter';
+  | 'baldr_scepter'
+  | ElementalStaffId;
 
 export type PreciousMetalId =
   | 'copper'
@@ -119,6 +123,8 @@ export interface Resources {
   iron: number;
   food: number;
   preciousOres?: Partial<Record<PreciousMetalId, number>>;
+  elementalStones?: Partial<Record<ElementalStoneKind, number>>;
+  yggdrasilWood?: number;
 }
 
 export interface Monarch {
@@ -219,7 +225,7 @@ export interface Villager {
 
 export type Season = 'summer' | 'autumn' | 'winter' | 'spring';
 
-export type BuilderTaskKind = 'wall' | 'tower' | 'forge' | 'boat' | 'dock' | 'farm' | 'brewery' | 'rock' | 'tree' | 'mine';
+export type BuilderTaskKind = 'wall' | 'tower' | 'forge' | 'boat' | 'dock' | 'farm' | 'brewery' | 'rock' | 'tree' | 'mine' | 'yggdrasil';
 
 export interface PriorityTaskRef {
   kind: BuilderTaskKind;
@@ -448,6 +454,36 @@ export interface BerryBush {
   orderedAt?: number;
 }
 
+export interface YggdrasilTree {
+  id: number;
+  x: number;
+  marked: boolean;
+  harvestProgress: number;
+  coinsPaid: number;
+  hitShake: number;
+  orderedAt?: number;
+}
+
+export interface StaffAltar {
+  staffId: ElementalStaffId;
+  x: number;
+  diamondsPaid: number;
+  coinsPaid: number;
+  forged: boolean;
+}
+
+export interface MagicProjectile {
+  id: number;
+  kind: 'fireball' | 'ice_orb' | 'ice_shard';
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  damage: number;
+  life: number;
+  targetEnemyId?: number | null;
+}
+
 export interface IslandSnapshot {
   worldWidth?: number;
   centerX?: number;
@@ -463,6 +499,8 @@ export interface IslandSnapshot {
   godShrine: GodShrine | null;
   weaponShrine?: WeaponShrine | null;
   preciousMine?: PreciousMine | null;
+  yggdrasilTree?: YggdrasilTree | null;
+  staffAltars?: StaffAltar[];
   mountShrine: MountShrine | null;
   puzzle: RunePuzzle | null;
   elders?: Elder[];
@@ -541,6 +579,7 @@ export interface Portal {
   spawnQueue: number;
   spawnCooldown: number;
   hitFlash: number;
+  elementalStone?: ElementalStoneKind | null;
 }
 
 export type EnemyKind = 'draugr' | 'wolf_wraith' | 'draugr_brute' | 'hel_crow' | 'frost_troll';
@@ -595,6 +634,8 @@ export type PromptTargetType =
   | 'tree'
   | 'rock'
   | 'precious_mine'
+  | 'yggdrasil'
+  | 'staff_altar'
   | 'berry_bush'
   | 'brewery_build'
   | 'brewery_beer'
@@ -893,6 +934,9 @@ export interface WorldState {
   godShrine: GodShrine | null;
   weaponShrine?: WeaponShrine | null;
   preciousMine?: PreciousMine | null;
+  yggdrasilTree?: YggdrasilTree | null;
+  staffAltars?: StaffAltar[];
+  forgedStaves?: ElementalStaffId[];
   mountShrine: MountShrine | null;
   puzzle: RunePuzzle | null;
   elders?: Elder[];
@@ -912,6 +956,7 @@ export interface WorldState {
   flyingCoins: FlyingCoin[];
   fireTrails: FireTrail[];
   lightningBolts: LightningBolt[];
+  magicProjectiles?: MagicProjectile[];
   arrows: Arrow[];
   wildlife: Wildlife[];
   particles: Particle[];

@@ -14,6 +14,7 @@ import {
   type CrestConfig,
   type DockState,
   type ElderId,
+  type ElementalStaffId,
   type FarmPlot,
   type ForgeState,
   type GodShrine,
@@ -28,6 +29,7 @@ import {
   type ResourceSize,
   type Rock,
   type RunePuzzle,
+  type StaffAltar,
   type ToolShop,
   type Tree,
   type TutorialState,
@@ -37,8 +39,15 @@ import {
   type WeaponShrine,
   type Wildlife,
   type WorldState,
+  type YggdrasilTree,
 } from '../types';
-import { getIslandMetalId, getIslandWeaponId } from './arsenal';
+import {
+  ELEMENTAL_STAFF_ORDER,
+  ELEMENTAL_STAFF_RECIPES,
+  getIslandElementalPortalStone,
+  getIslandMetalId,
+  getIslandWeaponId,
+} from './arsenal';
 import { createDefaultElders } from './elders';
 import { ISLAND_DEFINITIONS, getIslandDef } from './islands';
 
@@ -149,11 +158,45 @@ export function createDefaultPreciousMine(
   };
 }
 
+export function createDefaultStaffAltars(
+  cx = CENTER_X,
+  forgedStaves: ElementalStaffId[] = []
+): StaffAltar[] {
+  const forgedSet = new Set(forgedStaves);
+  return ELEMENTAL_STAFF_ORDER.map((staffId) => {
+    const rec = ELEMENTAL_STAFF_RECIPES[staffId];
+    return {
+      staffId,
+      x: cx + rec.altarOffset,
+      diamondsPaid: forgedSet.has(staffId) ? rec.diamondCost : 0,
+      coinsPaid: forgedSet.has(staffId) ? rec.coinCost : 0,
+      forged: forgedSet.has(staffId),
+    };
+  });
+}
+
+export function createDefaultYggdrasilTree(
+  islandId: number,
+  uid: () => number,
+  cx = CENTER_X
+): YggdrasilTree | null {
+  if (islandId !== 6) return null;
+  return {
+    id: uid(),
+    x: cx + 1340,
+    marked: false,
+    harvestProgress: 0,
+    coinsPaid: 0,
+    hitShake: 0,
+  };
+}
+
 export function generateIslandSnapshot(
   islandId: number,
   uid: () => number,
   arrivingCrew: Villager[] = [],
-  rescuedElders: ElderId[] = []
+  rescuedElders: ElderId[] = [],
+  forgedStaves: ElementalStaffId[] = []
 ): IslandSnapshot {
   const def = getIslandDef(islandId);
   const mapW = def.worldWidth || WORLD_WIDTH;
@@ -364,6 +407,12 @@ export function generateIslandSnapshot(
   // 5 Distinct Nordic Elders (Anciões): Bard, Forge/Force, Builder, Beast, War!
   const elders = createDefaultElders(cx, rescuedElders);
 
+  // Giant World Tree Yggdrasil (exclusively on Island 6 -> source of Sacred Yggdrasil Wood!)
+  const yggdrasilTree = createDefaultYggdrasilTree(islandId, uid, cx);
+
+  // 3 Elemental Magic Staff Altars (Fire, Ice, Thunder)
+  const staffAltars = createDefaultStaffAltars(cx, forgedStaves);
+
   // Special Mount Shrine
   const mountShrine: MountShrine | null = def.mountId
     ? {
@@ -431,6 +480,7 @@ export function generateIslandSnapshot(
       spawnQueue: 0,
       spawnCooldown: 0,
       hitFlash: 0,
+      elementalStone: null,
     });
   }
 
@@ -450,7 +500,19 @@ export function generateIslandSnapshot(
       spawnQueue: 0,
       spawnCooldown: 0,
       hitFlash: 0,
+      elementalStone: null,
     });
+  }
+
+  // Strictly 3 Elemental Portals across the entire saga (Island 1: Red Fire, Island 3: Blue Ice, Island 5: Yellow Thunder!)
+  const islandStone = getIslandElementalPortalStone(islandId);
+  if (islandStone && portals.length > 0) {
+    // Pick the innermost right portal on Island 1/5, innermost left portal on Island 3
+    const preferred =
+      islandStone === 'ice'
+        ? portals.filter((p) => p.side === -1).sort((a, b) => Math.abs(a.x - cx) - Math.abs(b.x - cx))[0]
+        : portals.filter((p) => p.side === 1).sort((a, b) => Math.abs(a.x - cx) - Math.abs(b.x - cx))[0];
+    if (preferred) preferred.elementalStone = islandStone;
   }
 
   let seed = 4219 + islandId * 7919;
@@ -466,6 +528,7 @@ export function generateIslandSnapshot(
     ...(godShrine ? [{ x: godShrine.x, r: 42 }] : []),
     { x: weaponShrine.x, r: 46 },
     { x: preciousMine.x, r: 52 },
+    ...(yggdrasilTree ? [{ x: yggdrasilTree.x, r: 85 }] : []),
     ...elders.map((el) => ({ x: el.cottageX, r: 38 })),
     ...(mountShrine ? [{ x: mountShrine.x, r: 42 }] : []),
     ...(puzzle ? [{ x: puzzle.x, r: 42 }] : []),
@@ -629,6 +692,8 @@ export function generateIslandSnapshot(
     godShrine,
     weaponShrine,
     preciousMine,
+    yggdrasilTree,
+    staffAltars,
     mountShrine,
     puzzle,
     elders,
@@ -805,7 +870,10 @@ export function createInitialWorld(
       iron: 0,
       food: 0,
       preciousOres: {},
+      elementalStones: {},
+      yggdrasilWood: 0,
     },
+    forgedStaves: [],
     monarchs: [monarch],
     banker,
     ...island1,
@@ -814,6 +882,7 @@ export function createInitialWorld(
     flyingCoins: [],
     fireTrails: [],
     lightningBolts: [],
+    magicProjectiles: [],
     arrows: [],
     wildlife,
     particles,

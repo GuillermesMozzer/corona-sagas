@@ -1,4 +1,10 @@
-import type { ArmorSlot, PreciousMetalId, WeaponId } from '../types';
+import type {
+  ArmorSlot,
+  ElementalStaffId,
+  ElementalStoneKind,
+  PreciousMetalId,
+  WeaponId,
+} from '../types';
 
 export interface WeaponDefinition {
   id: WeaponId;
@@ -10,6 +16,109 @@ export interface WeaponDefinition {
   cooldown: number;
   color: string;
   iconKind: 'bow' | 'shield' | 'hammer' | 'spear' | 'staff' | 'rune' | 'sword' | 'horn' | 'scepter';
+}
+
+export interface ElementalStoneDefinition {
+  kind: ElementalStoneKind;
+  name: string;
+  shortName: string;
+  islandId: number;
+  color: string;
+  highlight: string;
+  staffId: ElementalStaffId;
+}
+
+export interface ElementalStaffRecipe {
+  staffId: ElementalStaffId;
+  stoneKind: ElementalStoneKind;
+  diamondCost: number;
+  coinCost: number;
+  woodCost: number;
+  stoneCost: number;
+  yggdrasilWoodCost: number;
+  altarOffset: number;
+}
+
+export const ELEMENTAL_STONE_DEFS: Record<ElementalStoneKind, ElementalStoneDefinition> = {
+  fire: {
+    kind: 'fire',
+    name: 'Pedra Vermelha do Fogo',
+    shortName: 'Pedra Fogo',
+    islandId: 1,
+    color: '#ff4238',
+    highlight: '#ff9e78',
+    staffId: 'staff_fire',
+  },
+  ice: {
+    kind: 'ice',
+    name: 'Pedra Azul do Gelo',
+    shortName: 'Pedra Gelo',
+    islandId: 3,
+    color: '#36d8ff',
+    highlight: '#c4f7ff',
+    staffId: 'staff_ice',
+  },
+  thunder: {
+    kind: 'thunder',
+    name: 'Pedra Amarela do Trovão',
+    shortName: 'Pedra Trovão',
+    islandId: 5,
+    color: '#ffe033',
+    highlight: '#fff9b8',
+    staffId: 'staff_thunder',
+  },
+};
+
+export const ELEMENTAL_STAFF_ORDER: ElementalStaffId[] = [
+  'staff_fire',
+  'staff_ice',
+  'staff_thunder',
+];
+
+export const ELEMENTAL_STAFF_RECIPES: Record<ElementalStaffId, ElementalStaffRecipe> = {
+  staff_fire: {
+    staffId: 'staff_fire',
+    stoneKind: 'fire',
+    diamondCost: 2,
+    coinCost: 8,
+    woodCost: 10,
+    stoneCost: 10,
+    yggdrasilWoodCost: 3,
+    altarOffset: -232,
+  },
+  staff_ice: {
+    staffId: 'staff_ice',
+    stoneKind: 'ice',
+    diamondCost: 2,
+    coinCost: 8,
+    woodCost: 10,
+    stoneCost: 10,
+    yggdrasilWoodCost: 3,
+    altarOffset: 232,
+  },
+  staff_thunder: {
+    staffId: 'staff_thunder',
+    stoneKind: 'thunder',
+    diamondCost: 3,
+    coinCost: 10,
+    woodCost: 12,
+    stoneCost: 12,
+    yggdrasilWoodCost: 3,
+    altarOffset: 310,
+  },
+};
+
+/**
+ * Strictly 3 Elemental Portals exist across the entire 9-island saga:
+ * - Island 1: Red Fire Stone
+ * - Island 3: Blue Ice Stone
+ * - Island 5: Yellow Thunder Stone
+ */
+export function getIslandElementalPortalStone(islandId: number): ElementalStoneKind | null {
+  if (islandId === 1) return 'fire';
+  if (islandId === 3) return 'ice';
+  if (islandId === 5) return 'thunder';
+  return null;
 }
 
 export interface PreciousMetalDefinition {
@@ -136,6 +245,39 @@ export const WEAPON_DEFS: Record<WeaponId, WeaponDefinition> = {
     cooldown: 11,
     color: '#fff2a6',
     iconKind: 'scepter',
+  },
+  staff_fire: {
+    id: 'staff_fire',
+    islandId: 6,
+    name: 'Cajado do Fogo',
+    shortTag: 'C.FOGO',
+    desc: 'Dispara bola de fogo que explode no 1º inimigo e espalha chamas no chão!',
+    coinCost: 8,
+    cooldown: 5.5,
+    color: '#ff5d38',
+    iconKind: 'staff',
+  },
+  staff_ice: {
+    id: 'staff_ice',
+    islandId: 6,
+    name: 'Cajado do Gelo',
+    shortTag: 'C.GELO',
+    desc: 'Bola de gelo congela o 1º inimigo e deflagra 3 flocos letais em outros inimigos!',
+    coinCost: 8,
+    cooldown: 6.5,
+    color: '#5ce8ff',
+    iconKind: 'staff',
+  },
+  staff_thunder: {
+    id: 'staff_thunder',
+    islandId: 6,
+    name: 'Cajado do Trovão',
+    shortTag: 'TROVÃO',
+    desc: 'Dispara trovão arcano que destrói até 5 inimigos instantaneamente!',
+    coinCost: 10,
+    cooldown: 8.0,
+    color: '#ffe033',
+    iconKind: 'staff',
   },
 };
 
