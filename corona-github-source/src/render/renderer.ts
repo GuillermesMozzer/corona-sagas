@@ -329,7 +329,7 @@ export class PixelRenderer {
     } else {
       this.drawHud(ctx, w);
       if (w.mode === 'playing' && w.tutorial?.active) {
-        this.drawTutorialDialogue(ctx, w);
+        this.drawTutorialDialogue(ctx, w, camX);
       } else if (w.banner) {
         this.drawBanner(ctx, w);
       }
@@ -4644,7 +4644,7 @@ export class PixelRenderer {
     ctx.restore();
   }
 
-  private drawTutorialDialogue(ctx: CanvasRenderingContext2D, w: WorldState): void {
+  private drawTutorialDialogue(ctx: CanvasRenderingContext2D, w: WorldState, camX: number): void {
     const tut = w.tutorial;
     const m = w.monarchs[0];
     if (!tut || !tut.active || !m) return;
@@ -4662,70 +4662,128 @@ export class PixelRenderer {
     else if (tut.step === 'order_villager') text = nearTarget ? t('tut_order_here') : t('tut_order_go');
     else text = t('tut_farewell');
 
-    const isNarrow = this.viewW < 420;
-    const baseY = isNarrow ? 42 : 26;
-    const yOff = w.activeCommand !== 'none' || w.commandFeedback ? baseY + 18 : baseY;
-    const bw = Math.min(352, this.viewW - 14);
-    const bx = Math.round((this.viewW - bw) / 2);
+    const showControls = tut.step === 'light_fire' || tut.step === 'recruit_wanderers';
+    const controlsText = showControls ? t('tut_controls') : '';
 
-    // Simple 2-line word-wrap for narrow mobile screens
-    const maxChars = Math.max(30, Math.floor((bw - 46) / 4.2));
+    ctx.save();
+    ctx.globalAlpha = Math.max(0.18, Math.min(1, tut.spiritAlpha));
+
+    const isNarrow = this.viewW < 420;
+    const maxBubbleW = Math.min(228, this.viewW - 18);
+    const padX = 7;
+    const skipW = 28;
+    const maxTextW = Math.max(96, maxBubbleW - padX * 2);
+
+    // Measure & wrap dialogue lines accurately so the comic bubble fits snugly around text
+    ctx.font = 'bold 6.8px "Pixelify Sans", monospace';
     const words = text.split(' ');
     const lines: string[] = [];
     let cur = '';
     for (const word of words) {
-      if ((cur + ' ' + word).trim().length > maxChars && cur.length > 0) {
+      const candidate = (cur + ' ' + word).trim();
+      // Reserve space on the first line for the top-right Skip chip so text never overlaps it
+      const lineLimit = lines.length === 0 ? maxTextW - skipW - 5 : maxTextW;
+      if (ctx.measureText(candidate).width > lineLimit && cur.length > 0) {
         lines.push(cur.trim());
         cur = word;
       } else {
-        cur = (cur + ' ' + word).trim();
+        cur = candidate;
       }
     }
     if (cur) lines.push(cur);
 
-    const showControls = tut.step === 'light_fire' || tut.step === 'recruit_wanderers';
-    const boxH = 14 + lines.length * 9 + (showControls ? 10 : 2);
+    // Measure actual widest line to size the comic bubble cleanly
+    let contentW = 0;
+    lines.forEach((line, idx) => {
+      const lw = ctx.measureText(line).width + (idx === 0 ? skipW + 6 : 0);
+      if (lw > contentW) contentW = lw;
+    });
+    if (controlsText) {
+      ctx.font = '6px "Pixelify Sans", monospace';
+      const cw = ctx.measureText(controlsText).width;
+      if (cw > contentW) contentW = cw;
+    }
 
-    ctx.save();
-    ctx.fillStyle = 'rgba(7, 16, 29, 0.88)';
-    ctx.fillRect(bx, yOff, bw, boxH);
-    ctx.strokeStyle = 'rgba(110, 238, 255, 0.78)';
+    const bw = Math.round(Math.max(118, Math.min(maxBubbleW, contentW + padX * 2 + 4)));
+    const lineStep = 9;
+    const boxH = 10 + lines.length * lineStep + (showControls ? 9 : 1);
+    const tailH = 7;
+
+    // Anchor comic speech bubble right above the Spirit's head!
+    const spiritScreenX = Math.round(tut.spiritX - camX);
+    const spiritHeadY = Math.round(tut.spiritY + this.worldOffsetY - 23);
+    const spiritOnScreen = spiritScreenX >= 6 && spiritScreenX <= this.viewW - 6;
+
+    const topMinY = (isNarrow ? 40 : 24) + (w.activeCommand !== 'none' || w.commandFeedback ? 16 : 0);
+    // Slightly favor the side the spirit is facing, while keeping the bubble cleanly within screen bounds
+    const desiredBx = Math.round(spiritScreenX - bw * 0.5 + tut.spiritFacing * 10);
+    const bx = Math.max(8, Math.min(this.viewW - bw - 8, desiredBx));
+    const desiredBy = Math.round(spiritHeadY - tailH - boxH);
+    const by = Math.max(topMinY, Math.min(this.viewH - boxH - tailH - 12, desiredBy));
+
+    const bgFill = 'rgba(7, 16, 29, 0.90)';
+    const borderStroke = 'rgba(110, 238, 255, 0.85)';
+
+    // Comic-book bubble shape with crisp chamfered pixel corners + seamless speech tail pointing to Spirit's head
+    const tailTipX = Math.max(bx + 6, Math.min(bx + bw - 6, spiritScreenX));
+    const tailTipY = spiritOnScreen ? Math.min(spiritHeadY, by + boxH + tailH + 3) : by + boxH + tailH;
+    const tailBaseCenter = Math.max(bx + 11, Math.min(bx + bw - 11, tailTipX));
+    const tailLeftX = tailBaseCenter - 4;
+    const tailRightX = tailBaseCenter + 4;
+    const r = 2; // Crisp pixel corner chamfer
+
+    ctx.beginPath();
+    ctx.moveTo(bx + r, by + 0.5);
+    ctx.lineTo(bx + bw - r, by + 0.5);
+    ctx.lineTo(bx + bw - 0.5, by + r);
+    ctx.lineTo(bx + bw - 0.5, by + boxH - r);
+    ctx.lineTo(bx + bw - r, by + boxH - 0.5);
+    if (spiritOnScreen) {
+      ctx.lineTo(tailRightX, by + boxH - 0.5);
+      ctx.lineTo(tailTipX, tailTipY);
+      ctx.lineTo(tailLeftX, by + boxH - 0.5);
+    }
+    ctx.lineTo(bx + r, by + boxH - 0.5);
+    ctx.lineTo(bx + 0.5, by + boxH - r);
+    ctx.lineTo(bx + 0.5, by + r);
+    ctx.closePath();
+
+    ctx.fillStyle = bgFill;
+    ctx.fill();
+    ctx.strokeStyle = borderStroke;
     ctx.lineWidth = 1;
-    ctx.strokeRect(bx + 0.5, yOff + 0.5, bw - 1, boxH - 1);
+    ctx.stroke();
 
-    // Mini glowing blue spirit icon on left
-    ctx.fillStyle = '#6be8ff';
-    ctx.fillRect(bx + 7, yOff + 7, 5, 7);
-    ctx.fillStyle = '#e0feff';
-    ctx.fillRect(bx + 8, yOff + 5, 3, 3);
+    // Subtle inner pixel highlight along top edge for depth
+    ctx.fillStyle = 'rgba(140, 244, 255, 0.14)';
+    ctx.fillRect(bx + 2, by + 1, bw - 4, 1);
 
-    // Dialogue text lines
+    // Dialogue text lines inside bubble
     ctx.textAlign = 'left';
     ctx.fillStyle = '#d8f9ff';
     ctx.font = 'bold 6.8px "Pixelify Sans", monospace';
     lines.forEach((line, idx) => {
-      ctx.fillText(line, bx + 17, yOff + 11 + idx * 9);
+      ctx.fillText(line, bx + padX, by + 10.5 + idx * lineStep);
     });
 
     if (showControls) {
       ctx.fillStyle = '#8ec0d8';
       ctx.font = '6px "Pixelify Sans", monospace';
-      ctx.fillText(t('tut_controls'), bx + 17, yOff + 11 + lines.length * 9 + 1);
+      ctx.fillText(controlsText, bx + padX, by + 10.5 + lines.length * lineStep + 0.5, bw - padX * 2);
     }
 
-    // Subtle Skip button on top-right of tutorial box
-    const skipW = 28;
-    const skipX = bx + bw - skipW - 4;
-    const skipY = yOff + 4;
-    ctx.fillStyle = 'rgba(20, 36, 56, 0.85)';
-    ctx.fillRect(skipX, skipY, skipW, 11);
-    ctx.strokeStyle = 'rgba(126, 245, 255, 0.45)';
-    ctx.strokeRect(skipX + 0.5, skipY + 0.5, skipW - 1, 10);
+    // Subtle Skip button on top-right of speech bubble
+    const skipX = bx + bw - skipW - 3;
+    const skipY = by + 3;
+    ctx.fillStyle = 'rgba(20, 36, 56, 0.88)';
+    ctx.fillRect(skipX, skipY, skipW, 10);
+    ctx.strokeStyle = 'rgba(126, 245, 255, 0.55)';
+    ctx.strokeRect(skipX + 0.5, skipY + 0.5, skipW - 1, 9);
     ctx.textAlign = 'center';
     ctx.fillStyle = '#9fe8ff';
     ctx.font = 'bold 5.5px "Pixelify Sans", monospace';
-    ctx.fillText(t('tut_skip'), skipX + skipW / 2, skipY + 7.5);
-    this.addHit('tutorial_skip', skipX - 4, skipY - 4, skipW + 8, 19);
+    ctx.fillText(t('tut_skip'), skipX + skipW / 2, skipY + 7);
+    this.addHit('tutorial_skip', skipX - 4, skipY - 4, skipW + 8, 18);
 
     ctx.restore();
     ctx.textAlign = 'left';
