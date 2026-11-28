@@ -261,6 +261,21 @@
       color: #b4ffbc;
       font-weight: 700;
     }
+    .menu-item.whatsapp-btn {
+      background: #0d3320;
+      border-color: #25d366;
+      color: #b8ffd2;
+      font-weight: 700;
+    }
+    .menu-item.whatsapp-btn:hover {
+      background: #12442b;
+      border-color: #5ef296;
+    }
+    .whatsapp-menu-left {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
     .menu-item.danger {
       background: #3b141c;
       border-color: #e06774;
@@ -1175,8 +1190,30 @@
         <span id="val-map" class="menu-badge on">I/IX</span>
       </button>
 
-      <!-- CO-OP ONLINE SECTION (HOST GENERATES CODE / CLOSES CO-OP / KICKS / REPORTS) -->
+      <!-- WHATSAPP COMMUNITY + CO-OP ONLINE SECTION -->
       <div id="menu-coop-section-lbl" class="menu-section-label" style="display:none;">CO-OP ONLINE (MÁX 4)</div>
+      <button id="menu-whatsapp" class="menu-item whatsapp-btn" type="button">
+        <span class="whatsapp-menu-left">
+          <svg width="16" height="16" viewBox="0 0 12 12" shape-rendering="crispEdges" aria-hidden="true">
+            <rect x="3" y="1" width="6" height="1" fill="#ffffff"/>
+            <rect x="2" y="2" width="8" height="1" fill="#ffffff"/>
+            <rect x="1" y="3" width="10" height="5" fill="#ffffff"/>
+            <rect x="2" y="8" width="8" height="1" fill="#ffffff"/>
+            <rect x="3" y="9" width="6" height="1" fill="#ffffff"/>
+            <rect x="1" y="9" width="3" height="1" fill="#ffffff"/>
+            <rect x="1" y="10" width="2" height="1" fill="#ffffff"/>
+            <rect x="3" y="2" width="6" height="7" fill="#25d366"/>
+            <rect x="2" y="3" width="8" height="5" fill="#25d366"/>
+            <rect x="2" y="8" width="2" height="2" fill="#25d366"/>
+            <rect x="4" y="3" width="1" height="3" fill="#ffffff"/>
+            <rect x="5" y="5" width="1" height="2" fill="#ffffff"/>
+            <rect x="6" y="6" width="2" height="1" fill="#ffffff"/>
+            <rect x="7" y="5" width="1" height="2" fill="#ffffff"/>
+          </svg>
+          <span id="lbl-whatsapp">Comunidade WhatsApp</span>
+        </span>
+        <span class="menu-badge on">GRUPO</span>
+      </button>
       <button id="menu-coop-host-toggle" class="menu-item coop-open" style="display:none;">
         <span id="lbl-coop-host">Abrir Co-op (Gerar Código)</span>
         <span id="val-coop-host" class="menu-badge on">CO-OP</span>

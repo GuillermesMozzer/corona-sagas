@@ -354,7 +354,7 @@ export class PixelRenderer {
     const cy = Math.round(this.viewH * 0.43);
     const saved = getSavedCampaignSummary();
 
-    const titleY = Math.max(58, cy - 44);
+    const titleY = Math.max(54, cy - 50);
 
     // Golden Crown Emblem
     ctx.fillStyle = '#f7c948';
@@ -379,13 +379,13 @@ export class PixelRenderer {
 
     ctx.fillStyle = '#9ec4e0';
     ctx.font = '8px "Pixelify Sans", monospace';
-    ctx.fillText(t('subtitle'), cx, titleY + 14);
+    ctx.fillText(t('subtitle'), cx, titleY + 13);
 
     if (isPlayerAuthorizedToPlay()) {
       const btnW = Math.min(204, this.viewW - 28);
-      const btnH = 22;
+      const btnH = 21;
       const bx = Math.round(cx - btnW / 2);
-      const by1 = titleY + 22;
+      const by1 = titleY + 19;
 
       ctx.fillStyle = 'rgba(20, 32, 48, 0.92)';
       ctx.fillRect(bx, by1, btnW, btnH);
@@ -394,43 +394,43 @@ export class PixelRenderer {
       ctx.strokeRect(bx + 0.5, by1 + 0.5, btnW - 1, btnH - 1);
       ctx.fillStyle = '#ffe58a';
       ctx.font = 'bold 8.5px "Pixelify Sans", monospace';
-      ctx.fillText(t('new_campaign'), cx, by1 + 14);
+      ctx.fillText(t('new_campaign'), cx, by1 + 13.5);
       this.addHit('login_new', bx, by1, btnW, btnH);
 
-      const by2 = by1 + 26;
+      const by2 = by1 + 24;
       const savedCount = countSavedCampaigns();
       ctx.fillStyle = saved ? 'rgba(16, 28, 42, 0.92)' : 'rgba(14, 20, 30, 0.85)';
-      ctx.fillRect(bx, by2, btnW, 28);
+      ctx.fillRect(bx, by2, btnW, 26);
       ctx.strokeStyle = saved ? 'rgba(140, 210, 255, 0.78)' : 'rgba(140, 175, 210, 0.42)';
-      ctx.strokeRect(bx + 0.5, by2 + 0.5, btnW - 1, 27);
+      ctx.strokeRect(bx + 0.5, by2 + 0.5, btnW - 1, 25);
 
       if (saved) {
-        drawShieldEmblem(ctx, saved.crest, bx + 18, by2 + 14, 8);
+        drawShieldEmblem(ctx, saved.crest, bx + 18, by2 + 13, 8);
         ctx.textAlign = 'left';
         ctx.fillStyle = '#d9eeff';
         ctx.font = 'bold 7.5px "Pixelify Sans", monospace';
-        ctx.fillText(`${t('slots_btn')} (${savedCount}/${MAX_SAVE_SLOTS})`, bx + 33, by2 + 12);
+        ctx.fillText(`${t('slots_btn')} (${savedCount}/${MAX_SAVE_SLOTS})`, bx + 33, by2 + 11);
         ctx.fillStyle = '#95b2cc';
         ctx.font = '6.5px "Pixelify Sans", monospace';
         ctx.fillText(
           `Slot ${saved.slot + 1} · ${t('day_short')} ${saved.day} · ${saved.gold}g`,
           bx + 33,
-          by2 + 22
+          by2 + 21
         );
       } else {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#c4d8eb';
         ctx.font = 'bold 7.5px "Pixelify Sans", monospace';
-        ctx.fillText(`${t('slots_btn')} (0/${MAX_SAVE_SLOTS})`, cx, by2 + 12);
+        ctx.fillText(`${t('slots_btn')} (0/${MAX_SAVE_SLOTS})`, cx, by2 + 11);
         ctx.fillStyle = '#7e93a8';
         ctx.font = '6.5px "Pixelify Sans", monospace';
-        ctx.fillText(t('no_save'), cx, by2 + 22);
+        ctx.fillText(t('no_save'), cx, by2 + 21);
       }
-      this.addHit('login_slots', bx, by2, btnW, 28);
+      this.addHit('login_slots', bx, by2, btnW, 26);
 
       // Co-op Online Join by Code Button
-      const byCoop = by2 + 32;
-      const coopH = 21;
+      const byCoop = by2 + 29;
+      const coopH = 20;
       ctx.fillStyle = 'rgba(18, 40, 32, 0.94)';
       ctx.fillRect(bx, byCoop, btnW, coopH);
       ctx.strokeStyle = '#6fe87b';
@@ -439,12 +439,12 @@ export class PixelRenderer {
       ctx.textAlign = 'center';
       ctx.fillStyle = '#a7ffae';
       ctx.font = 'bold 8px "Pixelify Sans", monospace';
-      ctx.fillText('⚔ CO-OP ONLINE (CÓDIGO)', cx, byCoop + 13.5);
+      ctx.fillText('⚔ CO-OP ONLINE (CÓDIGO)', cx, byCoop + 13);
       this.addHit('login_coop', bx, byCoop, btnW, coopH);
 
       // Pixel-Art Google Forms Rating Button (+3 Diamonds)
-      const by3 = byCoop + 25;
-      const fbBtnH = 20;
+      const by3 = byCoop + 23;
+      const fbBtnH = 19;
       const alreadyAnswered = isFeedbackAnswered();
       ctx.fillStyle = alreadyAnswered ? 'rgba(16, 26, 38, 0.88)' : 'rgba(15, 36, 48, 0.94)';
       ctx.fillRect(bx, by3, btnW, fbBtnH);
@@ -453,15 +453,30 @@ export class PixelRenderer {
       ctx.strokeRect(bx + 0.5, by3 + 0.5, btnW - 1, fbBtnH - 1);
 
       // Pixel-art star on left and diamond on right
-      this.drawPixelStar(ctx, bx + 12, by3 + 10, 1, true);
+      this.drawPixelStar(ctx, bx + 12, by3 + 9.5, 1, true);
       if (!alreadyAnswered) {
-        this.drawPixelDiamondIcon(ctx, bx + btnW - 13, by3 + 10, 1, w.elapsed);
+        this.drawPixelDiamondIcon(ctx, bx + btnW - 13, by3 + 9.5, 1, w.elapsed);
       }
       ctx.textAlign = 'center';
       ctx.fillStyle = alreadyAnswered ? '#b7d4e8' : '#b8f7ff';
       ctx.font = 'bold 7px "Pixelify Sans", monospace';
-      ctx.fillText(alreadyAnswered ? t('rate_game_done_btn') : t('rate_game_btn'), cx, by3 + 13);
+      ctx.fillText(alreadyAnswered ? t('rate_game_done_btn') : t('rate_game_btn'), cx, by3 + 12.5);
       this.addHit('login_feedback', bx, by3, btnW, fbBtnH);
+
+      // Pixel-Art WhatsApp Community Button
+      const byWa = by3 + 22;
+      const waBtnH = 19;
+      ctx.fillStyle = 'rgba(11, 44, 27, 0.95)';
+      ctx.fillRect(bx, byWa, btnW, waBtnH);
+      ctx.strokeStyle = '#25d366';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx + 0.5, byWa + 0.5, btnW - 1, waBtnH - 1);
+      this.drawPixelWhatsAppIcon(ctx, bx + 9, byWa + 4);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#b8ffd2';
+      ctx.font = 'bold 7.2px "Pixelify Sans", monospace';
+      ctx.fillText(t('whatsapp_btn'), cx + 5, byWa + 12.5);
+      this.addHit('login_whatsapp', bx, byWa, btnW, waBtnH);
     }
 
     // Google Technology Disclaimer Badge with Pixel-Art Google "G" Logo
@@ -511,6 +526,35 @@ export class PixelRenderer {
       );
     }
     ctx.textAlign = 'left';
+  }
+
+  private drawPixelWhatsAppIcon(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+    const rx = Math.round(x);
+    const ry = Math.round(y);
+    // Crisp 11x11 pixel-art WhatsApp bubble outline (white)
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(rx + 2, ry, 7, 1);
+    ctx.fillRect(rx + 1, ry + 1, 9, 1);
+    ctx.fillRect(rx, ry + 2, 11, 6);
+    ctx.fillRect(rx + 1, ry + 8, 9, 1);
+    ctx.fillRect(rx + 2, ry + 9, 7, 1);
+    // Bottom-left speech bubble tail
+    ctx.fillRect(rx, ry + 8, 3, 2);
+    ctx.fillRect(rx, ry + 10, 2, 1);
+
+    // Inner WhatsApp emerald green fill
+    ctx.fillStyle = '#25d366';
+    ctx.fillRect(rx + 2, ry + 1, 7, 8);
+    ctx.fillRect(rx + 1, ry + 2, 9, 6);
+    ctx.fillRect(rx + 1, ry + 8, 2, 2);
+
+    // Classic white pixel phone handset inside bubble
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(rx + 3, ry + 2, 2, 2);
+    ctx.fillRect(rx + 3, ry + 4, 1, 2);
+    ctx.fillRect(rx + 4, ry + 5, 2, 2);
+    ctx.fillRect(rx + 6, ry + 6, 2, 2);
+    ctx.fillRect(rx + 7, ry + 5, 1, 2);
   }
 
   private drawPixelGoogleLogo(ctx: CanvasRenderingContext2D, x: number, y: number): void {

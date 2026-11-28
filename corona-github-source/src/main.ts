@@ -228,7 +228,18 @@ const btnSignout = document.getElementById('menu-signout') as HTMLButtonElement 
 const importFileInput = document.getElementById('import-file-input') as HTMLInputElement | null;
 const charNameInput = document.getElementById('char-name-input') as HTMLInputElement | null;
 
-// Co-op Menu, Quick Rail (Chat + Mic), Chat Drawer, Join & Report Modal DOM elements
+// WhatsApp Community + Co-op Menu, Quick Rail (Chat + Mic), Chat Drawer, Join & Report Modal DOM elements
+const WHATSAPP_COMMUNITY_URL = 'https://chat.whatsapp.com/CgscPhZwV0rKAXZGdkzRUJ';
+function openWhatsappCommunity(): void {
+  sound.unlock();
+  sound.playCoinPickup();
+  const opened = window.open(WHATSAPP_COMMUNITY_URL, '_blank', 'noopener,noreferrer');
+  if (!opened) {
+    window.location.href = WHATSAPP_COMMUNITY_URL;
+  }
+}
+const btnWhatsapp = document.getElementById('menu-whatsapp') as HTMLButtonElement | null;
+const lblWhatsapp = document.getElementById('lbl-whatsapp');
 const menuCoopSectionLbl = document.getElementById('menu-coop-section-lbl');
 const btnCoopHostToggle = document.getElementById('menu-coop-host-toggle') as HTMLButtonElement | null;
 const lblCoopHost = document.getElementById('lbl-coop-host');
@@ -988,6 +999,7 @@ function updateMenuUI(): void {
   }
   if (lblExport) lblExport.textContent = t('menu_export');
   if (lblImport) lblImport.textContent = t('menu_import');
+  if (lblWhatsapp) lblWhatsapp.textContent = t('menu_whatsapp');
   if (lblEscHint) lblEscHint.textContent = t('menu_esc_hint');
 
   const inCampaign = world.mode === 'playing' || world.mode === 'paused' || world.mode === 'world_map';
@@ -1282,6 +1294,11 @@ function handleCanvasHit(hitId: string): boolean {
     return true;
   }
   if (hitId === 'feedback_backdrop') {
+    return true;
+  }
+
+  if (hitId === 'login_whatsapp') {
+    openWhatsappCommunity();
     return true;
   }
 
@@ -1760,6 +1777,10 @@ function setCoopMenuStatus(msg: string | null, isError = true): void {
     coopMenuStatus.scrollIntoView({ block: 'nearest' });
   }
 }
+
+btnWhatsapp?.addEventListener('click', () => {
+  openWhatsappCommunity();
+});
 
 btnCoopHostToggle?.addEventListener('click', async () => {
   sound.unlock();
