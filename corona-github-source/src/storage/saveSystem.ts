@@ -7,7 +7,7 @@ import {
   type WorldState,
 } from '../types';
 import { computeArmorBonuses, getIslandElementalPortalStone } from '../world/arsenal';
-import { createDefaultElders } from '../world/elders';
+import { createDefaultElders, getIslandNativeElderId } from '../world/elders';
 import {
   createDefaultForge,
   createDefaultPreciousMine,
@@ -15,7 +15,7 @@ import {
   createDefaultWeaponShrine,
   createDefaultYggdrasilTree,
 } from '../world/initWorld';
-import { ISLAND_DEFINITIONS } from '../world/islands';
+import { ISLAND_DEFINITIONS, getIslandMapNode } from '../world/islands';
 
 export const MAX_SAVE_SLOTS = 8;
 
@@ -241,16 +241,34 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
       cx
     );
   }
+  const nativeElderId = getIslandNativeElderId(state.currentIsland);
   if (!state.elders || state.elders.length === 0) {
-    state.elders = createDefaultElders(cx, []);
+    state.elders = createDefaultElders(cx, [], state.currentIsland);
+  } else {
+    // Keep all already-rescued Elders + only the unrescued Elder native to this island
+    const filtered = state.elders.filter((e) => e.rescued || e.id === nativeElderId);
+    const hasNative = nativeElderId ? filtered.some((e) => e.id === nativeElderId) : true;
+    if (!hasNative && nativeElderId) {
+      const freshNative = createDefaultElders(cx, [], state.currentIsland).find((e) => e.id === nativeElderId);
+      if (freshNative) filtered.push(freshNative);
+    }
+    state.elders = filtered;
   }
   state.resources.elementalStones = state.resources.elementalStones ?? {};
   state.resources.yggdrasilWood = state.resources.yggdrasilWood ?? 0;
   state.forgedStaves = state.forgedStaves ?? [];
   state.magicProjectiles = state.magicProjectiles ?? [];
-  if (!state.staffAltars || state.staffAltars.length === 0) {
-    state.staffAltars = createDefaultStaffAltars(cx, state.forgedStaves);
-  }
+  const prevAltars = state.staffAltars ?? [];
+  state.staffAltars = createDefaultStaffAltars(cx, state.forgedStaves, state.currentIsland).map((defAltar) => {
+    const prev = prevAltars.find((a) => a.staffId === defAltar.staffId);
+    if (!prev) return defAltar;
+    return {
+      ...defAltar,
+      diamondsPaid: defAltar.forged ? defAltar.diamondsPaid : prev.diamondsPaid,
+      coinsPaid: defAltar.forged ? defAltar.coinsPaid : prev.coinsPaid,
+      forged: defAltar.forged || prev.forged,
+    };
+  });
   if (state.currentIsland === 6 && !state.yggdrasilTree) {
     state.yggdrasilTree = createDefaultYggdrasilTree(
       6,
@@ -330,6 +348,8 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
         id: def.id,
         colonized: false,
         visited: false,
+        revealed: def.id === 1 || def.id === 2 || def.id === 3,
+        conquered: false,
         dockBuilt: false,
         boatBuilt: false,
         hallLevel: 0,
@@ -343,9 +363,46 @@ function hydrateState(state: WorldState, slot: number): WorldState | null {
     } else {
       existing.constructionBuff = existing.constructionBuff ?? false;
       existing.forgeBuff = existing.forgeBuff ?? false;
+      const portalsCleared =
+        existing.snapshot?.portals && existing.snapshot.portals.length > 0
+          ? existing.snapshot.portals.every((p) => p.destroyed)
+          : false;
+      existing.conquered =
+        existing.conquered ??
+        (def.id === 1
+          ? Boolean(existing.boatBuilt)
+          : portalsCleared || (Boolean(existing.dockBuilt) && (existing.hallLevel ?? 0) >= 2));
+      existing.revealed =
+        existing.revealed ??
+        Boolean(def.id === 1 || existing.visited || existing.conquered);
     }
   }
   state.islands.sort((a, b) => a.id - b.id);
+  // Ensure at most 2 new unconquered islands are revealed from the clouds for migrated saves
+  const byId = new Map(state.islands.map((isl) => [isl.id, isl]));
+  const conqueredIds = new Set<number>([1]);
+  for (const isl of state.islands) {
+    if (isl.conquered) conqueredIds.add(isl.id);
+  }
+  const countOpenNew = () =>
+    state.islands.filter((isl) => isl.id > 1 && isl.revealed && !isl.conquered).length;
+  while (countOpenNew() < 2) {
+    let pick: number | null = null;
+    for (const src of Array.from(conqueredIds).sort((a, b) => b - a)) {
+      for (const nxt of getIslandMapNode(src).connections) {
+        const tIsl = byId.get(nxt);
+        if (tIsl && !tIsl.revealed && !tIsl.conquered) {
+          pick = nxt;
+          break;
+        }
+      }
+      if (pick !== null) break;
+    }
+    if (pick === null) break;
+    const picked = byId.get(pick);
+    if (!picked) break;
+    picked.revealed = true;
+  }
   for (const v of state.villagers ?? []) {
     v.assignedTowerId = v.assignedTowerId ?? null;
   }
@@ -583,6 +640,15 @@ export function listCampaignSlots(): Array<SavedCampaignSummary | null> {
       if (s.weaponShrine?.claimedByPlayerUid) weaponSet.add(s.weaponShrine.weaponId);
       if (monarch?.weapon) weaponSet.add(monarch.weapon);
 
+      let totalWood = Math.floor(s.resources?.wood ?? 0);
+      let totalStone = Math.floor(s.resources?.stone ?? 0);
+      let totalIron = Math.floor(s.resources?.iron ?? 0);
+      let totalBankGold = Math.floor(s.banker?.balance ?? 0);
+      let preciousOres = Object.values(s.resources?.preciousOres ?? {}).reduce(
+        (sum, n) => sum + (Number(n) || 0),
+        0
+      );
+
       for (const isl of s.islands ?? []) {
         const snap = isl.snapshot;
         if (!snap) continue;
@@ -592,12 +658,20 @@ export function listCampaignSlots(): Array<SavedCampaignSummary | null> {
         if (snap.weaponShrine?.claimedByPlayerUid) {
           weaponSet.add(snap.weaponShrine.weaponId);
         }
+        if (isl.id !== (s.currentIsland ?? 1)) {
+          if (snap.islandResources) {
+            totalWood += Math.floor(snap.islandResources.wood ?? 0);
+            totalStone += Math.floor(snap.islandResources.stone ?? 0);
+            totalIron += Math.floor(snap.islandResources.iron ?? 0);
+            preciousOres += Object.values(snap.islandResources.preciousOres ?? {}).reduce(
+              (sum, n) => sum + (Number(n) || 0),
+              0
+            );
+          }
+          totalBankGold += Math.floor(snap.bankerBalance ?? 0);
+        }
       }
 
-      const preciousOres = Object.values(s.resources?.preciousOres ?? {}).reduce(
-        (sum, n) => sum + (Number(n) || 0),
-        0
-      );
       const elementalStones = (['fire', 'ice', 'thunder'] as const).filter(
         (k) => (s.resources?.elementalStones?.[k] ?? 0) > 0
       );
@@ -611,7 +685,7 @@ export function listCampaignSlots(): Array<SavedCampaignSummary | null> {
         crest: s.crest,
         villagers: vList.length,
         gold: monarch?.coins ?? s.resources?.gold ?? 0,
-        bankGold: Math.floor(s.banker?.balance ?? 0),
+        bankGold: totalBankGold,
         diamonds: monarch?.diamonds ?? s.resources?.diamonds ?? 0,
         archers,
         warriors,
@@ -620,9 +694,9 @@ export function listCampaignSlots(): Array<SavedCampaignSummary | null> {
         producers,
         citizens,
         elders: rescuedElderIds.size,
-        wood: Math.floor(s.resources?.wood ?? 0),
-        stone: Math.floor(s.resources?.stone ?? 0),
-        iron: Math.floor(s.resources?.iron ?? 0),
+        wood: totalWood,
+        stone: totalStone,
+        iron: totalIron,
         preciousOres: Math.floor(preciousOres),
         yggdrasilWood: Math.floor(s.resources?.yggdrasilWood ?? 0),
         elementalStones,

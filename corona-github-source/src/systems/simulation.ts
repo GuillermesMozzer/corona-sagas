@@ -60,7 +60,7 @@ import {
   heightForTreeSize,
   sizeFromVariant,
 } from '../world/initWorld';
-import { getIslandDef } from '../world/islands';
+import { getIslandDef, getIslandMapNode } from '../world/islands';
 import { GOD_DEFS, MOUNT_DEFS } from '../world/mountsAndGods';
 
 export const BREWERY_BUILD_COST: ResourceCost = { coins: 15, wood: 10, stone: 10, iron: 0 };
@@ -492,10 +492,66 @@ export function confirmCrestAndStartCampaign(w: WorldState): void {
   saveCampaign(w);
 }
 
+/**
+ * Ensures strictly at most 2 new (unconquered) islands are revealed from the clouds at any time,
+ * following the non-sequential sea-route graph (`ISLAND_MAP_GRAPH`).
+ * Already-conquered islands always remain revealed and available for re-exploration.
+ */
+export function refreshRevealedIslands(w: WorldState): number[] {
+  const newlyRevealed: number[] = [];
+  const byId = new Map(w.islands.map((isl) => [isl.id, isl]));
+
+  const isl1 = byId.get(1);
+  if (isl1) isl1.revealed = true;
+
+  for (const isl of w.islands) {
+    if (isl.visited || isl.conquered) isl.revealed = true;
+  }
+
+  const countOpenNew = (): number =>
+    w.islands.filter((isl) => isl.id > 1 && isl.revealed && !isl.conquered).length;
+
+  const conqueredIds = new Set<number>([1]);
+  for (const isl of w.islands) {
+    if (isl.conquered) conqueredIds.add(isl.id);
+  }
+
+  while (countOpenNew() < 2) {
+    let candidateId: number | null = null;
+    const sourceOrder = Array.from(conqueredIds).sort((a, b) => b - a);
+    for (const srcId of sourceOrder) {
+      const node = getIslandMapNode(srcId);
+      for (const nextId of node.connections) {
+        const nextIsl = byId.get(nextId);
+        if (nextIsl && !nextIsl.revealed && !nextIsl.conquered) {
+          candidateId = nextId;
+          break;
+        }
+      }
+      if (candidateId !== null) break;
+    }
+    if (candidateId === null) break;
+    const picked = byId.get(candidateId);
+    if (!picked) break;
+    picked.revealed = true;
+    newlyRevealed.push(candidateId);
+  }
+
+  return newlyRevealed;
+}
+
+export function isIslandSelectableOnMap(w: WorldState, islandId: number): boolean {
+  const prog = w.islands.find((i) => i.id === islandId);
+  if (!prog) return false;
+  return Boolean(prog.revealed || prog.conquered || prog.visited || islandId === 1);
+}
+
 function syncCurrentIslandProgress(w: WorldState): void {
   const entry = w.islands.find((i) => i.id === w.currentIsland);
   if (!entry) return;
+  const wasConquered = Boolean(entry.conquered);
   entry.visited = true;
+  entry.revealed = true;
   entry.colonized = w.hall.level >= 1 || w.currentIsland === 1;
   entry.dockBuilt = w.dock.built;
   entry.boatBuilt = w.boat.built;
@@ -505,6 +561,38 @@ function syncCurrentIslandProgress(w: WorldState): void {
   entry.mountUnlocked = Boolean(w.mountShrine?.unlocked);
   entry.constructionBuff = isConstructionBuffActive(w);
   entry.forgeBuff = isForgeBuffActive(w);
+
+  // Determine island conquest:
+  // - Island 1 (starter tutorial): conquered once the Drakkar is built
+  // - Islands 2..9: conquered when all portals are destroyed OR when Dock is built + Kingdom Hall >= Lv.2
+  const allPortalsCleared = w.portals.length > 0 && w.portals.every((p) => p.destroyed);
+  const isNowConquered =
+    wasConquered ||
+    (w.currentIsland === 1 ? w.boat.built : allPortalsCleared || (w.dock.built && w.hall.level >= 2));
+
+  if (isNowConquered) {
+    entry.conquered = true;
+  }
+
+  const newlyRevealed = refreshRevealedIslands(w);
+  if (!wasConquered && entry.conquered && w.currentIsland > 1) {
+    if (newlyRevealed.length > 0) {
+      showBanner(
+        w,
+        'ILHA CONQUISTADA!',
+        'As nuvens se dissiparam — uma nova ilha secreta foi revelada no Mapa!',
+        '#ffe58a'
+      );
+    } else {
+      showBanner(
+        w,
+        'ILHA CONQUISTADA!',
+        'Este território agora está livre para reexploração no Mapa das Ilhas!',
+        '#7ef5ff'
+      );
+    }
+  }
+
   if (w.monarchs[0]) {
     const armorBonus = computeArmorBonuses(w.monarchs[0].armor);
     w.monarchs[0].maxCoins = Math.max(30, 30 + Math.max(0, w.hall.level - 1) * 5 + armorBonus.pouchBonus);
@@ -515,6 +603,8 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
   if (targetIslandId === w.currentIsland) return false;
   const targetProgress = w.islands.find((i) => i.id === targetIslandId);
   if (!targetProgress) return false;
+  // Cloud-covered islands cannot be sailed to until revealed!
+  if (!isIslandSelectableOnMap(w, targetIslandId)) return false;
 
   // Save current island snapshot (excluding embarked crew & transient summoned spirits!)
   const embarkedCrew = w.villagers.filter((v) => v.state === 'embarked' && !v.isSummoned);
@@ -525,6 +615,10 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
   for (const mon of w.monarchs) {
     mon.ridingElderId = null;
   }
+
+  // Deposit any coins currently carried by the Banker back into this island's local Banker vault
+  const departingBankerBalance =
+    (w.banker.balance ?? 0) + (w.banker.carriedCoins && w.banker.carriedCoins > 0 ? w.banker.carriedCoins : 0);
 
   const curProgress = w.islands.find((i) => i.id === w.currentIsland);
   if (curProgress) {
@@ -542,6 +636,15 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     curProgress.snapshot = {
       worldWidth: getWorldWidth(w),
       centerX: getCenterX(w),
+      // Resources gathered on this island stay stored on this island!
+      islandResources: {
+        wood: w.resources.wood,
+        stone: w.resources.stone,
+        iron: w.resources.iron,
+        food: w.resources.food,
+        preciousOres: { ...(w.resources.preciousOres ?? {}) },
+      },
+      bankerBalance: departingBankerBalance,
       hall: { ...w.hall },
       forge: w.forge ? { ...w.forge } : null,
       shops: w.shops.map((s) => ({ ...s })),
@@ -576,6 +679,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
   // Switch to destination island!
   w.currentIsland = targetIslandId;
   targetProgress.visited = true;
+  targetProgress.revealed = true;
   targetProgress.colonized = true;
   const forgedList: ElementalStaffId[] = Array.from(
     new Set([
@@ -587,7 +691,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
 
   let nextSnap = targetProgress.snapshot;
   if (nextSnap) {
-    // Restore colonized island and disembark crew!
+    // Restore colonized island, its local resources, and disembark crew!
     const destDef = getIslandDef(targetIslandId);
     w.worldWidth = nextSnap.worldWidth ?? destDef.worldWidth;
     w.centerX = nextSnap.centerX ?? nextSnap.hall.x;
@@ -625,7 +729,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
           ? { ...nextSnap.yggdrasilTree }
           : null
         : createDefaultYggdrasilTree(targetIslandId, () => uid(w), w.centerX);
-    w.staffAltars = createDefaultStaffAltars(w.centerX, forgedList).map((defAltar) => {
+    w.staffAltars = createDefaultStaffAltars(w.centerX, forgedList, targetIslandId).map((defAltar) => {
       const prev = nextSnap?.staffAltars?.find((a) => a.staffId === defAltar.staffId);
       if (!prev) return defAltar;
       return {
@@ -642,7 +746,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     for (const se of nextSnap.elders ?? []) {
       if (se.rescued) mergedRescued.add(se.id);
     }
-    w.elders = createDefaultElders(destCx, Array.from(mergedRescued));
+    w.elders = createDefaultElders(destCx, Array.from(mergedRescued), targetIslandId);
     w.camps = nextSnap.camps.map((c) => ({ ...c }));
     w.trees = nextSnap.trees.map((tr) => ({ ...tr }));
     w.rocks = nextSnap.rocks.map((r) => ({ ...r }));
@@ -654,6 +758,15 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     w.rockRegrowTimer = nextSnap.rockRegrowTimer ?? 0;
     w.treeRegrowQueue = nextSnap.treeRegrowQueue ?? 0;
     w.treeRegrowTimer = nextSnap.treeRegrowTimer ?? 0;
+
+    // Restore this island's own saved resources & banker vault!
+    w.resources.wood = nextSnap.islandResources?.wood ?? 0;
+    w.resources.stone = nextSnap.islandResources?.stone ?? 0;
+    w.resources.iron = nextSnap.islandResources?.iron ?? 0;
+    w.resources.food = nextSnap.islandResources?.food ?? 0;
+    w.resources.preciousOres = { ...(nextSnap.islandResources?.preciousOres ?? {}) };
+    w.banker.balance = nextSnap.bankerBalance ?? 0;
+
     embarkedCrew.forEach((member, idx) => {
       w.villagers.push({
         ...member,
@@ -669,7 +782,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
       });
     });
   } else {
-    // Fresh unexplored island! Boat arrives floating by shore; Dock must be built!
+    // Fresh unexplored island! Boat arrives floating by shore; only Gold, Diamonds & Crew travel with you!
     const fresh = generateIslandSnapshot(
       targetIslandId,
       () => uid(w),
@@ -692,10 +805,10 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     w.weaponShrine = fresh.weaponShrine ?? null;
     w.preciousMine = fresh.preciousMine ?? null;
     w.yggdrasilTree = fresh.yggdrasilTree ?? null;
-    w.staffAltars = fresh.staffAltars ?? createDefaultStaffAltars(fresh.centerX ?? getCenterX(w), forgedList);
+    w.staffAltars = fresh.staffAltars ?? createDefaultStaffAltars(fresh.centerX ?? getCenterX(w), forgedList, targetIslandId);
     w.mountShrine = fresh.mountShrine;
     w.puzzle = fresh.puzzle;
-    w.elders = fresh.elders ?? createDefaultElders(fresh.centerX ?? getCenterX(w), rescuedElderIds);
+    w.elders = fresh.elders ?? createDefaultElders(fresh.centerX ?? getCenterX(w), rescuedElderIds, targetIslandId);
     w.camps = fresh.camps;
     w.trees = fresh.trees;
     w.rocks = fresh.rocks;
@@ -707,6 +820,14 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     w.rockRegrowTimer = fresh.rockRegrowTimer;
     w.treeRegrowQueue = fresh.treeRegrowQueue;
     w.treeRegrowTimer = fresh.treeRegrowTimer;
+
+    // Fresh island starts with zero local resources — resources gathered on previous island remain there!
+    w.resources.wood = 0;
+    w.resources.stone = 0;
+    w.resources.iron = 0;
+    w.resources.food = 0;
+    w.resources.preciousOres = {};
+    w.banker.balance = 0;
   }
 
   // Sync berry bushes with active season on destination island
@@ -721,10 +842,7 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
     }
   }
 
-  // Reset Banker vault & walking state cleanly to the new island center on arrival
-  if (w.banker.carriedCoins && w.banker.carriedCoins > 0) {
-    w.banker.balance += w.banker.carriedCoins;
-  }
+  // Position Banker cleanly at the destination island center
   w.banker.x = getCenterX(w) + 68;
   w.banker.walkX = w.banker.x;
   w.banker.carriedCoins = 0;
@@ -748,13 +866,14 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
 
   const monarch = w.monarchs[0];
   if (monarch) {
+    const armorBonus = computeArmorBonuses(monarch.armor);
     monarch.x = w.boat.x - 16;
     monarch.vx = 0;
     monarch.facing = -1;
     monarch.flyTimer = 0;
     monarch.flyY = 0;
     monarch.roarTimer = 0;
-    monarch.maxCoins = Math.max(30, 30 + Math.max(0, w.hall.level - 1) * 5);
+    monarch.maxCoins = Math.max(30, 30 + Math.max(0, w.hall.level - 1) * 5 + armorBonus.pouchBonus);
     monarch.cameraX = Math.max(0, Math.min(getWorldWidth(w) - w.viewWidth, monarch.x - w.viewWidth / 2));
   }
 
@@ -767,7 +886,9 @@ export function sailToIsland(w: WorldState, targetIslandId: number): boolean {
   showBanner(
     w,
     def.name[lang],
-    w.dock.built ? def.subtitle[lang] : `Construa o Porto (${dockCost.coins}🪙 + Madeira/Pedra/Ferro) e prepare as defesas!`,
+    w.dock.built
+      ? 'Ouro, Diamantes e Tripulação a bordo · Recursos desta ilha restaurados!'
+      : `Desembarque! Construa o Porto (${dockCost.coins}🪙 + Madeira/Pedra/Ferro) e explore os segredos da ilha!`,
     w.crest.secondaryColor
   );
   syncCurrentIslandProgress(w);
@@ -4191,6 +4312,7 @@ function damagePortal(w: WorldState, portal: WorldState['portals'][number], dmg:
         '#ffe58a'
       );
     }
+    syncCurrentIslandProgress(w);
     saveCampaign(w);
   }
 }

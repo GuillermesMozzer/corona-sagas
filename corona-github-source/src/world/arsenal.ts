@@ -30,6 +30,7 @@ export interface ElementalStoneDefinition {
 
 export interface ElementalStaffRecipe {
   staffId: ElementalStaffId;
+  islandId: number; // Strictly 1 Staff Forge per exclusive island (6, 7, 9 — never overlapping an Elder!)
   stoneKind: ElementalStoneKind;
   diamondCost: number;
   coinCost: number;
@@ -44,7 +45,7 @@ export const ELEMENTAL_STONE_DEFS: Record<ElementalStoneKind, ElementalStoneDefi
     kind: 'fire',
     name: 'Pedra Vermelha do Fogo',
     shortName: 'Pedra Fogo',
-    islandId: 1,
+    islandId: 2,
     color: '#ff4238',
     highlight: '#ff9e78',
     staffId: 'staff_fire',
@@ -53,7 +54,7 @@ export const ELEMENTAL_STONE_DEFS: Record<ElementalStoneKind, ElementalStoneDefi
     kind: 'ice',
     name: 'Pedra Azul do Gelo',
     shortName: 'Pedra Gelo',
-    islandId: 3,
+    islandId: 4,
     color: '#36d8ff',
     highlight: '#c4f7ff',
     staffId: 'staff_ice',
@@ -62,7 +63,7 @@ export const ELEMENTAL_STONE_DEFS: Record<ElementalStoneKind, ElementalStoneDefi
     kind: 'thunder',
     name: 'Pedra Amarela do Trovão',
     shortName: 'Pedra Trovão',
-    islandId: 5,
+    islandId: 7,
     color: '#ffe033',
     highlight: '#fff9b8',
     staffId: 'staff_thunder',
@@ -78,6 +79,7 @@ export const ELEMENTAL_STAFF_ORDER: ElementalStaffId[] = [
 export const ELEMENTAL_STAFF_RECIPES: Record<ElementalStaffId, ElementalStaffRecipe> = {
   staff_fire: {
     staffId: 'staff_fire',
+    islandId: 6,
     stoneKind: 'fire',
     diamondCost: 2,
     coinCost: 8,
@@ -88,6 +90,7 @@ export const ELEMENTAL_STAFF_RECIPES: Record<ElementalStaffId, ElementalStaffRec
   },
   staff_ice: {
     staffId: 'staff_ice',
+    islandId: 7,
     stoneKind: 'ice',
     diamondCost: 2,
     coinCost: 8,
@@ -98,6 +101,7 @@ export const ELEMENTAL_STAFF_RECIPES: Record<ElementalStaffId, ElementalStaffRec
   },
   staff_thunder: {
     staffId: 'staff_thunder',
+    islandId: 9,
     stoneKind: 'thunder',
     diamondCost: 3,
     coinCost: 10,
@@ -109,15 +113,26 @@ export const ELEMENTAL_STAFF_RECIPES: Record<ElementalStaffId, ElementalStaffRec
 };
 
 /**
- * Strictly 3 Elemental Portals exist across the entire 9-island saga:
- * - Island 1: Red Fire Stone
- * - Island 3: Blue Ice Stone
- * - Island 5: Yellow Thunder Stone
+ * Returns the single Elemental Staff Forge assigned to an island, or null.
+ * Strictly spread across Islands 6 (Fire), 7 (Ice), and 9 (Thunder) — never sharing an island with an Elder!
+ */
+export function getIslandStaffAltarId(islandId: number): ElementalStaffId | null {
+  for (const staffId of ELEMENTAL_STAFF_ORDER) {
+    if (ELEMENTAL_STAFF_RECIPES[staffId].islandId === islandId) return staffId;
+  }
+  return null;
+}
+
+/**
+ * Strictly 3 Elemental Portals exist across the entire 9-island saga (none on basic Island 1):
+ * - Island 2: Red Fire Stone
+ * - Island 4: Blue Ice Stone
+ * - Island 7: Yellow Thunder Stone
  */
 export function getIslandElementalPortalStone(islandId: number): ElementalStoneKind | null {
-  if (islandId === 1) return 'fire';
-  if (islandId === 3) return 'ice';
-  if (islandId === 5) return 'thunder';
+  if (islandId === 2) return 'fire';
+  if (islandId === 4) return 'ice';
+  if (islandId === 7) return 'thunder';
   return null;
 }
 

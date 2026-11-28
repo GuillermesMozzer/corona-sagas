@@ -97,7 +97,7 @@ export const ISLAND_DEFINITIONS: IslandDefinition[] = [
   {
     id: 1,
     name: { pt: 'Ilha I — Costa de Midgard', en: 'Island I — Midgard Coast', es: 'Isla I — Costa de Midgard' },
-    subtitle: { pt: 'Reino até Nv.2 · Construa o Drakkar e zarpe', en: 'Kingdom up to Lv.2 · Build the Drakkar', es: 'Reino hasta Nv.2 · Construye el Drakkar' },
+    subtitle: { pt: 'Ilha Básica · Aprenda os comandos, construa o Drakkar e zarpe', en: 'Starter Island · Learn basics, build the Drakkar & sail', es: 'Isla Básica · Aprende comandos, construye el Drakkar y zarpa' },
     mapX: 0.08,
     mapY: 0.64,
     worldWidth: 2800,
@@ -536,6 +536,34 @@ export const ISLAND_DEFINITIONS: IslandDefinition[] = [
     },
   },
 ];
+
+export interface IslandMapNode {
+  id: number;
+  /** Non-sequential landscape normalized coordinates (0..1) */
+  mapX: number;
+  mapY: number;
+  /** Non-sequential portrait normalized coordinates (0..1) */
+  portraitX: number;
+  portraitY: number;
+  /** Intertwined non-sequential sea routes connecting this island */
+  connections: number[];
+}
+
+export const ISLAND_MAP_GRAPH: Record<number, IslandMapNode> = {
+  1: { id: 1, mapX: 0.12, mapY: 0.78, portraitX: 0.20, portraitY: 0.88, connections: [2, 3] },
+  2: { id: 2, mapX: 0.38, mapY: 0.84, portraitX: 0.78, portraitY: 0.80, connections: [1, 5, 7] },
+  3: { id: 3, mapX: 0.22, mapY: 0.24, portraitX: 0.22, portraitY: 0.62, connections: [1, 4, 5] },
+  4: { id: 4, mapX: 0.54, mapY: 0.14, portraitX: 0.84, portraitY: 0.36, connections: [3, 5, 6, 8] },
+  5: { id: 5, mapX: 0.46, mapY: 0.48, portraitX: 0.54, portraitY: 0.54, connections: [2, 3, 4, 6, 7] },
+  6: { id: 6, mapX: 0.74, mapY: 0.50, portraitX: 0.22, portraitY: 0.34, connections: [4, 5, 7, 8, 9] },
+  7: { id: 7, mapX: 0.68, mapY: 0.86, portraitX: 0.58, portraitY: 0.22, connections: [2, 5, 6, 9] },
+  8: { id: 8, mapX: 0.86, mapY: 0.18, portraitX: 0.82, portraitY: 0.10, connections: [4, 6, 9] },
+  9: { id: 9, mapX: 0.90, mapY: 0.72, portraitX: 0.26, portraitY: 0.10, connections: [6, 7, 8] },
+};
+
+export function getIslandMapNode(id: number): IslandMapNode {
+  return ISLAND_MAP_GRAPH[id] ?? ISLAND_MAP_GRAPH[1];
+}
 
 export function getIslandDef(id: number): IslandDefinition {
   return ISLAND_DEFINITIONS.find((isl) => isl.id === id) ?? ISLAND_DEFINITIONS[0];

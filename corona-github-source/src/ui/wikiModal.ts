@@ -8,9 +8,10 @@ import {
   getIslandArmorSlot,
   getIslandElementalPortalStone,
   getIslandMetalId,
+  getIslandStaffAltarId,
   getIslandWeaponId,
 } from '../world/arsenal';
-import { ELDER_DEFS, ELDER_ORDER } from '../world/elders';
+import { ELDER_DEFS, ELDER_ORDER, getIslandNativeElderId } from '../world/elders';
 import { ISLAND_DEFINITIONS } from '../world/islands';
 import { GOD_DEFS, MOUNT_DEFS } from '../world/mountsAndGods';
 import type { GodId, MountId } from '../types';
@@ -86,7 +87,7 @@ function buildWikiSections(): WikiSection[] {
       label: 'Início',
       icon: '👑',
       intro:
-        'Guia completo de Corona — Sagas do Norte (v2.19). Expanda seu reino nórdico através de 9 ilhas progressivas, proteja sua Coroa nas noites de ataque, resgate Anciões, invoque Deuses e forje armas, cajados e armaduras lendárias.',
+        'Guia completo de Corona — Sagas do Norte (v2.20). Expanda seu reino nórdico através de 9 ilhas em uma trama marítima secreta, proteja sua Coroa nas noites de ataque, resgate Anciões, invoque Deuses e forje armas, cajados e armaduras lendárias.',
       entries: [
         {
           title: 'Objetivo da Campanha & A Coroa',
@@ -178,24 +179,24 @@ function buildWikiSections(): WikiSection[] {
           accent: '#7ef5ff',
           tags: [
             { label: 'Recurso Raro', tone: 'cyan' },
-            { label: 'Persiste entre Ilhas', tone: 'gold' },
+            { label: 'Viaja no Drakkar', tone: 'gold' },
           ],
           body: 'Diamantes são usados para invocar Deuses (3◆), domar Montarias especiais (2 a 4◆), convocar um Ancião para montar na garupa do cavalo (1◆) e forjar Cajados Elementais (2 a 3◆).',
           bullets: [
-            'Obtidos em baús de tesouro (incluindo 3 diamantes iniciais na Ilha I), resolvendo Puzzles Rúnicos (+2◆ por ilha nas Ilhas II a IX) e recompensas da Comunidade / Convide Amigos.',
+            'A Ilha I é básica (sem baús de diamantes). A partir da Ilha II, diamantes são obtidos em baús de tesouro, Puzzles Rúnicos (+2◆ por ilha), destruindo portais (+1◆) e recompensas da Comunidade.',
+            'Ao partir de navio, você leva apenas Ouro (na bolsa), Diamantes e sua Tripulação!',
           ],
         },
         {
-          title: 'Madeira, Pedra e Ferro',
+          title: 'Madeira, Pedra e Ferro (Ficam na Ilha!)',
           accent: '#e8bc82',
           tags: [
             { label: 'Construção', tone: 'neutral' },
-            { label: 'Forja', tone: 'gold' },
+            { label: 'Local por Ilha', tone: 'red' },
           ],
-          body: 'Materiais fundamentais extraídos pelos Pedreiros ao marcar árvores, rochas e depósitos.',
+          body: 'Materiais fundamentais extraídos pelos Pedreiros ao marcar árvores, rochas e depósitos. Os recursos obtidos em uma ilha permanecem guardados nela quando você zarpa para outro território!',
           bullets: [
-            'Madeira e Pedra são usadas para evoluir muralhas, torres, fazendas, o Reino, forjar armaduras e construir os Cajados Elementais.',
-            'Ferro (a partir da Ilha II) fortalece construções e equipamentos avançados.',
+            'Ao retornar para reexplorar uma ilha já conquistada, toda a Madeira, Pedra, Ferro, Minérios e saldo do Banqueiro deixados lá estarão intactos.',
             'Com o Ancião da Força, é possível converter minérios, pedras e madeiras em outros recursos.',
           ],
         },
@@ -218,7 +219,7 @@ function buildWikiSections(): WikiSection[] {
             { label: 'Ilha VI', tone: 'green' },
             { label: 'Custo: 3🪙 → +3 Madeiras', tone: 'gold' },
           ],
-          body: 'Na Ilha VI (Forjas de Nidavellir) ergue-se a colossal árvore sagrada Yggdrasil. Pague 3 moedas junto às suas raízes para que seus Pedreiros colham +3 Madeiras de Yggdrasil (renovável).',
+          body: 'Na Ilha VI ergue-se a colossal árvore sagrada Yggdrasil. Pague 3 moedas junto às suas raízes para que seus Pedreiros colham +3 Madeiras de Yggdrasil (renovável).',
           bullets: [
             'Cada Cajado Elemental exige 3 Madeiras de Yggdrasil para ser forjado.',
           ],
@@ -232,9 +233,9 @@ function buildWikiSections(): WikiSection[] {
           ],
           body: 'Em toda a campanha existem exatamente 3 portais inimigos especiais marcados por uma pedra elemental brilhante flutuando acima do portal. Ao destruir o portal, você conquista a pedra!',
           bullets: [
-            '🔴 Pedra Vermelha (Fogo): portal interno direito da Ilha I — forja o Cajado do Fogo.',
-            '🔵 Pedra Azul (Gelo): portal interno esquerdo da Ilha III — forja o Cajado do Gelo.',
-            '🟡 Pedra Amarela (Trovão): portal interno direito da Ilha V — forja o Cajado do Trovão.',
+            '🔴 Pedra Vermelha (Fogo): portal especial da Ilha II — forja o Cajado do Fogo (Altar na Ilha VI).',
+            '🔵 Pedra Azul (Gelo): portal especial da Ilha IV — forja o Cajado do Gelo (Altar na Ilha VII).',
+            '🟡 Pedra Amarela (Trovão): portal especial da Ilha VII — forja o Cajado do Trovão (Altar na Ilha IX).',
           ],
         },
       ],
@@ -322,9 +323,10 @@ function buildWikiSections(): WikiSection[] {
           const stone = ELEMENTAL_STONE_DEFS[rec.stoneKind];
           return {
             title: `✨ ${wDef.name} (Magia Elemental)`,
-            subtitle: `Altar de Forja no Reino · Recarga ${wDef.cooldown}s`,
+            subtitle: `Forja exclusiva na Ilha ${ROMANS[rec.islandId - 1]} · Recarga ${wDef.cooldown}s`,
             accent: wDef.color,
             tags: [
+              { label: `Forja: Ilha ${ROMANS[rec.islandId - 1]}`, tone: 'purple' },
               { label: `${rec.diamondCost}◆ + ${rec.coinCost}🪙`, tone: 'gold' },
               { label: `${rec.woodCost} Mad · ${rec.stoneCost} Ped`, tone: 'neutral' },
               { label: `${stone.shortName} (Ilha ${ROMANS[stone.islandId - 1]})`, tone: rec.stoneKind === 'fire' ? 'red' : rec.stoneKind === 'ice' ? 'cyan' : 'gold' },
@@ -426,9 +428,10 @@ function buildWikiSections(): WikiSection[] {
           const e = ELDER_DEFS[id];
           return {
             title: `${e.name}`,
-            subtitle: `Habilidade: ${e.powerName} (Recarga ${e.powerCooldown}s)`,
+            subtitle: `Cabana exclusiva na Ilha ${ROMANS[e.islandId - 1]} · Poder: ${e.powerName} (${e.powerCooldown}s)`,
             accent: e.accentColor,
             tags: [
+              { label: `Ilha ${ROMANS[e.islandId - 1]}`, tone: 'purple' },
               { label: `Resgate: ${e.rescueCoins}🪙`, tone: 'gold' },
               { label: 'Montar: 1◆', tone: 'cyan' },
               {
@@ -525,8 +528,24 @@ function buildWikiSections(): WikiSection[] {
       label: 'Ilhas & Puzzles',
       icon: '🗺️',
       intro:
-        'A saga percorre 9 ilhas únicas com cenários, montanhas, céus, auroras, arcos-íris e estátuas monumentais distintas. Cada nova ilha é maior (de 2800 até 7600px) e traz mais portais inimigos (de 2 até 8).',
+        'A saga percorre 9 ilhas em uma trama marítima não-sequencial envolta em nuvens. No mapa de seleção pós-embarque, o conteúdo de cada ilha permanece secreto até o desembarque!',
       entries: [
+        {
+          title: 'Mapa Não-Sequencial, Nuvens & Reexploração',
+          accent: '#ffe58a',
+          tags: [
+            { label: 'Máx. 2 Ilhas Novas Abertas', tone: 'cyan' },
+            { label: 'Conteúdo Secreto no Mapa', tone: 'purple' },
+            { label: 'Reexploração Livre', tone: 'green' },
+          ],
+          body: 'As ilhas formam uma rede marítima ramificada (não-linear) coberta por nuvens:',
+          bullets: [
+            'Apenas 2 novas ilhas ficam disponíveis por vez; todas as demais permanecem encobertas por nuvens e só são reveladas ao conquistar uma das ilhas abertas (destruindo todos os portais ou erguendo Porto + Reino Nv.2).',
+            'As ilhas já conquistadas permanecem sempre disponíveis no mapa para reexploração.',
+            'No menu de seleção pós-embarque, buffs, deuses, montarias, cajados, armas e anciões ficam ocultos — descubra-os explorando!',
+            'Os recursos de cada ilha (madeira, pedra, ferro, minérios e cofre local) ficam guardados nela. No Drakkar você leva apenas Ouro na bolsa, Diamantes e a Tripulação que o acompanha.',
+          ],
+        },
         {
           title: 'Puzzles Rúnicos & Baús Secretos',
           accent: '#7ef5ff',
@@ -534,11 +553,10 @@ function buildWikiSections(): WikiSection[] {
             { label: 'Ilhas II a IX', tone: 'cyan' },
             { label: 'Custo: 3🪙 → +2◆ + 4🪙', tone: 'gold' },
           ],
-          body: 'Cada ilha a partir da Ilha II esconde um Altar de Puzzle Rúnico a oeste do reino (x = centro - 640), além de baús de tesouro nas fronteiras selvagens.',
+          body: 'A Ilha I é básica (sem buffs, sem baús de diamantes, sem anciões ou forjas de cajado — feita para aprender os comandos, construir o Drakkar e zarpar). A partir da Ilha II, cada território esconde um Altar de Puzzle Rúnico (x = centro - 640) e baús com diamantes.',
           bullets: [
             'Puzzle Rúnico: aproxime-se do altar misterioso e deposite 3 moedas para decifrar as runas antigas e liberar +2 Diamantes e +4 Moedas.',
-            'Baús de Tesouro: há 2 baús nas extremidades de todas as ilhas (e 4 baús nas ilhas grandes a partir da Ilha IV) com moedas e diamantes.',
-            'Fronteiras do Mapa: praias com cais a oeste e cadeias montanhosas monumentais a leste encerram cada território.',
+            'Baús de Tesouro: há 2 baús nas extremidades de todas as ilhas (apenas moedas na Ilha I; moedas + diamantes nas Ilhas II a IX; e 4 baús nas ilhas grandes a partir da Ilha IV).',
           ],
         },
         ...ISLAND_DEFINITIONS.map((isl): WikiEntry => {
@@ -546,6 +564,8 @@ function buildWikiSections(): WikiSection[] {
           const metal = PRECIOUS_METALS[getIslandMetalId(isl.id)];
           const armor = ARMOR_DEFS[getIslandArmorSlot(isl.id)];
           const elemStone = getIslandElementalPortalStone(isl.id);
+          const nativeElder = getIslandNativeElderId(isl.id);
+          const staffAltar = getIslandStaffAltarId(isl.id);
           const godName = isl.godId ? GOD_DEFS[isl.godId].name : null;
           const mountName = isl.mountId ? MOUNT_DEFS[isl.mountId].name.pt : null;
 
@@ -553,6 +573,12 @@ function buildWikiSections(): WikiSection[] {
             `Arma Divina: ${wDef.name} (${wDef.coinCost}🪙) · Armadura: ${armor.name} (${metal.name}).`,
             `Monumento do Cenário: ${isl.theme.monumentName} · Mapa: ${isl.worldWidth}px · Portais inimigos: ${isl.portalCount}.`,
           ];
+          if (nativeElder) {
+            bullets.push(`Ancião exclusivo da ilha: ${ELDER_DEFS[nativeElder].name} (Resgate: 4🪙).`);
+          }
+          if (staffAltar) {
+            bullets.push(`Forja de Cajado exclusiva da ilha: ${WEAPON_DEFS[staffAltar].name}.`);
+          }
           if (godName || mountName) {
             bullets.push(
               [
@@ -583,7 +609,9 @@ function buildWikiSections(): WikiSection[] {
               { label: `${isl.portalCount} Portais`, tone: 'red' },
               ...(isl.maxDiamonds > 0
                 ? [{ label: `Até ${isl.maxDiamonds}◆`, tone: 'cyan' as const }]
-                : [{ label: '3◆ nos Baús', tone: 'cyan' as const }]),
+                : [{ label: 'Básica (Sem ◆)', tone: 'neutral' as const }]),
+              ...(nativeElder ? [{ label: `🧙 ${ELDER_DEFS[nativeElder].shortTitle}`, tone: 'purple' as const }] : []),
+              ...(staffAltar ? [{ label: `✨ ${WEAPON_DEFS[staffAltar].shortTag}`, tone: 'gold' as const }] : []),
               ...(elemStone
                 ? [
                     {
@@ -599,7 +627,10 @@ function buildWikiSections(): WikiSection[] {
                 : []),
               ...(isl.id === 6 ? [{ label: '🌳 Yggdrasil', tone: 'green' as const }] : []),
             ],
-            body: `Território ${ROMANS[isl.id - 1]} da campanha nórdica.`,
+            body:
+              isl.id === 1
+                ? 'Ilha inicial básica: aprenda os comandos, erga as defesas, construa o Drakkar e zarpe!'
+                : `Território ${ROMANS[isl.id - 1]} da trama nórdica.`,
             bullets,
           };
         }),

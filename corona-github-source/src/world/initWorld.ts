@@ -42,10 +42,10 @@ import {
   type YggdrasilTree,
 } from '../types';
 import {
-  ELEMENTAL_STAFF_ORDER,
   ELEMENTAL_STAFF_RECIPES,
   getIslandElementalPortalStone,
   getIslandMetalId,
+  getIslandStaffAltarId,
   getIslandWeaponId,
 } from './arsenal';
 import { createDefaultElders } from './elders';
@@ -160,19 +160,22 @@ export function createDefaultPreciousMine(
 
 export function createDefaultStaffAltars(
   cx = CENTER_X,
-  forgedStaves: ElementalStaffId[] = []
+  forgedStaves: ElementalStaffId[] = [],
+  islandId = 1
 ): StaffAltar[] {
+  const staffId = getIslandStaffAltarId(islandId);
+  if (!staffId) return [];
   const forgedSet = new Set(forgedStaves);
-  return ELEMENTAL_STAFF_ORDER.map((staffId) => {
-    const rec = ELEMENTAL_STAFF_RECIPES[staffId];
-    return {
+  const rec = ELEMENTAL_STAFF_RECIPES[staffId];
+  return [
+    {
       staffId,
       x: cx + rec.altarOffset,
       diamondsPaid: forgedSet.has(staffId) ? rec.diamondCost : 0,
       coinsPaid: forgedSet.has(staffId) ? rec.coinCost : 0,
       forged: forgedSet.has(staffId),
-    };
-  });
+    },
+  ];
 }
 
 export function createDefaultYggdrasilTree(
@@ -404,14 +407,14 @@ export function generateIslandSnapshot(
   // 1 Unique Precious Metal Mine per island (Islands 1..9 -> Builders mine ore to forge Armor!)
   const preciousMine = createDefaultPreciousMine(islandId, uid, cx);
 
-  // 5 Distinct Nordic Elders (Anciões): Bard, Forge/Force, Builder, Beast, War!
-  const elders = createDefaultElders(cx, rescuedElders);
+  // 1 Exclusive Unrescued Elder on Islands 2, 3, 4, 5, 8 (plus any already-rescued Elders!)
+  const elders = createDefaultElders(cx, rescuedElders, islandId);
 
   // Giant World Tree Yggdrasil (exclusively on Island 6 -> source of Sacred Yggdrasil Wood!)
   const yggdrasilTree = createDefaultYggdrasilTree(islandId, uid, cx);
 
-  // 3 Elemental Magic Staff Altars (Fire, Ice, Thunder)
-  const staffAltars = createDefaultStaffAltars(cx, forgedStaves);
+  // 1 Exclusive Elemental Staff Forge on Islands 6 (Fire), 7 (Ice), 9 (Thunder) — never overlapping an Elder!
+  const staffAltars = createDefaultStaffAltars(cx, forgedStaves, islandId);
 
   // Special Mount Shrine
   const mountShrine: MountShrine | null = def.mountId
@@ -435,21 +438,21 @@ export function generateIslandSnapshot(
         }
       : null;
 
-  // Chests: Island 1 grants 3 starter diamonds (2 + 1) so players can summon rescued Elders right away; Islands 2..9 grant full island diamonds!
+  // Chests: Island 1 is the basic starter island (coins only, NO diamond chests!); Islands 2..9 grant diamonds!
   const chests: Chest[] = [
     {
       id: uid(),
       x: cx - 730,
       opened: false,
       coins: 6,
-      diamonds: 2,
+      diamonds: def.maxDiamonds > 0 ? 2 : 0,
     },
     {
       id: uid(),
       x: cx + 730,
       opened: false,
       coins: 6,
-      diamonds: def.maxDiamonds > 0 ? Math.max(1, def.maxDiamonds - 4) : 1,
+      diamonds: def.maxDiamonds > 0 ? Math.max(1, def.maxDiamonds - 4) : 0,
     },
   ];
   if (mapW >= 4600) {
@@ -680,6 +683,8 @@ export function generateIslandSnapshot(
   return {
     worldWidth: mapW,
     centerX: cx,
+    islandResources: { wood: 0, stone: 0, iron: 0, food: 0, preciousOres: {} },
+    bankerBalance: 0,
     hall,
     forge,
     shops,
@@ -784,6 +789,9 @@ export function createInitialWorld(
     id: def.id,
     colonized: def.id === 1,
     visited: def.id === 1,
+    // Strictly 2 new islands revealed at the start (2 and 3); Islands 4..9 remain shrouded in clouds until conquest!
+    revealed: def.id === 1 || def.id === 2 || def.id === 3,
+    conquered: false,
     dockBuilt: def.id === 1,
     boatBuilt: false,
     hallLevel: 0,

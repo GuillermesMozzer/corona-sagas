@@ -98,8 +98,10 @@ import {
   confirmCharacterSelection,
   confirmCrestAndStartCampaign,
   dismissSpiritAdvisor,
+  isIslandSelectableOnMap,
   issueUnitCommand,
   orderSpecificVillager,
+  refreshRevealedIslands,
   sailToIsland,
   showBanner,
   stepWorld,
@@ -2052,7 +2054,7 @@ function handleCanvasHit(hitId: string): boolean {
   if (world.mode === 'world_map') {
     if (hitId.startsWith('map_island_')) {
       const id = Number(hitId.replace('map_island_', ''));
-      if (id >= 1 && id <= ISLAND_DEFINITIONS.length) {
+      if (id >= 1 && id <= ISLAND_DEFINITIONS.length && isIslandSelectableOnMap(world, id)) {
         renderer.selectedMapIsland = id;
         sound.playCoinDrop();
       }
@@ -2188,6 +2190,7 @@ btnHome?.addEventListener('click', () => {
 btnMap?.addEventListener('click', () => {
   pausedByMenu = false;
   setMenuOpen(false);
+  refreshRevealedIslands(world);
   renderer.selectedMapIsland = world.currentIsland;
   world.worldMapContext = 'inspect';
   world.mode = 'world_map';

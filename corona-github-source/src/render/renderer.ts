@@ -51,9 +51,10 @@ import {
   getTutorialTargetX,
   getWallHeight,
   isFarmsUnlocked,
+  isIslandSelectableOnMap,
   isShopUnlocked,
 } from '../systems/simulation';
-import { ISLAND_DEFINITIONS, getIslandDef, type IslandTheme } from '../world/islands';
+import { ISLAND_DEFINITIONS, getIslandDef, getIslandMapNode, type IslandTheme } from '../world/islands';
 import { GOD_DEFS, MOUNT_DEFS } from '../world/mountsAndGods';
 
 export interface UiHitRegion {
@@ -4744,7 +4745,6 @@ export class PixelRenderer {
   // KINGDOM TWO CROWNS STYLE WORLD MAP (7 NORDIC ISLANDS)
   // =========================================================================
   private drawWorldMapScreen(ctx: CanvasRenderingContext2D, w: WorldState): void {
-    const lang = getLanguage();
     const isPortrait = this.viewW < 380;
 
     // Deep dark Nordic ocean chart backdrop
@@ -4771,74 +4771,164 @@ export class PixelRenderer {
       ctx.stroke();
     }
 
+    // Ensure selectedMapIsland is always a revealed island (and prefers a valid destination in sail mode)
+    if (!isIslandSelectableOnMap(w, this.selectedMapIsland)) {
+      const firstOpen = w.islands.find((i) => i.id !== w.currentIsland && isIslandSelectableOnMap(w, i.id));
+      this.selectedMapIsland = firstOpen ? firstOpen.id : w.currentIsland;
+    }
+
     // Header
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffe58a';
     ctx.font = isPortrait ? 'bold 10px "Pixelify Sans", monospace' : 'bold 13px "Pixelify Sans", monospace';
-    ctx.fillText(t('map_title'), Math.round(this.viewW / 2), 22);
+    ctx.fillText(t('map_title'), Math.round(this.viewW / 2), 20);
+
+    const openNewCount = w.islands.filter((i) => i.id > 1 && i.revealed && !i.conquered).length;
+    const cloudCount = w.islands.filter((i) => !isIslandSelectableOnMap(w, i.id)).length;
     ctx.fillStyle = '#9ec4e0';
-    ctx.font = '7px "Pixelify Sans", monospace';
-    ctx.fillText(
-      w.worldMapContext === 'sail' ? t('map_sail_hint') : t('map_view_hint'),
-      Math.round(this.viewW / 2),
-      34
-    );
+    ctx.font = '6.5px "Pixelify Sans", monospace';
+    const subHint =
+      w.worldMapContext === 'sail'
+        ? cloudCount > 0
+          ? `${openNewCount} novas rotas abertas · Conquiste uma ilha para revelar as nuvens`
+          : 'Escolha uma ilha para zarpar · Segredos só revelados ao desembarcar'
+        : cloudCount > 0
+          ? `${openNewCount} novas rotas abertas · ${cloudCount} territórios sob nuvens`
+          : 'Todas as rotas reveladas · Ilhas conquistadas livres para reexploração';
+    ctx.fillText(subHint, Math.round(this.viewW / 2), 32, this.viewW - 20);
 
     const chartTop = 44;
-    const chartH = Math.max(96, this.viewH - 134);
-    const getPos = (idx: number) => {
-      const def = ISLAND_DEFINITIONS[idx];
-      if (isPortrait) {
-        const col = idx % 3;
-        const row = Math.floor(idx / 3);
-        return {
-          x: Math.round(this.viewW * (col === 0 ? 0.2 : col === 1 ? 0.5 : 0.8)),
-          y: Math.round(chartTop + 20 + row * Math.min(44, (chartH - 28) / 2.6)),
-        };
-      }
+    const chartBottom = this.viewH - 90;
+    const chartH = Math.max(96, chartBottom - chartTop);
+    const padX = isPortrait ? 20 : 28;
+    const chartW = Math.max(120, this.viewW - padX * 2);
+
+    const getPosById = (id: number) => {
+      const node = getIslandMapNode(id);
+      const nx = isPortrait ? node.portraitX : node.mapX;
+      const ny = isPortrait ? node.portraitY : node.mapY;
       return {
-        x: Math.round(22 + def.mapX * (this.viewW - 44)),
-        y: Math.round(chartTop + def.mapY * chartH),
+        x: Math.round(padX + nx * chartW),
+        y: Math.round(chartTop + 8 + ny * Math.max(40, chartH - 18)),
       };
     };
 
-    // Dotted Nordic sea route connecting islands I -> IX
-    ctx.strokeStyle = 'rgba(239, 196, 98, 0.35)';
-    ctx.setLineDash([3, 3]);
-    ctx.beginPath();
-    ISLAND_DEFINITIONS.forEach((_, i) => {
-      const p = getPos(i);
-      if (i === 0) ctx.moveTo(p.x, p.y);
-      else ctx.lineTo(p.x, p.y);
-    });
-    ctx.stroke();
+    // Non-sequential branching sea-route web!
+    // Draw golden dashed routes between revealed islands, and misty fading stubs into cloud-covered neighbors
+    const drawnPairs = new Set<string>();
+    for (const def of ISLAND_DEFINITIONS) {
+      const node = getIslandMapNode(def.id);
+      const revA = isIslandSelectableOnMap(w, def.id);
+      const pA = getPosById(def.id);
+
+      for (const nextId of node.connections) {
+        const key = def.id < nextId ? `${def.id}-${nextId}` : `${nextId}-${def.id}`;
+        if (drawnPairs.has(key)) continue;
+        drawnPairs.add(key);
+
+        const revB = isIslandSelectableOnMap(w, nextId);
+        if (!revA && !revB) continue; // Both hidden under clouds -> draw nothing
+
+        const pB = getPosById(nextId);
+        const midX = (pA.x + pB.x) / 2 + ((def.id + nextId) % 2 === 0 ? 10 : -10);
+        const midY = (pA.y + pB.y) / 2 + ((def.id * 3 + nextId) % 2 === 0 ? -8 : 8);
+
+        if (revA && revB) {
+          ctx.strokeStyle = 'rgba(239, 196, 98, 0.42)';
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath();
+          ctx.moveTo(pA.x, pA.y);
+          ctx.quadraticCurveTo(midX, midY, pB.x, pB.y);
+          ctx.stroke();
+        } else {
+          // Faint misty route leading from a revealed island into the clouds
+          const from = revA ? pA : pB;
+          const to = revA ? pB : pA;
+          const stopX = from.x + (to.x - from.x) * 0.62;
+          const stopY = from.y + (to.y - from.y) * 0.62;
+          ctx.strokeStyle = 'rgba(130, 175, 210, 0.22)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([2, 4]);
+          ctx.beginPath();
+          ctx.moveTo(from.x, from.y);
+          ctx.lineTo(stopX, stopY);
+          ctx.stroke();
+        }
+      }
+    }
     ctx.setLineDash([]);
+    ctx.lineWidth = 1;
 
     const romans = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX'];
 
     ISLAND_DEFINITIONS.forEach((def, idx) => {
-      const pos = getPos(idx);
+      const pos = getPosById(def.id);
       const prog = w.islands.find((item) => item.id === def.id);
+      const revealed = isIslandSelectableOnMap(w, def.id);
       const isCurrent = def.id === w.currentIsland;
-      const isSelected = def.id === this.selectedMapIsland;
-      const colonized = Boolean(prog?.colonized);
+      const isSelected = revealed && def.id === this.selectedMapIsland;
+      const conquered = Boolean(prog?.conquered);
+      const isOpenNew = revealed && !conquered && def.id > 1;
+
+      if (!revealed) {
+        // Animated swirling pixel-art Cloud Bank hiding this unrevealed island!
+        const driftX = Math.sin(w.elapsed * 0.7 + def.id * 1.9) * 2.5;
+        const driftY = Math.cos(w.elapsed * 0.55 + def.id * 1.3) * 1.2;
+        const cxCloud = Math.round(pos.x + driftX);
+        const cyCloud = Math.round(pos.y + driftY);
+
+        // Deep shadow cloud base
+        ctx.fillStyle = 'rgba(18, 30, 48, 0.92)';
+        ctx.fillRect(cxCloud - 16, cyCloud - 4, 32, 11);
+        ctx.fillRect(cxCloud - 12, cyCloud - 9, 24, 6);
+        ctx.fillRect(cxCloud - 10, cyCloud + 6, 20, 4);
+
+        // Mid silver-blue cloud puffs
+        ctx.fillStyle = 'rgba(72, 98, 128, 0.85)';
+        ctx.fillRect(cxCloud - 14, cyCloud - 6, 12, 8);
+        ctx.fillRect(cxCloud - 5, cyCloud - 10, 13, 10);
+        ctx.fillRect(cxCloud + 4, cyCloud - 5, 11, 8);
+
+        // Soft misty top highlight
+        ctx.fillStyle = 'rgba(155, 188, 218, 0.58)';
+        ctx.fillRect(cxCloud - 11, cyCloud - 7, 8, 3);
+        ctx.fillRect(cxCloud - 3, cyCloud - 10, 9, 3);
+        ctx.fillRect(cxCloud + 6, cyCloud - 5, 6, 2);
+
+        // Mystical "???" shimmer (no spoiler!)
+        ctx.fillStyle = 'rgba(195, 220, 242, 0.72)';
+        ctx.font = 'bold 6px "Pixelify Sans", monospace';
+        ctx.fillText('???', cxCloud, cyCloud + 14);
+        return; // Unclickable while covered in clouds!
+      }
+
+      // Beacon pulse on the 2 newly open unconquered routes
+      if (isOpenNew) {
+        const pulseR = 14 + Math.sin(w.elapsed * 3.4 + def.id) * 2;
+        ctx.strokeStyle = 'rgba(126, 245, 255, 0.52)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, pulseR, 0, Math.PI * 2);
+        ctx.stroke();
+      }
 
       // Selection ring
       if (isSelected) {
         ctx.strokeStyle = '#ffe066';
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1.6;
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, 16 + Math.sin(w.elapsed * 4) * 1.5, 0, Math.PI * 2);
+        ctx.arc(pos.x, pos.y, 16 + Math.sin(w.elapsed * 4) * 1.4, 0, Math.PI * 2);
         ctx.stroke();
         ctx.lineWidth = 1;
       }
 
-      // Island silhouette mound
-      ctx.fillStyle = colonized ? '#2d5948' : '#1f2c3b';
+      // Island silhouette mound (emerald if conquered, misty slate-teal if unexplored secret route)
+      ctx.fillStyle = conquered ? '#2b5e49' : '#243a4f';
       ctx.beginPath();
       ctx.ellipse(pos.x, pos.y + 3, 13, 6.5, 0, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = colonized ? '#51876a' : '#35485c';
+      ctx.fillStyle = conquered ? '#549674' : '#3d5e7a';
       ctx.beginPath();
       ctx.moveTo(pos.x - 9, pos.y + 3);
       ctx.lineTo(pos.x, pos.y - 7);
@@ -4846,95 +4936,109 @@ export class PixelRenderer {
       ctx.closePath();
       ctx.fill();
 
-      // Clan Flag on colonized islands + Golden Crown on current island
-      if (colonized) {
+      // Clan Flag on conquered islands + Golden Crown on current island + "?" crest on untouched secret routes
+      if (conquered) {
         ctx.fillStyle = '#c4a478';
         ctx.fillRect(pos.x + 2, pos.y - 13, 1, 9);
         ctx.fillStyle = w.crest.primaryColor;
         ctx.fillRect(pos.x + 3, pos.y - 13, 6, 4);
         ctx.fillStyle = w.crest.secondaryColor;
         ctx.fillRect(pos.x + 3, pos.y - 11, 6, 1);
+      } else if (!isCurrent) {
+        ctx.fillStyle = '#8ef5ff';
+        ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
+        ctx.fillText('?', pos.x, pos.y - 9);
       }
       if (isCurrent) {
         this.drawCrownSprite(ctx, w, pos.x - 3, pos.y - 13);
       }
 
       // Roman numeral label
-      ctx.fillStyle = isSelected ? '#ffe58a' : '#d6e5f2';
+      ctx.fillStyle = isSelected ? '#ffe58a' : isOpenNew ? '#aef6ff' : '#d6e5f2';
       ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
-      ctx.fillText(romans[idx] ?? String(def.id), pos.x, pos.y + 16);
+      ctx.fillText(romans[idx] ?? String(def.id), pos.x, pos.y + 15);
 
       this.addHit(`map_island_${def.id}`, pos.x - 16, pos.y - 16, 32, 34);
     });
 
-    // Bottom Island Details Card
+    // Bottom Island Details Card — STRICTLY ZERO SPOILERS (no Gods, Buffs, Cavalry, Staves, Elders, or Weapons revealed!)
     const selDef = getIslandDef(this.selectedMapIsland);
     const selProg = w.islands.find((item) => item.id === selDef.id);
-    const cardW = Math.min(350, this.viewW - 20);
+    const selConquered = Boolean(selProg?.conquered);
+    const selCurrent = selDef.id === w.currentIsland;
+    const selRoman = romans[selDef.id - 1] ?? String(selDef.id);
+    const cardW = Math.min(358, this.viewW - 16);
     const cardX = Math.round((this.viewW - cardW) / 2);
     const cardY = this.viewH - 78;
 
-    ctx.fillStyle = 'rgba(8, 14, 24, 0.94)';
-    ctx.fillRect(cardX, cardY, cardW, 70);
-    ctx.strokeStyle = 'rgba(239, 196, 98, 0.6)';
-    ctx.strokeRect(cardX + 0.5, cardY + 0.5, cardW - 1, 69);
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.95)';
+    ctx.fillRect(cardX, cardY, cardW, 72);
+    ctx.strokeStyle = 'rgba(239, 196, 98, 0.65)';
+    ctx.strokeRect(cardX + 0.5, cardY + 0.5, cardW - 1, 71);
 
     ctx.textAlign = 'left';
     ctx.fillStyle = '#ffe58a';
     ctx.font = 'bold 8px "Pixelify Sans", monospace';
-    ctx.fillText(selDef.name[lang], cardX + 10, cardY + 14);
+    const cardTitle = selCurrent
+      ? `ILHA ${selRoman} · BASE ATUAL`
+      : selConquered
+        ? `ILHA ${selRoman} · TERRITÓRIO CONQUISTADO`
+        : `ILHA ${selRoman} · TERRITÓRIO SECRETO`;
+    ctx.fillText(cardTitle, cardX + 9, cardY + 14, cardW - 92);
 
-    const statusTxt =
-      selDef.id === w.currentIsland
-        ? t('map_current')
-        : selProg?.colonized
-          ? t('map_colonized')
-          : t('map_unexplored');
+    const statusTxt = selCurrent
+      ? t('map_current')
+      : selConquered
+        ? 'REEXPLORAR'
+        : 'NOVA ROTA';
     ctx.textAlign = 'right';
-    ctx.fillStyle = selDef.id === w.currentIsland ? '#ffe066' : selProg?.colonized ? '#7ee08f' : '#8da9c4';
-    ctx.font = 'bold 7px "Pixelify Sans", monospace';
-    ctx.fillText(statusTxt, cardX + cardW - 10, cardY + 14);
+    ctx.fillStyle = selCurrent ? '#ffe066' : selConquered ? '#7ee08f' : '#7ef5ff';
+    ctx.font = 'bold 6.5px "Pixelify Sans", monospace';
+    ctx.fillText(statusTxt, cardX + cardW - 9, cardY + 14);
 
     ctx.textAlign = 'left';
     ctx.fillStyle = '#c8dceb';
-    ctx.font = '6.5px "Pixelify Sans", monospace';
-    const godTxt = selDef.godId ? `Deus: ${GOD_DEFS[selDef.godId].name}` : 'Sem Deus';
-    const mountTxt = selDef.mountId ? ` · ${MOUNT_DEFS[selDef.mountId].name[lang]}` : '';
-    const lvTxt = ` · Reino Nv.${selDef.id === 1 ? 2 : Math.min(10, selDef.id + 1)}`;
-    ctx.fillText(`${godTxt}${mountTxt}${lvTxt}`, cardX + 10, cardY + 26);
+    ctx.font = '6.2px "Pixelify Sans", monospace';
+    const line1 = selCurrent
+      ? selDef.id === 1
+        ? 'Ilha inicial básica · Construa o Drakkar e zarpe para desbravar novas terras.'
+        : 'Você está nesta ilha · Conquiste-a para dissipar as nuvens sobre novas rotas.'
+      : selConquered
+        ? 'Ilha já conquistada e liberada para reexploração · Seus recursos locais aguardam lá.'
+        : 'Segredos ocultos na névoa — deuses, anciões, montarias e forjas só se revelam ao desembarcar!';
+    ctx.fillText(line1, cardX + 9, cardY + 26, cardW - 18);
 
-    const diamStr =
-      selDef.maxDiamonds > 0
-        ? `◆ ${selProg?.diamondsCollected ?? 0}/${selDef.maxDiamonds}`
-        : '⛵ Drakkar';
-    const buffStr =
-      selDef.id > 1
-        ? ` · Obra:${selProg?.constructionBuff ? '✓' : '○'} Forja:${selProg?.forgeBuff ? '✓' : '○'}`
-        : '';
-    const dockStr = selDef.id > 1 ? (selProg?.dockBuilt ? ' · Porto OK' : ' · Porto') : '';
-    ctx.fillStyle = '#7ef5ff';
-    ctx.fillText(`${diamStr}${buffStr}${dockStr}`, cardX + 10, cardY + 38);
+    ctx.fillStyle = '#f7d265';
+    ctx.font = '6px "Pixelify Sans", monospace';
+    const line2 =
+      w.worldMapContext === 'sail'
+        ? 'No Drakkar vão apenas Ouro, Diamantes e Tripulação (madeira, pedra e minérios ficam na ilha).'
+        : 'Toque em uma ilha revelada para ver seu status · Ilhas sob nuvens abrem após conquista.';
+    ctx.fillText(line2, cardX + 9, cardY + 37, cardW - 18);
 
-    // Action buttons: Sail (if in sail context & different island) + Close
-    const canSailHere = w.worldMapContext === 'sail' && selDef.id !== w.currentIsland;
+    // Action buttons: Sail (if in sail context, revealed, & different island) + Close
+    const canSailHere =
+      w.worldMapContext === 'sail' &&
+      selDef.id !== w.currentIsland &&
+      isIslandSelectableOnMap(w, selDef.id);
     if (canSailHere) {
-      const btnW = 110;
-      const bx = cardX + cardW - btnW - 10;
-      const by = cardY + 44;
+      const btnW = 114;
+      const bx = cardX + cardW - btnW - 9;
+      const by = cardY + 46;
       ctx.fillStyle = '#2b2412';
       ctx.fillRect(bx, by, btnW, 20);
       ctx.strokeStyle = '#efc462';
       ctx.strokeRect(bx + 0.5, by + 0.5, btnW - 1, 19);
       ctx.textAlign = 'center';
       ctx.fillStyle = '#ffe58a';
-      ctx.font = 'bold 8px "Pixelify Sans", monospace';
+      ctx.font = 'bold 7.5px "Pixelify Sans", monospace';
       ctx.fillText(t('map_sail_btn'), bx + btnW / 2, by + 13);
       this.addHit('map_sail_confirm', bx, by, btnW, 20);
     }
 
     const closeW = 90;
-    const closeX = cardX + 10;
-    const closeY = cardY + 44;
+    const closeX = cardX + 9;
+    const closeY = cardY + 46;
     ctx.fillStyle = '#162030';
     ctx.fillRect(closeX, closeY, closeW, 20);
     ctx.strokeStyle = 'rgba(180, 210, 235, 0.45)';

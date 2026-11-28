@@ -371,6 +371,8 @@ export interface IslandProgress {
   id: number;
   colonized: boolean;
   visited: boolean;
+  revealed?: boolean;
+  conquered?: boolean;
   dockBuilt: boolean;
   boatBuilt: boolean;
   hallLevel: number;
@@ -484,9 +486,19 @@ export interface MagicProjectile {
   targetEnemyId?: number | null;
 }
 
+export interface IslandLocalResources {
+  wood: number;
+  stone: number;
+  iron: number;
+  food: number;
+  preciousOres: Partial<Record<PreciousMetalId, number>>;
+}
+
 export interface IslandSnapshot {
   worldWidth?: number;
   centerX?: number;
+  islandResources?: IslandLocalResources;
+  bankerBalance?: number;
   hall: Hall;
   forge: ForgeState | null;
   shops: ToolShop[];
